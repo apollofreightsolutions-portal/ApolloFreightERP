@@ -1,0 +1,98 @@
+/* Apollo Connected — matched to approved Apollo Website V12.
+   Presentation only. Loaded after styles.css; no application selectors or IDs removed. */
+:root,.hr-portal-theme {
+ --ink:#071827;--muted:#626d76;--muted-soft:#7c8993;--line:#d9dde1;--line-strong:#bdc7cf;
+ --canvas:#f4f5f6;--paper:#fff;--nav:#071827;--nav-soft:#0b2234;
+ --accent:#f05a22;--accent-deep:#be3d0d;--blue:#0b2234;--blue-soft:#edf1f4;
+ --shadow:0 16px 48px rgba(7,24,39,.10);
+}
+body{font-family:Arial,Helvetica,sans-serif;background:var(--canvas);line-height:1.45}
+button,input,select,textarea{border-radius:3px}
+button{font-weight:700;min-height:40px}
+button:not(:disabled):focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #f05a22;outline-offset:3px}
+input:focus,select:focus,textarea:focus{outline:2px solid #0b2234;outline-offset:1px;border-color:#0b2234}
+.company-name-ui span{color:inherit}
+.eyebrow,.auth-eyebrow{font-size:10px;font-weight:800;letter-spacing:.17em;text-transform:uppercase}
+.login-screen{padding:36px;min-height:100vh;background:#f4f5f6}
+.login-layout{width:min(1140px,100%);grid-template-columns:1.05fr 1fr;min-height:680px;border-radius:0;border:0;box-shadow:var(--shadow)}
+.login-brand-panel{position:relative;padding:44px;background:linear-gradient(135deg,rgba(7,24,39,.97),rgba(7,24,39,.72)),url('./assets/apollo-connected-road.jpg') center/cover}
+.login-brand-panel:after{content:'';position:absolute;left:0;bottom:0;width:96px;height:5px;background:var(--accent)}
+.login-brand-block{gap:24px;align-content:center}
+.brand-row-large{display:flex;flex-direction:column;gap:36px}
+.brand-logo,.brand-logo-large{width:220px;height:88px;padding:8px 12px;border-radius:0;box-shadow:none;object-fit:contain;background:#fff}
+.brand-heading{font-size:clamp(36px,4.2vw,56px);line-height:1.02;letter-spacing:-.045em;text-transform:uppercase;font-weight:900;margin:16px 0 0}
+.brand-heading span{color:#ff6a29}
+.login-brand-panel .company-name-ui{color:#d5dfe6}
+.login-tagline{font-style:normal;color:#fff;font-size:17px}
+.brand-description{max-width:370px;color:#cbd4da;font-size:14px}
+.login-card-shell{padding:44px;background:#fff}
+.login-card{width:100%;max-width:410px;gap:20px}
+.login-card h2{font-size:34px;letter-spacing:-.04em;font-weight:800}
+.auth-eyebrow{color:var(--accent-deep)}
+.auth-copy{margin-top:-12px}
+.login-form{gap:16px}
+.login-form label{font-size:12px;font-weight:700;display:grid;gap:7px}
+.login-form input{min-height:44px}
+.login-mode-switch{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.login-mode-button{min-height:44px;font-size:12px;padding:9px;background:#fff;border-color:var(--line);line-height:1.3}
+.login-mode-button.is-active{background:var(--nav);border-color:var(--nav);box-shadow:inset 3px 0 var(--accent)}
+.login-form>button[type=submit]{min-height:48px;background:var(--accent);color:var(--ink)}
+.login-form>button[type=submit]:hover{background:#ff6a29}
+.login-mode-help{font-size:12px;margin:0}
+.auth-footer{padding-top:16px;border-top:1px solid var(--line);font-size:11px}
+.sidebar{background:var(--nav);padding:24px 16px;border-top:4px solid var(--accent)}
+.sidebar-brand{flex-direction:column;align-items:flex-start;gap:18px}
+.sidebar .brand-logo{width:220px;max-width:100%;height:82px}
+.sidebar .company-name-ui{font-size:12px;letter-spacing:.13em;margin:0}
+.sidebar-tagline{font-size:9px;letter-spacing:.14em;color:#9cabb7;font-style:normal}
+.nav-list{gap:3px}
+.nav-list button{border-radius:2px;min-height:42px;font-size:13px;font-weight:600;border-left:3px solid transparent}
+.nav-list button.active{color:#fff;background:#163044;border-left-color:var(--accent)}
+.nav-list button:hover{background:#0b2234}
+.portal-switch-button{border-radius:2px;font-size:12px}
+.topbar{padding:24px 28px;border-top:4px solid #071827}
+.brand-ribbon{padding-bottom:10px;border-bottom:1px solid #edf0f2}
+.brand-ribbon .company-name-ui{font-size:10px;letter-spacing:.17em}
+.brand-ribbon>span{font-style:normal;font-size:11px}
+.page-heading h1{font-size:30px;font-weight:800;letter-spacing:-.035em}
+#pageSubtitle{font-size:13px;color:var(--muted)}
+.context-copy{font-size:11px}
+.date-filter-panel{background:#f4f5f6;border-radius:3px}
+.workspace{padding:24px 28px}
+.kpi,.panel,.hr-kpi,.hr-balance-card,.hr-hero,.hr-form-section,.customer-booking-step,.customer-tracking-summary{border-radius:3px;box-shadow:none;border-color:var(--line)}
+.kpi,.hr-kpi{border-top:3px solid var(--accent);background:#fff;padding:20px}
+.kpi strong,.hr-kpi strong{color:var(--ink);font-weight:800;letter-spacing:-.035em}
+.kpi span,.kpi small{font-size:10px;letter-spacing:.06em}
+.panel-header h2{font-size:20px;letter-spacing:-.025em;font-weight:800}
+.table-wrap{border-radius:3px}
+.table-wrap thead th,.hr-table th{background:#edf1f4;color:#071827;font-weight:800}
+.table-wrap tbody tr:hover{background:#f4f7f9}
+.record-dialog,.hr-modal{border-radius:5px}
+.dialog-header,.hr-modal-head{border-top:3px solid var(--accent)}
+.hr-hero{background:#071827;color:#fff;border-left:4px solid var(--accent)}
+.hr-hero small,.hr-hero p{color:#d1dce4}
+.app-footer{background:#fff;border-top:1px solid var(--line);font-size:11px}
+/* Status colours intentionally retain their operational meaning. */
+@media(max-width:1100px){.topbar{grid-template-columns:minmax(0,1fr)}.top-actions{max-width:100%}}
+@media(max-width:920px){.login-layout{grid-template-columns:1fr;max-width:620px}.login-brand-panel{padding:30px}.brand-row-large{gap:22px}.brand-heading{font-size:38px}.login-brand-block{gap:18px}.login-card-shell{padding:30px}.login-card{max-width:none}}
+@media(max-width:760px){.login-screen{padding:14px}.login-card-shell,.login-brand-panel{padding:24px}.brand-heading{font-size:34px}.login-card h2{font-size:29px}.workspace,.topbar{padding:18px 14px}.sidebar .brand-logo{width:190px;height:72px}.password-input-wrap{grid-template-columns:minmax(0,1fr) auto}.brand-ribbon>span{display:none}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+@media print{body{background:#fff}.sidebar,.topbar,.app-footer{display:none}.workspace{padding:0}.kpi,.panel{box-shadow:none}}
+
+/* V2: product identity and module-specific consistency. */
+.company-name-ui .connected-word,.connected-word{color:#be3d0d;font-style:normal;font-size:inherit;font-weight:inherit}
+.sidebar .connected-word,.login-brand-panel .connected-word,.hero .connected-word{color:#ff6a29}
+.brand-ribbon .company-name-ui .connected-word{font-style:normal;font-size:inherit}
+.customer-booking-step,.customer-tracking-summary,.hr-form-section,.hr-balance-card,.hr-calculation,.hr-weekend-list span,.hr-legend span{border-radius:3px}
+.customer-step-number{background:#071827;color:#fff;border-bottom:3px solid #f05a22;border-radius:3px}
+.hr-panel-head,.hr-modal-head{background:#f4f5f6;color:#071827}
+.hr-balance-number{color:#071827}.hr-panel-head h3,.hr-form-section h3{font-weight:800;letter-spacing:-.02em}
+.hr-modal-head h2,.dialog-header h2{color:#071827}
+.hr-weekend-list .is-weekend,.hr-calculation{background:#edf1f4;border-color:#d9dde1}
+.hr-hero .eyebrow{color:#d1dce4}
+.report-toolbar,.form-section,.cargo-totals,.customer-booking-step{border-color:#d9dde1}
+.secondary-button,.navy-button,.blue-button{border-radius:3px}
+button:not(.secondary-button):not(.navy-button):not(.blue-button):not(.danger-text):not(.login-mode-button):not(.portal-switch-button):not(.window-control-button){text-shadow:none}
+@media(min-width:1161px){.sidebar{min-width:0}.sidebar-brand-shell{padding-bottom:8px}.workspace-shell{min-width:0}}
+/* Dark text on primary orange actions improves readability. */
+button{color:var(--ink)}

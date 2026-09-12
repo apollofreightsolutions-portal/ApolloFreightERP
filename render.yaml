@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: apollo-freighterp-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGIN
+        value: https://apollo-freighterp.vercel.app
+      # The production database has already received the additive migrations. Replaying every
+      # historical SQL file on each Render restart can hold locks and block dashboard queries.
+      # Run `npm run migrate` manually for a new migration before enabling this temporarily.
+      - key: AUTO_MIGRATE
+        value: "false"
+      - key: CUSTOMER_PORTAL_SECRET
+        generateValue: true
+      - key: NEON_DATABASE_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

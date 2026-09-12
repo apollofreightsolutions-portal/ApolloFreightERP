@@ -1,0 +1,9 @@
+.git
+.vs
+bin
+obj
+publish
+server/node_modules
+server/.env
+server/.env.local
+*.log

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/maintenance",
+      "destination": "/maintenance/index.html"
+    },
+    {
+      "source": "/maintenance/",
+      "destination": "/maintenance/index.html"
+    },
+    {
+      "source": "/maintenance/assets/(.*)",
+      "destination": "/web/maintenance/assets/$1"
+    },
+    {
+      "source": "/app.js",
+      "destination": "/web/app.js"
+    },
+    {
+      "source": "/app-runtime.js",
+      "destination": "/web/app-runtime.js"
+    },
+    {
+      "source": "/hr-portal.js",
+      "destination": "/web/hr-portal.js"
+    },
+    {
+      "source": "/hs-code-customer-portal.js",
+      "destination": "/web/hs-code-customer-portal.js"
+    },
+    {
+      "source": "/hs-code-master.json",
+      "destination": "/web/hs-code-master.json"
+    },
+    {
+      "source": "/config.js",
+      "destination": "/web/config.js"
+    },
+    {
+      "source": "/styles.css",
+      "destination": "/web/styles.css"
+    },
+    {
+      "source": "/assets/(.*)",
+      "destination": "/web/assets/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/web/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/maintenance",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }]
+    },
+    {
+      "source": "/maintenance/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }]
+    },
+    {
+      "source": "/app.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }]
+    },
+    {
+      "source": "/app-runtime.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }]
+    },
+    {
+      "source": "/hr-portal.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }]
+    },
+    {
+      "source": "/config.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }]
+    },
+    {
+      "source": "/styles.css",
+      "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    }
+  ]
+}

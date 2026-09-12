@@ -1,0 +1,23 @@
+HR COMPLETION PACKAGE — CHANGED FILES
+
+MODIFIED
+web/hr-portal.js
+web/styles.css
+server/src/index.js
+
+EXISTING HR INTEGRATION KEPT
+web/app.js
+web/app-runtime.js
+
+DATABASE
+server/sql/021_hr_leave_management.sql
+
+NO EXISTING SQL MIGRATIONS 001–020 SHOULD BE DELETED.
+
+KEY FIXES
+- HR panels no longer remain stuck on "HR module is loading" after the module is loaded.
+- My Leave is a complete application-style form.
+- Leave Balance and Leave Calendar are full working panels.
+- Leave Approvals, HR Calendar & Rules, HR Leave Balances and HR Leave Policies render from the dedicated HR module.
+- Admin/HR can act on the Employee Portal.
+- Employee document GET/VIEW/UPLOAD operations are scoped to the selected employee for Admin/HR and to the logged-in employee for employees.

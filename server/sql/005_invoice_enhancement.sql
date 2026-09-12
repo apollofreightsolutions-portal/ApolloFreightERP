@@ -1,0 +1,12 @@
+alter table invoices add column if not exists customer_code text not null default '';
+alter table invoices add column if not exists tariff_no text not null default '';
+alter table invoices add column if not exists tariff_name text not null default '';
+alter table invoices add column if not exists chargeable_weight numeric(12, 3) not null default 0;
+alter table invoices add column if not exists total_cost numeric(12, 3) not null default 0;
+alter table invoices add column if not exists tax_percent numeric(12, 3) not null default 0;
+alter table invoices add column if not exists tax_amount numeric(12, 3) not null default 0;
+alter table invoices add column if not exists grand_total numeric(12, 3) not null default 0;
+alter table invoices add column if not exists profit_percent numeric(12, 3) not null default 0;
+alter table invoices add column if not exists invoice_lines_json text not null default '[]';
+alter table invoices add column if not exists tariff_snapshot_json text not null default '{}';
+alter table invoices add column if not exists invoice_snapshot_json text not null default '{}';

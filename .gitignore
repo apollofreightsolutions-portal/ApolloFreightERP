@@ -1,0 +1,21 @@
+# Local dependencies
+node_modules/
+**/node_modules/
+
+# Local build and desktop artifacts
+.DS_Store
+dist-desktop/
+release/
+*.exe
+*.dmg
+*.msi
+
+# Local development output; the committed production web bundle is maintenance/
+maintenance-src/dist/
+
+# Environment and editor files
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
