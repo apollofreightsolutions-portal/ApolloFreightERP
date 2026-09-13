@@ -166,6 +166,43 @@ const loginRateLimiter = rateLimiter({
   max: 20,
   keyFor: (request) => `${request.ip}:${String(request.body?.userName || request.body?.email || request.body?.customerCode || "").trim().toLowerCase()}`
 });
+const publicTrackingRateLimiter = rateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  keyFor: (request) => `${request.ip}:${String(request.params?.trackingReference || "").trim().toLowerCase()}`
+});
+
+const PUBLIC_TRACKING_STATUS_MAP = new Map([
+  ["draft", "Booked"],
+  ["booked", "Booked"],
+  ["confirmed", "Booked"],
+  ["pickup scheduled", "Picked Up"],
+  ["picked up", "Picked Up"],
+  ["collected", "Picked Up"],
+  ["manifested", "In Transit"],
+  ["departed", "In Transit"],
+  ["in transit", "In Transit"],
+  ["customs clearance", "Customs Clearance"],
+  ["customs", "Customs Clearance"],
+  ["clearance", "Customs Clearance"],
+  ["arrived", "Out for Delivery"],
+  ["delivery scheduled", "Out for Delivery"],
+  ["out for delivery", "Out for Delivery"],
+  ["delivered", "Delivered"],
+  ["cancelled", "Cancelled"],
+  ["canceled", "Cancelled"]
+]);
+
+function publicTrackingStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PUBLIC_TRACKING_STATUS_MAP.get(normalized) || (normalized ? String(value).trim() : "Booked");
+}
+
+function publicTrackingDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : date.toISOString();
+}
 
 const demoRows = {
   shipments: [
@@ -1782,6 +1819,67 @@ app.get("/api/health", async (_request, response) => {
       startupError: runtimeStatus.startupError,
       error: error.message
     });
+  }
+});
+
+// Public customer tracking is intentionally separate from the authenticated shipment API.
+// It returns an allowlisted timeline only; no customer, billing, POD, notes, or internal-user data.
+app.get("/api/public/tracking/:trackingReference", publicTrackingRateLimiter, async (request, response, next) => {
+  const trackingReference = String(request.params.trackingReference || "").trim();
+  if (!trackingReference || trackingReference.length > 80) {
+    return response.status(400).json({ ok: false, error: "A valid tracking reference is required." });
+  }
+
+  try {
+    const shipmentResult = await query(
+      `select job_no, airway_bill_no, status, booking_date, updated_at
+       from shipments
+       where lower(trim(job_no)) = lower(trim($1))
+          or lower(trim(airway_bill_no)) = lower(trim($1))
+       order by updated_at desc nulls last, id desc
+       limit 1`,
+      [trackingReference]
+    );
+    const shipment = shipmentResult.rows[0];
+    if (!shipment) {
+      return response.status(404).json({ ok: false, error: "Shipment not found." });
+    }
+
+    const historyResult = await query(
+      `select status, updated_at
+       from shipment_status_history
+       where lower(trim(job_no)) = lower(trim($1))
+       order by updated_at asc, id asc`,
+      [shipment.job_no]
+    );
+    const rawEvents = [
+      ...historyResult.rows.map((row) => ({ status: row.status, date: row.updated_at })),
+      { status: shipment.status, date: shipment.updated_at || shipment.booking_date }
+    ];
+    const events = [];
+    const seenStatuses = new Set();
+    for (const event of rawEvents) {
+      const status = publicTrackingStatus(event.status);
+      const key = status.toLowerCase();
+      if (seenStatuses.has(key)) continue;
+      seenStatuses.add(key);
+      events.push({ status, date: publicTrackingDate(event.date) });
+    }
+    if (!events.length) {
+      events.push({ status: "Booked", date: publicTrackingDate(shipment.booking_date) });
+    }
+
+    return response.json({
+      ok: true,
+      trackingNumber: String(shipment.job_no || shipment.airway_bill_no || trackingReference),
+      currentStatus: publicTrackingStatus(shipment.status),
+      events
+    });
+  } catch (error) {
+    if (isDatabaseSetupError(error)) {
+      return response.status(503).json({ ok: false, error: "Tracking is temporarily unavailable." });
+    }
+    return next(error);
   }
 });
 
