@@ -21,12 +21,12 @@
 }
 
 .hr-portal-theme {
-  --accent: #0f9d78;
-  --accent-deep: #0c7f61;
-  --nav: #0b2a24;
-  --nav-soft: #123c33;
-  --green-soft: #e8f7f1;
-  --green-text: #0c7f61;
+  --accent: #f05a22;
+  --accent-deep: #be3d0d;
+  --nav: #071827;
+  --nav-soft: #20354a;
+  --green-soft: #eef3f8;
+  --green-text: #071827;
 }
 
 * {
@@ -3280,36 +3280,36 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
 /* The HR session adds this class to #appShell. These overrides make the HR palette visible
    across fixed-color HR widgets as well as the shared ERP shell. */
 .app-shell.hr-portal-theme {
-  --accent: #0f9d78;
-  --accent-deep: #0b7d61;
-  --nav: #092d27;
-  --nav-soft: #12473b;
+  --accent: #f05a22;
+  --accent-deep: #be3d0d;
+  --nav: #071827;
+  --nav-soft: #20354a;
   --blue-soft: #edf8f4;
   --line: #d7e8e1;
   --line-strong: #b8d5ca;
-  --canvas: #f1f8f5;
-  background: #f1f8f5;
+  --canvas: #f4f5f6;
+  background: #f4f5f6;
 }
 .app-shell.hr-portal-theme .sidebar {
-  background: linear-gradient(180deg, #092d27, #0c3b31 62%, #07231e);
+  background: linear-gradient(180deg, #071827, #12202f 62%, #071827);
 }
 .app-shell.hr-portal-theme .topbar {
-  border-bottom-color: #b8d5ca;
-  background: linear-gradient(90deg, #fff, #f2faf7);
+  border-bottom-color: #d9dde1;
+  background: linear-gradient(90deg, #fff, #f8fafc);
 }
 .app-shell.hr-portal-theme .nav-list button.active,
 .app-shell.hr-portal-theme button:not(.ghost-button):not(.secondary-button):not(.window-control-button) {
-  background: #0f9d78;
+  background: #f05a22;
 }
 .app-shell.hr-portal-theme .panel,
 .app-shell.hr-portal-theme .hr-form-section,
 .app-shell.hr-portal-theme .hr-balance-card,
 .app-shell.hr-portal-theme .hr-modal {
-  border-color: #c6ded5;
-  box-shadow: 0 10px 28px rgba(9,45,39,.08);
+  border-color: #d9dde1;
+  box-shadow: 0 10px 28px rgba(7,24,39,.07);
 }
 .app-shell.hr-portal-theme .hr-hero {
-  background: linear-gradient(120deg, #092d27, #0f6f5a);
+  background: linear-gradient(120deg, #071827, #20354a);
   color: #fff;
   border-radius: 10px;
 }
@@ -3321,30 +3321,30 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
 }
 .app-shell.hr-portal-theme .hr-kpi-card,
 .app-shell.hr-portal-theme .hr-balance-card {
-  border-top: 4px solid #0f9d78;
+  border-top: 3px solid #f05a22;
   background: #fff;
 }
 .app-shell.hr-portal-theme .hr-kpi-number,
 .app-shell.hr-portal-theme .hr-balance-number {
-  color: #0b7d61;
+  color: #071827;
 }
 .app-shell.hr-portal-theme .hr-table th,
 .app-shell.hr-portal-theme .hr-cal-head {
-  background: #e8f5f0;
-  color: #092d27;
+  background: #f1f3f5;
+  color: #071827;
 }
 .app-shell.hr-portal-theme .hr-cal-cell.is-holiday {
-  background: #dff4eb;
+  background: #fff0e9;
 }
 .app-shell.hr-portal-theme .hr-cal-cell.is-weekend {
-  background: #eef6f3;
+  background: #f1f3f5;
 }
 .app-shell.hr-portal-theme input:focus,
 .app-shell.hr-portal-theme select:focus,
 .app-shell.hr-portal-theme textarea:focus {
-  outline: 2px solid #0f9d78;
+  outline: 2px solid #f05a22;
   outline-offset: 1px;
-  border-color: #0f9d78;
+  border-color: #f05a22;
 }
 
 @media (max-width: 560px) {
