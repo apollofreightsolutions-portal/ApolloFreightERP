@@ -685,8 +685,10 @@ body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--ink
 .auth-logo{width:230px;height:92px}.header-logo{width:220px;height:88px}
 .auth-panel{border-top:4px solid #f05a22}.auth-panel h1{letter-spacing:-.035em}
 .menu-button{border-radius:3px;background:#fff}.menu-button.is-active{background:#071827;border-left:3px solid #f05a22}
-.primary-action{background:#f05a22;color:#071827;border-radius:3px;font-weight:800}
-.secondary-action,.secondary-form-action{border-radius:3px}
+.primary-action{background:#f05a22;color:#fff;border:1px solid #f05a22;border-radius:3px;font-weight:800}
+.secondary-action,.secondary-form-action{border-radius:3px;border:1px solid #c7d2de;background:#eef3f8;color:#071827}
+.inline-action{border-radius:3px;border-color:#c7d2de;background:#eef3f8;color:#071827}
+.danger-action{color:#a64242;border-color:#e5b8b4;background:#fff0f0}
 input,select,textarea{border-radius:3px!important;font:inherit}
 button:focus-visible,a:focus-visible{outline:3px solid #f05a22;outline-offset:3px}
 input:focus,select:focus,textarea:focus{outline:2px solid #071827;outline-offset:1px}
