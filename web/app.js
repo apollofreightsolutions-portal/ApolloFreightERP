@@ -9,3 +9,8 @@ import("./hr-portal.js").catch((error) => {
 import("./hs-code-customer-portal.js").catch((error) => {
   console.warn("Customer HS-code lookup is unavailable.", error);
 });
+
+
+import("./crm-portal.js").catch((error) => {
+  console.warn("CRM Portal is unavailable.", error);
+});

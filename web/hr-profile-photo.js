@@ -1,7 +1,7 @@
 (() => {
   const CLOUDINARY_CLOUD_NAME = window.APOLLO_CLOUDINARY_CLOUD_NAME || "wqvn6dc4";
   const CLOUDINARY_UPLOAD_PRESET = window.APOLLO_CLOUDINARY_UPLOAD_PRESET || "employee_portal_unsigned";
-  const API_URL = (window.APOLLO_API_URL || window.location.origin).replace(/\/$/, "");
+  const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
   const SESSION_KEY = "apollofreighterp-session";
   const PHOTO_TYPE = "Employee Photo";
   const MAX_FILE_SIZE = 5 * 1024 * 1024;

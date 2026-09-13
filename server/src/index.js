@@ -13,6 +13,7 @@ const { expensesRouter: maintenanceExpensesRouter } = require("./maintenance/rou
 const { usersRouter: maintenanceUsersRouter } = require("./maintenance/routes/users");
 const { vehiclesRouter: maintenanceVehiclesRouter } = require("./maintenance/routes/vehicles");
 const { healthRouter: maintenanceHealthRouter } = require("./maintenance/routes/health");
+const { createCrmRouter } = require("./crm");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -499,6 +500,15 @@ function requireAppAuth(request, response, next) {
   return next();
 }
 
+function requireErpPortalAuth(request, response, next) {
+  return requireAppAuth(request, response, () => {
+    if (request.appSession?.employeePortal || request.appSession?.crmPortal) {
+      return response.status(403).json({ ok: false, error: "Company ERP Portal access is required for this operation." });
+    }
+    return next();
+  });
+}
+
 function requireEmployeePortalAuth(request, response, next) {
   const session = appAuthFromRequest(request);
   if (!session) return response.status(401).json({ ok: false, error: "Login required." });
@@ -864,6 +874,14 @@ const resources = {
       field("erp_portal_access", ["erpPortalAccess", "erp_portal_access"]),
       field("maintenance_portal_access", ["maintenancePortalAccess", "maintenance_portal_access"]),
       field("is_hr_admin", ["isHrAdmin", "is_hr_admin"]),
+      field("crm_portal_access", ["crmPortalAccess", "crm_portal_access"]),
+      field("crm_role", ["crmRole", "crm_role"]),
+      field("crm_view_all_accounts", ["crmViewAllAccounts", "crm_view_all_accounts"]),
+      field("crm_manage_assignments", ["crmManageAssignments", "crm_manage_assignments"]),
+      field("crm_export_access", ["crmExportAccess", "crm_export_access"]),
+      field("crm_archive_access", ["crmArchiveAccess", "crm_archive_access"]),
+      field("crm_view_team_reports", ["crmViewTeamReports", "crm_view_team_reports"]),
+      field("crm_admin_access", ["crmAdminAccess", "crm_admin_access"]),
       field("notes")
     ]
   },
@@ -1265,7 +1283,8 @@ async function loginUser(identifier, password) {
     result = await query(
       `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
               can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
-              can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin, password
+              can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin,
+              crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, password
        from app_users
        where lower(user_name) = lower($1) or lower(email) = lower($1)
        limit 1`,
@@ -1294,6 +1313,14 @@ async function loginUser(identifier, password) {
       result.rows[0].erp_portal_access = true;
       result.rows[0].maintenance_portal_access = false;
       result.rows[0].is_hr_admin = false;
+      result.rows[0].crm_portal_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].crm_role = String(result.rows[0].role || "").toLowerCase() === "admin" ? "Management" : "Sales Executive";
+      result.rows[0].crm_view_all_accounts = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].crm_manage_assignments = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].crm_export_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].crm_archive_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].crm_view_team_reports = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].crm_admin_access = String(result.rows[0].role || "").toLowerCase() === "admin";
     }
   }
 
@@ -1304,6 +1331,20 @@ async function loginUser(identifier, password) {
 
   delete row.password;
   return row;
+}
+
+function crmSessionFlags(row) {
+  const isAdmin = String(row?.role || "").trim().toLowerCase() === "admin";
+  return {
+    crmPortalAccess: isAdmin || Boolean(row?.crm_portal_access),
+    crmRole: isAdmin ? "Management" : String(row?.crm_role || "Sales Executive"),
+    crmViewAllAccounts: isAdmin || Boolean(row?.crm_view_all_accounts),
+    crmManageAssignments: isAdmin || Boolean(row?.crm_manage_assignments),
+    crmExportAccess: isAdmin || Boolean(row?.crm_export_access),
+    crmArchiveAccess: isAdmin || Boolean(row?.crm_archive_access),
+    crmViewTeamReports: isAdmin || Boolean(row?.crm_view_team_reports),
+    crmAdminAccess: isAdmin || Boolean(row?.crm_admin_access)
+  };
 }
 
 async function prepareRecordForConfig(config, body) {
@@ -1757,7 +1798,8 @@ app.post("/api/session/handoff", loginRateLimiter, async (request, response, nex
       `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
               can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
               can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access,
-              maintenance_portal_access, is_hr_admin
+              maintenance_portal_access, is_hr_admin, crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments,
+              crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access
        from app_users
        where lower(user_name) = lower($1)
        limit 1`,
@@ -1790,6 +1832,7 @@ app.post("/api/session/handoff", loginRateLimiter, async (request, response, nex
         erpPortalAccess: row.erp_portal_access !== false,
         maintenancePortalAccess: Boolean(row.maintenance_portal_access),
         isHrAdmin: Boolean(row.is_hr_admin),
+        ...crmSessionFlags(row),
         token: signCustomerToken({
           userName: row.user_name,
           role: row.role,
@@ -1814,6 +1857,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
   const loginMode = String(request.body?.loginMode || "company").trim().toLowerCase();
   const employeeLogin = loginMode === "employee";
   const maintenanceLogin = loginMode === "maintenance";
+  const crmLogin = loginMode === "crm";
 
   if (!identifier || !password) {
     return response.status(400).json({
@@ -1844,7 +1888,10 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
     if (maintenanceLogin && !row.maintenance_portal_access) {
       return response.status(403).json({ ok: false, error: "Maintenance Portal access is not enabled for this account." });
     }
-    if (!employeeLogin && !maintenanceLogin && !row.erp_portal_access) {
+    if (crmLogin && !crmSessionFlags(row).crmPortalAccess) {
+      return response.status(403).json({ ok: false, error: "CRM Portal access is not enabled for this account." });
+    }
+    if (!employeeLogin && !maintenanceLogin && !crmLogin && !row.erp_portal_access) {
       return response.status(403).json({ ok: false, error: "ERP Portal access is not enabled for this account." });
     }
 
@@ -1867,12 +1914,15 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
         erpPortalAccess: row.erp_portal_access !== false,
         maintenancePortalAccess: Boolean(row.maintenance_portal_access),
         isHrAdmin: Boolean(row.is_hr_admin),
-        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: employeeLogin, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+        ...crmSessionFlags(row),
+        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: employeeLogin, crmPortal: crmLogin, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
       }
     });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
-      if ((identifier.toLowerCase() === "admin" || identifier.toLowerCase() === "admin@apollofreightsolution.com") && password === "admin123") {
+      // Demo fallback is deliberately disabled in production. Never allow the historical
+      // admin/admin123 credential to become a production back door if the DB is unavailable.
+      if (process.env.NODE_ENV !== "production" && (identifier.toLowerCase() === "admin" || identifier.toLowerCase() === "admin@apollofreightsolution.com") && password === "admin123") {
         return response.json({
           ok: true,
           session: {
@@ -1885,14 +1935,22 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
             hrPortalAccess: true,
             erpPortalAccess: true,
             isHrAdmin: true,
-            token: signCustomerToken({ userName: "admin", role: "Admin", portal: "app", employeePortal: employeeLogin, exp: Date.now() + APP_TOKEN_TTL_MS })
+            crmPortalAccess: true,
+            crmRole: "Management",
+            crmViewAllAccounts: true,
+            crmManageAssignments: true,
+            crmExportAccess: true,
+            crmArchiveAccess: true,
+            crmViewTeamReports: true,
+            crmAdminAccess: true,
+            token: signCustomerToken({ userName: "admin", role: "Admin", portal: "app", employeePortal: employeeLogin, crmPortal: crmLogin, exp: Date.now() + APP_TOKEN_TTL_MS })
           }
         });
       }
 
-      return response.status(401).json({
+      return response.status(process.env.NODE_ENV === "production" ? 503 : 401).json({
         ok: false,
-        error: "Invalid login credentials."
+        error: process.env.NODE_ENV === "production" ? "Authentication service is temporarily unavailable." : "Invalid login credentials."
       });
     }
 
@@ -1902,7 +1960,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
 
 app.post("/api/portal-switch", requireAppAuth, async (request, response, next) => {
   const requestedPortal = String(request.body?.portal || "").trim().toLowerCase();
-  if (!["employee", "company"].includes(requestedPortal)) {
+  if (!["employee", "company", "crm"].includes(requestedPortal)) {
     return response.status(400).json({ ok: false, error: "A valid portal must be selected." });
   }
   try {
@@ -1911,7 +1969,8 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
       result = await query(
         `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
                 can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
-                can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, is_hr_admin
+                can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin,
+                crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access
          from app_users where lower(user_name) = lower($1) limit 1`,
         [request.appSession.userName]
       );
@@ -1927,7 +1986,16 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
       if (result.rows[0]) {
         result.rows[0].hr_portal_access = false;
         result.rows[0].erp_portal_access = true;
+        result.rows[0].maintenance_portal_access = false;
         result.rows[0].is_hr_admin = false;
+        result.rows[0].crm_portal_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].crm_role = String(result.rows[0].role || "").toLowerCase() === "admin" ? "Management" : "Sales Executive";
+        result.rows[0].crm_view_all_accounts = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].crm_manage_assignments = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].crm_export_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].crm_archive_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].crm_view_team_reports = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].crm_admin_access = String(result.rows[0].role || "").toLowerCase() === "admin";
       }
     }
     const row = result.rows[0];
@@ -1939,6 +2007,9 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
     }
     if (requestedPortal === "company" && row.erp_portal_access === false) {
       return response.status(403).json({ ok: false, error: "ERP Portal access is not enabled for this account." });
+    }
+    if (requestedPortal === "crm" && !crmSessionFlags(row).crmPortalAccess) {
+      return response.status(403).json({ ok: false, error: "CRM Portal access is not enabled for this account." });
     }
     return response.json({
       ok: true,
@@ -1959,8 +2030,9 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
         erpPortalAccess: row.erp_portal_access !== false,
         maintenancePortalAccess: Boolean(row.maintenance_portal_access),
         isHrAdmin: Boolean(row.is_hr_admin),
-        portal: requestedPortal === "employee" ? "employee" : "company",
-        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: requestedPortal === "employee", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+        ...crmSessionFlags(row),
+        portal: requestedPortal === "employee" ? "employee" : requestedPortal === "crm" ? "crm" : "company",
+        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: requestedPortal === "employee", crmPortal: requestedPortal === "crm", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
       }
     });
   } catch (error) {
@@ -2040,7 +2112,7 @@ app.post("/api/customer-login", loginRateLimiter, async (request, response, next
       data: snapshot
     });
   } catch (error) {
-    if (isDatabaseSetupError(error) && String(password || "") === "customer123") {
+    if (process.env.NODE_ENV !== "production" && isDatabaseSetupError(error) && String(password || "") === "customer123") {
       const demo = await demoCustomerPortalSnapshot(identifier);
       return response.json({
         ok: true,
@@ -2511,7 +2583,7 @@ app.delete("/api/employee-profile-documents/:documentNo", requireEmployeePortalA
   } catch (error) { return next(error); }
 });
 
-app.post("/api/pod-documents", requireAppAuth, async (request, response, next) => {
+app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, next) => {
   const userName = String(request.appSession?.userName || "").trim();
   const jobNo = String(request.body?.jobNo || "").trim();
   const fileName = String(request.body?.fileName || "").trim();
@@ -3476,7 +3548,7 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
   });
 }
 
-app.post("/api/shipments/status-by-awb", requireAppAuth, async (request, response, next) => {
+app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, response, next) => {
   try {
     const airwayBillNo = String(request.body?.airwayBillNo ?? request.body?.airway_bill_no ?? "").trim();
     const newStatus = String(request.body?.status || "").trim();
@@ -3515,7 +3587,7 @@ app.post("/api/shipments/status-by-awb", requireAppAuth, async (request, respons
     return next(error);
   }
 });
-app.post("/api/shipments", requireAppAuth, async (request, response, next) => {
+app.post("/api/shipments", requireErpPortalAuth, async (request, response, next) => {
   try {
     const customerName = request.body?.customer || request.body?.customerName || "";
     const blocked = await findBlockedCustomer(customerName, requestBlockCheckBranch(request));
@@ -3549,8 +3621,9 @@ app.use("/api/maintenance/auth", maintenanceAuthRouter);
 app.use("/api/maintenance/expenses", maintenanceExpensesRouter);
 app.use("/api/maintenance/users", maintenanceUsersRouter);
 app.use("/api/maintenance/vehicles", maintenanceVehiclesRouter);
+app.use("/api/crm", createCrmRouter({ query, requireAppAuth }));
 
-app.get("/api/:resource", requireAppAuth, async (request, response, next) => {
+app.get("/api/:resource", requireErpPortalAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -3573,7 +3646,7 @@ app.get("/api/:resource", requireAppAuth, async (request, response, next) => {
   }
 });
 
-app.post("/api/:resource", requireAppAuth, async (request, response, next) => {
+app.post("/api/:resource", requireErpPortalAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -3606,7 +3679,7 @@ app.post("/api/:resource", requireAppAuth, async (request, response, next) => {
   }
 });
 
-app.put("/api/shipments/:id", requireAppAuth, async (request, response, next) => {
+app.put("/api/shipments/:id", requireErpPortalAuth, async (request, response, next) => {
   try {
     const shipmentId = decodeURIComponent(request.params.id);
     // NOTE: no customer-blocked check here on purpose. The block only applies to creating a NEW
@@ -3663,7 +3736,7 @@ app.put("/api/shipments/:id", requireAppAuth, async (request, response, next) =>
   }
 });
 
-app.put("/api/:resource/:id", requireAppAuth, async (request, response, next) => {
+app.put("/api/:resource/:id", requireErpPortalAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -3697,7 +3770,7 @@ app.put("/api/:resource/:id", requireAppAuth, async (request, response, next) =>
   }
 });
 
-app.delete("/api/audit", requireAppAuth, async (_request, response, next) => {
+app.delete("/api/audit", requireErpPortalAuth, async (_request, response, next) => {
   try {
     const result = await query("delete from audit_log returning id");
     response.json({
@@ -3717,7 +3790,7 @@ app.delete("/api/audit", requireAppAuth, async (_request, response, next) => {
   }
 });
 
-app.delete("/api/:resource/:id", requireAppAuth, async (request, response, next) => {
+app.delete("/api/:resource/:id", requireErpPortalAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 

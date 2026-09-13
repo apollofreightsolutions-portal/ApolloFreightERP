@@ -1,20 +1,32 @@
-# Deploying Apollo FreightERP to Google Cloud only
+# Apollo Connected — Google Cloud production deployment
 
-This replaces the current Vercel (frontend) + Render (API) + Neon (database) setup with a single
-Cloud Run service (serving both the app and the API) backed by Cloud SQL for PostgreSQL.
+This package is designed to run the Apollo Connected UI and API together on one Google Cloud Run service, backed by Cloud SQL for PostgreSQL.
 
-You'll run these commands yourself from a machine with the `gcloud` CLI installed and logged in
-(`gcloud auth login`) - they can't be run from here.
+For Apollo's GCC usage, `me-central2` (Dammam) is a sensible default region. `me-central1` (Doha) is also supported. Keep Cloud Run, Cloud SQL and Artifact Registry in the same chosen region. If Apollo already has a Google Cloud region in use, keep that instead of moving resources unnecessarily.
 
-## 0. One-time setup (new project)
+> Important: production code intentionally does **not** auto-run SQL migrations on server startup. Run the migration job explicitly before enabling users.
 
-Make sure a **billing account** is linked to the project first (Cloud Console → Billing →
-Link a billing account) - Cloud Run, Cloud SQL, and Cloud Build all require this even if you
-stay within free-tier usage.
+## 1. Variables
+
+In Google Cloud Shell, set these once for the deployment session:
 
 ```bash
-gcloud config set project YOUR_PROJECT_ID
+export PROJECT_ID="YOUR_GCP_PROJECT_ID"
+export REGION="me-central2"
+export SERVICE="apollo-connected"
+export SQL_INSTANCE="apollo-connected-db"
+export DB_NAME="apollo_connected"
+export DB_USER="apollo_app"
+export REPOSITORY="apollo-connected"
+export IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app:2026-09-12-crm"
+export RUN_SA="apollo-connected-run@$PROJECT_ID.iam.gserviceaccount.com"
 
+gcloud config set project "$PROJECT_ID"
+```
+
+## 2. Enable required APIs
+
+```bash
 gcloud services enable \
   run.googleapis.com \
   sqladmin.googleapis.com \
@@ -23,174 +35,195 @@ gcloud services enable \
   secretmanager.googleapis.com
 ```
 
-Create a place to store your container image (Artifact Registry - the current standard, replaces
-the older `gcr.io` Container Registry):
+## 3. Dedicated runtime service account
 
 ```bash
-gcloud artifacts repositories create apollo-freighterp \
-  --repository-format=docker \
-  --location=us-central1
+gcloud iam service-accounts create apollo-connected-run \
+  --display-name="Apollo Connected Cloud Run"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$RUN_SA" \
+  --role="roles/cloudsql.client"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$RUN_SA" \
+  --role="roles/secretmanager.secretAccessor"
 ```
 
-## 1. Create the Cloud SQL for PostgreSQL instance
+## 4. Artifact Registry
 
 ```bash
-gcloud sql instances create apollo-freighterp-db \
+gcloud artifacts repositories create "$REPOSITORY" \
+  --repository-format=docker \
+  --location="$REGION"
+```
+
+If the repository already exists, do not recreate it.
+
+## 5. Cloud SQL PostgreSQL
+
+Create PostgreSQL in the same region. For a real company deployment, do not treat the smallest shared-core database as a production reliability target. Select a production-appropriate Cloud SQL machine size in the Console, enable automated backups, point-in-time recovery and storage auto-increase. Regional high availability is preferable if Apollo wants the database to survive a zonal failure automatically; it costs more.
+
+Example creation command (IT may choose a different tier):
+
+```bash
+gcloud sql instances create "$SQL_INSTANCE" \
   --database-version=POSTGRES_16 \
-  --tier=db-f1-micro \
-  --region=us-central1 \
+  --region="$REGION" \
+  --tier=db-custom-1-3840 \
+  --storage-size=20 \
+  --storage-type=SSD \
   --storage-auto-increase
 
-gcloud sql databases create apollo_freighterp --instance=apollo-freighterp-db
+gcloud sql databases create "$DB_NAME" --instance="$SQL_INSTANCE"
 
-gcloud sql users set-password postgres \
-  --instance=apollo-freighterp-db \
-  --password="CHOOSE_A_STRONG_PASSWORD"
+export DB_PASSWORD="$(openssl rand -hex 24)"
+gcloud sql users create "$DB_USER" \
+  --instance="$SQL_INSTANCE" \
+  --password="$DB_PASSWORD"
+
+export INSTANCE_CONNECTION_NAME="$(gcloud sql instances describe "$SQL_INSTANCE" --format='value(connectionName)')"
 ```
 
-Note the **instance connection name** printed by:
+Keep the generated database password securely. Do not put it in source code or commit it to Git.
+
+## 6. Secret Manager
+
+The application expects a PostgreSQL connection URL. The generated password above contains only hexadecimal characters, so it can safely be placed in this URI without URL escaping.
+
 ```bash
-gcloud sql instances describe apollo-freighterp-db --format="value(connectionName)"
-# looks like: YOUR_PROJECT_ID:us-central1:apollo-freighterp-db
+printf 'postgresql://%s:%s@/%s?host=/cloudsql/%s' \
+  "$DB_USER" "$DB_PASSWORD" "$DB_NAME" "$INSTANCE_CONNECTION_NAME" \
+  | gcloud secrets create apollo-database-url --data-file=-
+
+openssl rand -hex 32 \
+  | gcloud secrets create apollo-session-secret --data-file=-
 ```
 
-`db-f1-micro` is the cheapest tier, fine to start with a small team - resize later with
-`gcloud sql instances patch` if needed.
-
-## 2. Build and push the container image
-
-From the repo root (where the `Dockerfile` is):
+If either secret already exists, add a new secret version instead of trying to create it again. Example:
 
 ```bash
-gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/apollo-freighterp/app
+printf 'NEW_VALUE' | gcloud secrets versions add apollo-database-url --data-file=-
 ```
 
-## 3. Deploy to Cloud Run
+## 7. Build the container
+
+Run this from the repository root containing `Dockerfile`:
 
 ```bash
-gcloud run deploy apollo-freighterp \
-  --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/apollo-freighterp/app \
-  --platform managed \
-  --region us-central1 \
+gcloud builds submit --tag "$IMAGE"
+```
+
+The Dockerfile installs the Node server and copies the complete `web/` directory into the same image. On Cloud Run, the browser therefore calls the API on the same origin rather than calling Render.
+
+## 8. Run database migrations explicitly
+
+This latest package contains the IT migration `036_hr_weekend_overrides.sql` and the CRM migration `037_crm_module.sql`. Production startup deliberately does not replay all migrations automatically.
+
+Create/update a one-off Cloud Run Job using the same image and database connection:
+
+```bash
+gcloud run jobs deploy apollo-connected-migrate \
+  --image="$IMAGE" \
+  --region="$REGION" \
+  --service-account="$RUN_SA" \
+  --set-cloudsql-instances="$INSTANCE_CONNECTION_NAME" \
+  --set-secrets="DATABASE_URL=apollo-database-url:latest,CUSTOMER_PORTAL_SECRET=apollo-session-secret:latest" \
+  --command=npm \
+  --args=run,migrate \
+  --max-retries=0 \
+  --task-timeout=20m
+
+gcloud run jobs execute apollo-connected-migrate \
+  --region="$REGION" \
+  --wait
+```
+
+Review the job logs. Do not proceed if a migration fails.
+
+For migration from the existing Neon database, restore the live data into Cloud SQL **before** the final reviewed migration run, or restore data-only after schema creation. Do not blindly restore an old schema on top of a migrated schema. Keep the original Neon database untouched until the cutover is fully validated.
+
+## 9. Deploy Cloud Run
+
+```bash
+gcloud run deploy "$SERVICE" \
+  --image="$IMAGE" \
+  --region="$REGION" \
+  --service-account="$RUN_SA" \
   --allow-unauthenticated \
-  --add-cloudsql-instances YOUR_PROJECT_ID:us-central1:apollo-freighterp-db \
-  --set-env-vars NODE_ENV=production,AUTO_MIGRATE=true \
-  --set-env-vars DATABASE_URL="postgresql://postgres:CHOOSE_A_STRONG_PASSWORD@/apollo_freighterp?host=/cloudsql/YOUR_PROJECT_ID:us-central1:apollo-freighterp-db" \
-  --set-env-vars CUSTOMER_PORTAL_SECRET="$(openssl rand -hex 32)"
+  --add-cloudsql-instances="$INSTANCE_CONNECTION_NAME" \
+  --set-secrets="DATABASE_URL=apollo-database-url:latest,CUSTOMER_PORTAL_SECRET=apollo-session-secret:latest" \
+  --set-env-vars="NODE_ENV=production" \
+  --memory=1Gi \
+  --cpu=1 \
+  --concurrency=40 \
+  --timeout=300
 ```
 
-Notes:
-- `--add-cloudsql-instances` is what makes Cloud Run mount the Cloud SQL Unix socket - the app's
-  `server/src/db.js` already detects this connection format automatically and skips TLS for it
-  (Cloud SQL and Neon need opposite TLS settings; this repo now handles both correctly).
-- `--allow-unauthenticated` makes the app publicly reachable (like it is today on Vercel/Render).
-  Cloud Run's own access control is separate from the app's own login system - keep this unless
-  you specifically want to put the whole app behind Google IAM as well.
-- Generate `CUSTOMER_PORTAL_SECRET` once and reuse the same value on every future deploy - if it
-  changes, everyone's login session is invalidated (not dangerous, just means everyone has to log
-  in again).
-- On first boot, `AUTO_MIGRATE=true` runs all the SQL migrations automatically against the new,
-  empty database - no manual migration step needed.
-- Want secrets out of your deploy command/history entirely? Store them in Secret Manager instead
-  (`gcloud secrets create ...`) and reference with `--set-secrets` instead of `--set-env-vars` -
-  optional, `--set-env-vars` above works fine to start.
+`--allow-unauthenticated` means the Cloud Run URL is reachable on the internet; Apollo Connected's own login and permissions still protect the application. If IT wants an additional identity perimeter later, add it deliberately rather than mixing it into this migration.
 
-Cloud Run prints a URL like `https://apollo-freighterp-xxxxx-uc.a.run.app` when deploy finishes.
-That's your app - it serves both the UI and the API from that one URL.
+For consistently fast login/dashboard response, IT can set a minimum instance of 1. That reduces cold starts but creates an ongoing Cloud Run charge.
 
-## 4. Verify
+## 10. Verify before DNS cutover
+
+Get the service URL:
 
 ```bash
-curl https://YOUR-CLOUD-RUN-URL/api/health
+export SERVICE_URL="$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')"
+echo "$SERVICE_URL"
+curl "$SERVICE_URL/api/health"
 ```
-should return `"database": "connected"`. Then open the URL in a browser and log in with
-`admin` / `admin123` (or whichever seeded credentials you're using).
 
-## 5. Redeploying after code changes
+The health response should show the database as connected/ready. Then test in the browser using real production Admin credentials stored in the database. The historical `admin / admin123` fallback is disabled in production.
+
+Minimum live CRM security test:
+
+1. Enable CRM for two temporary sales users, Sales A and Sales B.
+2. Assign a test account to Sales A.
+3. Confirm Sales A sees it.
+4. Confirm Sales B does not see it.
+5. Attempt the account API URL using Sales B's token and the known account ID; it must return not found/denied, not the record.
+6. Remove export permission from Sales A; export must return 403.
+7. Reassign the account to Sales B; it must disappear from Sales A and appear for Sales B, with the handover recorded in CRM activity/audit.
+
+## 11. `connected.apollo-freight.com`
+
+Do **not** rely on Cloud Run's direct domain-mapping command for a Middle East region. Google's direct Cloud Run domain mapping has limited regional availability and is not the recommended production option. For a service in Dammam/Doha, use a **global external Application Load Balancer** with a Google-managed certificate, then point the GoDaddy DNS record for `connected.apollo-freight.com` to the load balancer.
+
+The recommended production path is:
+
+Cloud Run (`me-central2`) → serverless NEG → global external HTTPS load balancer → Google-managed TLS certificate → `connected.apollo-freight.com`.
+
+This also gives Apollo a clean path to add Cloud Armor later if desired.
+
+Do not switch DNS until the Cloud Run URL passes the full login/CRM/ERP/HR/Maintenance tests.
+
+## 12. CORS lockdown after cutover
+
+The application currently allows configurable origins. After the final hostname is live and rollback testing is complete, set:
 
 ```bash
-gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/apollo-freighterp/app
-gcloud run deploy apollo-freighterp --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/apollo-freighterp/app --region us-central1
-```
-(env vars and the Cloud SQL connection persist across redeploys automatically - you only need to
-pass `--set-env-vars`/`--add-cloudsql-instances` again if you're changing them.)
-
-## 6. Cloud Storage (for uploaded files — setup for later)
-
-Important: the app doesn't actually save uploaded file content anywhere today (not even on your
-current Vercel/Render/Neon setup) — it only stores the filename as text. Real upload support isn't
-built yet. These are just the one-time GCP setup steps so it's ready whenever that feature gets
-built - running them now doesn't turn uploads on by itself.
-
-```bash
-gcloud services enable storage.googleapis.com
-
-gcloud storage buckets create gs://YOUR_PROJECT_ID-apollo-documents \
-  --location=us-central1 \
-  --uniform-bucket-level-access
+gcloud run services update "$SERVICE" \
+  --region="$REGION" \
+  --update-env-vars="ALLOWED_ORIGIN=https://connected.apollo-freight.com"
 ```
 
-Let Cloud Run write to it, without making the bucket itself public:
-```bash
-# Find the Cloud Run service's runtime service account
-gcloud run services describe apollo-freighterp --region us-central1 \
-  --format="value(spec.template.spec.serviceAccountName)"
+If IT still needs the raw Cloud Run URL for browser testing, include both origins separated by a comma until testing is complete.
 
-# Grant that service account write access to the bucket
-gcloud storage buckets add-iam-policy-binding gs://YOUR_PROJECT_ID-apollo-documents \
-  --member="serviceAccount:THE_SERVICE_ACCOUNT_FROM_ABOVE" \
-  --role="roles/storage.objectAdmin"
-```
+## 13. Cloud Storage for future real attachments
 
-Keep the bucket private (recommended) and serve files through short-lived signed URLs generated
-by the server, rather than making the bucket public - avoids exposing customer/shipment documents
-to anyone with a guessable link.
+The present ERP/CRM stores links/filenames; it does not yet upload binary documents into cloud storage. Create a private bucket only when the upload feature is implemented, and serve downloads through authorized server endpoints or short-lived signed URLs. Never make customer documents publicly readable.
 
-When this feature does get built, it will need:
-- A server-side upload endpoint (multipart handling, e.g. `multer` or `busboy`) that streams the
-  file to this bucket using the `@google-cloud/storage` npm package.
-- The client's file input actually reading and sending file content (right now it only reads the
-  filename) - `web/app-runtime.js` would need a real `FileReader`/`fetch` upload step wherever
-  `data.fileUpload` is currently just read for its `.name`.
-- A bucket name env var (e.g. `DOCUMENTS_BUCKET=YOUR_PROJECT_ID-apollo-documents`) passed to Cloud
-  Run the same way `DATABASE_URL` is today.
+## 14. Cutover / rollback rule
 
-## 7. Optional: custom domain
+Keep Vercel, Render and Neon running during migration. Only decommission them after:
 
-```bash
-gcloud run domain-mappings create --service apollo-freighterp --domain your-domain.com --region us-central1
-```
-Follow the DNS records it gives you.
+- live data counts are reconciled
+- login works for all portal types
+- CRM account isolation passes
+- ERP/HR/Maintenance smoke tests pass
+- backups are confirmed
+- DNS/TLS is stable
+- IT has a tested rollback path
 
-## 8. Decommissioning Vercel / Render / Neon
-
-Once you've confirmed the Cloud Run deployment works end-to-end:
-- Delete the Vercel project.
-- Delete the Render service.
-- Export/verify your data is fully migrated, then delete the Neon project.
-- `vercel.json` and `render.yaml` in this repo are no longer used - safe to delete once you're
-  fully cut over (left in place for now in case you want to roll back).
-
-## Migrating existing data from Neon to Cloud SQL (if you have real data already)
-
-```bash
-# Dump from Neon
-pg_dump "YOUR_NEON_CONNECTION_STRING" --no-owner --no-privileges -f apollo_dump.sql
-
-# Restore into Cloud SQL via the Cloud SQL Auth Proxy
-cloud-sql-proxy YOUR_PROJECT_ID:us-central1:apollo-freighterp-db &
-psql "postgresql://postgres:CHOOSE_A_STRONG_PASSWORD@127.0.0.1:5432/apollo_freighterp" -f apollo_dump.sql
-```
-Do this BEFORE flipping `AUTO_MIGRATE` on for the Cloud Run service against this database, or
-run migrations first and then restore only the data (not the schema) to avoid conflicts.
-
-## Quick reference: products used
-
-| Product | Role |
-|---|---|
-| Cloud Run | Hosts the app (UI + API, one service) |
-| Cloud SQL | PostgreSQL database |
-| Artifact Registry | Stores the built container image |
-| Cloud Build | Builds the Docker image (`gcloud builds submit`) |
-| Cloud Storage | Stores uploaded documents (setup ready, feature not built yet - see section 6) |
-| Secret Manager (optional) | Stores DB password / session secret securely |
+`vercel.json` and `render.yaml` remain in this ZIP only for transition/rollback compatibility.

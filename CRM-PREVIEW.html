@@ -1,0 +1,3169 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Apollo Connected CRM — GCP Final Full Screen Preview</title><style>:root {
+  color-scheme: light;
+  --ink: #16202a;
+  --muted: #687582;
+  --muted-soft: #8a97a5;
+  --line: #dde4ec;
+  --line-strong: #c7d2de;
+  --canvas: #f4f6f8;
+  --paper: #ffffff;
+  --nav: #12202f;
+  --nav-soft: #20354a;
+  --accent: #f58220;
+  --accent-deep: #d96f16;
+  --blue: #425e7b;
+  --blue-soft: #eef3f8;
+  --green-soft: #edf7f2;
+  --green-text: #2d7054;
+  --red-soft: #fff7f8;
+  --red-text: #8e3b46;
+  --shadow: 0 24px 56px rgba(18, 32, 47, 0.14);
+}
+
+.hr-portal-theme {
+  --accent: #0f9d78;
+  --accent-deep: #0c7f61;
+  --nav: #0b2a24;
+  --nav-soft: #123c33;
+  --green-soft: #e8f7f1;
+  --green-text: #0c7f61;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at top right, rgba(245, 130, 32, 0.08), transparent 24rem),
+    linear-gradient(180deg, #f8fafc 0%, var(--canvas) 100%);
+  color: var(--ink);
+  font-family: "Segoe UI", "Aptos", sans-serif;
+}
+
+button,
+input,
+select,
+textarea,
+summary {
+  font: inherit;
+}
+
+button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 16px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+}
+
+button:hover {
+  filter: brightness(0.98);
+  transform: translateY(-1px);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  filter: none;
+  transform: none;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #fff;
+  color: var(--ink);
+}
+
+textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+input::placeholder {
+  color: #97a4b2;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eyebrow-light {
+  color: #afc3d8;
+}
+
+.company-name-ui {
+  color: var(--ink);
+}
+
+.company-name-ui span {
+  color: #d96f16;
+}
+
+.eyebrow.company-name-ui,
+.eyebrow-light.company-name-ui,
+.topbar .company-name-ui,
+.brand-ribbon .company-name-ui,
+.auth-footer .company-name-ui,
+.app-footer .company-name-ui {
+  color: var(--ink);
+}
+
+.login-brand-panel .company-name-ui,
+.sidebar .company-name-ui {
+  color: #fff;
+}
+
+.brand-row,
+.sidebar-brand {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.brand-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.brand-logo {
+  flex: 0 0 auto;
+  width: 58px;
+  height: 58px;
+  border-radius: 10px;
+  object-fit: contain;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(22, 32, 42, 0.12);
+}
+
+.brand-row-large {
+  align-items: flex-start;
+}
+
+.brand-mark-large,
+.brand-logo-large {
+  width: 70px;
+  height: 70px;
+}
+
+.brand-heading {
+  margin: 4px 0 0;
+  color: #fff;
+  font-size: 27px;
+  line-height: 1.15;
+}
+
+.brand-divider {
+  width: 100%;
+  height: 1px;
+  background: rgba(175, 195, 216, 0.2);
+}
+
+.login-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.login-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(360px, 440px);
+  width: min(860px, 100%);
+  min-height: auto;
+  overflow: hidden;
+  border: 1px solid rgba(18, 32, 47, 0.08);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.login-brand-panel {
+  padding: 30px;
+  background:
+    linear-gradient(180deg, rgba(18, 32, 47, 0.98), rgba(18, 32, 47, 0.95)),
+    linear-gradient(135deg, rgba(245, 130, 32, 0.12), transparent);
+  color: #fff;
+}
+
+.login-brand-block {
+  display: grid;
+  gap: 18px;
+  align-content: center;
+  min-height: 100%;
+}
+
+.login-tagline {
+  margin: 0;
+  color: #afc3d8;
+  font-size: 17px;
+  font-style: italic;
+}
+
+.brand-description {
+  margin: 0;
+  color: #afc3d8;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.login-card-shell {
+  display: grid;
+  place-items: center;
+  padding: 30px 34px;
+  background:
+    linear-gradient(180deg, rgba(245, 130, 32, 0.035), transparent 8rem),
+    #fff;
+}
+
+.login-card {
+  width: min(380px, 100%);
+  display: grid;
+  gap: 14px;
+}
+
+.login-card h2,
+.sidebar h2,
+.topbar h1,
+.panel h2,
+.dialog-header h2 {
+  margin: 4px 0 0;
+}
+
+.login-card h2 {
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.auth-eyebrow,
+.auth-copy,
+.auth-footer,
+.form-message,
+.reset-help,
+.reset-message,
+.context-copy,
+.filter-status {
+  margin: 0;
+}
+
+.auth-copy,
+.auth-footer,
+.reset-help,
+.filter-status,
+.context-copy {
+  color: var(--muted);
+}
+
+.auth-copy {
+  margin-top: -10px;
+  font-size: 14px;
+}
+
+.auth-footer {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+.login-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.login-mode-button {
+  border: 1px solid var(--line-strong);
+  background: var(--blue-soft);
+  color: var(--ink);
+}
+
+.login-mode-button.is-active {
+  background: var(--nav);
+  color: #fff;
+}
+
+.login-mode-help {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+
+.password-input-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-input-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-input-button input {
+  min-width: 0;
+}
+
+.password-input-wrap input {
+  min-width: 0;
+}
+
+.password-toggle {
+  min-width: 70px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--blue-soft);
+  color: var(--ink);
+}
+
+.form-message,
+.reset-message {
+  min-height: 20px;
+  color: var(--red-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.reset-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfd;
+}
+
+.reset-panel summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.reset-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.reset-panel[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.reset-panel-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.reset-help {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.navy-button {
+  background: var(--nav);
+}
+
+.blue-button {
+  background: var(--blue);
+}
+
+.secondary-button,
+.ghost-button {
+  border: 1px solid var(--line-strong);
+  background: var(--blue-soft);
+  color: var(--ink);
+}
+
+.danger-button {
+  background: var(--red-text);
+  color: #fff;
+}
+
+.row-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.row-action-group .ghost-button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.danger-text {
+  color: var(--red-text);
+  border-color: var(--red-text);
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  padding: 22px 16px;
+  background: var(--nav);
+  color: #fff;
+}
+
+.sidebar-brand-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.sidebar-tagline {
+  margin: 0;
+  color: #afc3d8;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.sidebar h2 {
+  font-size: 22px;
+  color: #fff;
+}
+
+.nav-list {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-list button {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: transparent;
+  color: #d9e3ee;
+  text-align: left;
+  font-weight: 650;
+}
+
+.nav-list button:hover {
+  background: var(--nav-soft);
+}
+
+.nav-list button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.portal-access-panel {
+  display: grid;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.portal-access-title {
+  margin: 0 0 2px;
+  color: #afc3d8;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.portal-switch-button {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.portal-switch-button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.portal-switch-button.portal-switch-secondary {
+  color: #c8d3df;
+  background: transparent;
+}
+
+.workspace-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 460px);
+  gap: 18px;
+  align-items: start;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.topbar-main {
+  display: grid;
+  gap: 8px;
+}
+
+.brand-ribbon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.brand-ribbon span {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.page-heading h1 {
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+#pageEyebrow {
+  display: none;
+}
+
+.page-heading p:last-child {
+  margin-top: 5px;
+}
+
+.top-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+.top-action-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 190px;
+}
+.erp-announcements-dropdown {
+  position: relative;
+  min-width: 190px;
+  color: var(--navy);
+}
+.erp-announcements-dropdown summary {
+  min-height: 38px;
+  padding: 10px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--navy);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+.erp-announcements-dropdown summary::-webkit-details-marker { display: none; }
+.erp-announcements-dropdown summary::after { content: "▾"; float: right; margin-left: 10px; color: var(--accent); }
+.erp-announcements-dropdown[open] summary { border-color: var(--accent); }
+.erp-announcements-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18);
+}
+.erp-announcement-item {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-left: 3px solid #cbd5e1;
+  background: #f8fafc;
+}
+.erp-announcement-item.is-pinned { border-left-color: var(--accent); }
+.erp-announcement-item strong { color: var(--navy); font-size: 12px; }
+.erp-announcement-item span { color: #475569; font-size: 11px; line-height: 1.45; }
+.erp-announcement-item small { color: #64748b; font-size: 10px; }
+.announcement-loading,
+.announcement-empty { color: #64748b; font-size: 11px; }
+
+.toast-stack {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+}
+
+.toast {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-left: 5px solid #2563eb;
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  padding: 12px 14px;
+}
+
+.toast strong {
+  display: block;
+  font-size: 0.82rem;
+  margin-bottom: 3px;
+}
+
+.toast span {
+  display: block;
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.toast-success {
+  border-left-color: #16a34a;
+}
+
+.toast-denied {
+  border-left-color: #d97706;
+}
+
+.toast-failed {
+  border-left-color: #dc2626;
+}
+
+.date-filter-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto 180px 180px auto auto minmax(220px, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+  margin-top: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.filter-label {
+  align-self: center;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.filter-status {
+  align-self: center;
+  font-size: 12px;
+}
+
+.branch-filter-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  align-self: center;
+}
+
+.branch-filter-panel.is-hidden {
+  display: none;
+}
+
+.branch-filter-panel .filter-label {
+  margin-right: 2px;
+}
+
+.branch-filter-panel .checkbox-field {
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.api-banner {
+  display: none;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #f5f9fc;
+  color: var(--blue);
+}
+
+.api-banner strong {
+  color: inherit;
+}
+
+.api-banner span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.api-banner.is-ok {
+  background: var(--green-soft);
+  color: var(--green-text);
+}
+
+.api-banner.is-warning {
+  background: #fff5eb;
+  color: var(--accent-deep);
+}
+
+.data-sync-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  padding: 9px 16px;
+  background: var(--blue, #2f6fed);
+  color: #fff;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.data-sync-banner.is-hidden {
+  display: none;
+}
+
+.workspace {
+  min-width: 0;
+  padding: 24px;
+}
+
+.module-content {
+  display: grid;
+  gap: 18px;
+}
+
+.admin-request-strip {
+  align-items: stretch;
+}
+
+.admin-delete-panel {
+  border-color: rgba(191, 45, 45, 0.28);
+  background: #fffafa;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpi,
+.panel,
+.alert,
+.record-dialog::backdrop {
+  border-radius: 14px;
+}
+
+.kpi,
+.panel {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 30px rgba(18, 32, 47, 0.05);
+}
+
+.kpi {
+  padding: 16px;
+}
+
+/* The branch totals need extra width for the two currency columns. */
+.kpi.kpi-branch {
+  grid-column: span 2;
+}
+
+.kpi-branch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 8px;
+}
+
+.kpi-branch-cell {
+  min-width: 0;
+  padding: 0 8px;
+  border-left: 1px solid var(--line);
+}
+
+.kpi-branch-cell:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.kpi-branch-cell small {
+  display: block;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.kpi.kpi-branch .kpi-branch-cell strong {
+  display: block;
+  margin: 8px 0 3px;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1.15;
+  white-space: nowrap;
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+@media (max-width: 600px) {
+  .kpi-branch-grid {
+    gap: 6px;
+  }
+  .kpi-branch-cell {
+    padding: 0 6px;
+  }
+  .kpi-branch-cell:first-child {
+    padding-left: 0;
+  }
+  .kpi.kpi-branch   .kpi-branch-cell strong {
+    font-size: 12px;
+    letter-spacing: -0.3px;
+  }
+  .kpi.kpi-branch {
+    grid-column: span 1;
+  }
+}
+
+.kpi span,
+.kpi small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.kpi strong {
+  display: block;
+  margin: 8px 0 3px;
+  color: var(--blue);
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.wide-left {
+  grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.9fr);
+}
+
+.single-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.panel-header h2 {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.table-wrap {
+  max-height: min(620px, calc(100vh - 260px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.table-wrap table {
+  font-size: 11px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--line-strong);
+  background: #fff;
+  padding: 0;
+}
+
+.column-filter-row th {
+  position: static;
+  background: #fbfbfb;
+  border-bottom: 1px solid var(--line);
+  padding: 3px 4px;
+}
+
+.column-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.column-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.column-lock-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.icon-toggle-button {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.icon-toggle-button:hover {
+  background: #f1f4f8;
+}
+
+.shipment-column-tools { position: relative; display: flex; align-items: center; min-height: 34px; margin: 2px 0 10px; }
+.shipment-column-toggle { min-height: 31px; padding: 5px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; }
+.shipment-column-menu { position: absolute; z-index: 30; top: 36px; left: 0; width: min(310px, calc(100vw - 48px)); max-height: min(460px, calc(100vh - 120px)); overflow: auto; padding: 12px; border: 1px solid #d7e0ea; border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgba(30, 47, 69, .16); }
+.shipment-column-menu[hidden] { display: none; }
+.shipment-column-menu-title { margin-bottom: 3px; color: #1b2a3a; font-size: 13px; font-weight: 700; }
+.shipment-column-menu-help { margin-bottom: 9px; color: #637489; font-size: 11px; line-height: 1.35; }
+.shipment-column-setting { display: flex; align-items: center; gap: 8px; min-height: 32px; margin: 2px 0; padding: 5px 7px; border: 1px solid transparent; border-radius: 7px; color: #28394a; font-size: 12px; cursor: grab; user-select: none; }
+.shipment-column-setting:hover { border-color: #dce6f0; background: #f5f8fb; }
+.shipment-column-drag { color: #8b9aab; font-size: 14px; line-height: 1; }
+.shipment-column-setting input[type="checkbox"] { position: relative; width: 15px; height: 15px; margin: 0; appearance: none; border: 1px solid #aab8c7; border-radius: 4px; background: #fff; cursor: pointer; }
+.shipment-column-setting input[type="checkbox"]:checked { border-color: #f58220; background: #f58220; }
+.shipment-column-setting input[type="checkbox"]:checked::after { content: "✓"; position: absolute; top: -3px; left: 2px; color: #fff; font-size: 13px; font-weight: 800; }
+.shipment-column-setting input[type="checkbox"]:focus-visible { outline: 2px solid #8ab9e8; outline-offset: 1px; }
+.shipment-column-menu-actions { display: flex; gap: 7px; margin-top: 10px; padding-top: 9px; border-top: 1px solid #e4ebf2; }
+.shipment-column-menu-actions .secondary-button { min-height: 29px; padding: 4px 9px; font-size: 11px; }
+
+.customer-activity-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 10px;
+  color: #526477;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.customer-activity-filter select {
+  width: auto;
+  min-width: 170px;
+  min-height: 32px;
+  padding: 4px 28px 4px 9px;
+  border: 1px solid #c9d6e3;
+  border-radius: 6px;
+  background: #fff;
+  color: #25374a;
+  font: inherit;
+}
+
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+  user-select: none;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle:active {
+  background: var(--accent, #1a5fb4);
+  opacity: 0.4;
+}
+
+.sort-header-button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.sort-header-button:hover {
+  background: #f1f4f8;
+}
+
+.sort-header-button.is-active {
+  color: var(--accent, #1a5fb4);
+}
+
+.audit-scroll {
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.audit-scroll .table-wrap {
+  min-width: 760px;
+}
+
+.audit-scroll th:first-child,
+.audit-scroll td:first-child {
+  width: 36px;
+  text-align: center;
+}
+
+.audit-details {
+  cursor: help;
+  border-bottom: 1px dotted var(--line);
+}
+
+.audit-details-empty {
+  color: var(--muted, #8a94a3);
+}
+
+.audit-detail-list {
+  display: grid;
+  gap: 12px;
+}
+
+.audit-detail-entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fbff;
+}
+
+.audit-detail-entry-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.audit-detail-entry-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.audit-detail-entry-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.audit-detail-entry-meta {
+  color: var(--muted, #8a94a3);
+  font-size: 12px;
+}
+
+.audit-change-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.audit-change-table th,
+.audit-change-table td {
+  border-top: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.audit-change-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted, #8a94a3);
+}
+
+.audit-change-note {
+  margin: 0;
+  font-size: 13px;
+}
+
+.audit-change-note-empty {
+  color: var(--muted, #8a94a3);
+}
+
+.receipt-box {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.receipt-line,
+.receipt-total {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.receipt-total {
+  grid-template-columns: minmax(0, 1fr) auto;
+  font-size: 0.95rem;
+}
+
+.charge-line-builder {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.tariff-charge-builder {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.tariff-charge-entry {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 150px 110px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.tariff-charges-table {
+  min-width: 720px;
+}
+
+.form-section {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.form-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.collapsible-section summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.collapsible-section:not([open]) {
+  gap: 0;
+}
+
+.dashboard-alert-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-alert-row {
+  margin-top: 18px;
+}
+
+.dashboard-alert-panel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+
+.dashboard-alert-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dashboard-alert-panel > summary .panel-header {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.dashboard-alert-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 84px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f3f7fb;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.dashboard-alert-toggle::before {
+  content: "Expand";
+}
+
+.dashboard-alert-panel[open] .dashboard-alert-toggle::before {
+  content: "Collapse";
+}
+
+.form-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.form-section textarea {
+  min-height: 68px;
+}
+
+.cargo-entry {
+  grid-template-columns: 70px 52px repeat(3, 58px) 66px 82px 98px auto;
+  align-items: end;
+  min-width: 660px;
+  gap: 6px;
+}
+
+.cargo-category-row {
+  max-width: 260px;
+}
+
+.cargo-entry label {
+  font-size: 11px;
+}
+
+.cargo-entry input,
+.cargo-entry select {
+  min-height: 34px;
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.cargo-entry button {
+  width: max-content;
+  min-height: 34px;
+  padding: 7px 12px;
+  justify-self: start;
+}
+
+.cargo-live-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cargo-live-summary span {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pod-cargo-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 10px 12px;
+  border: 1px solid #cbdcf1;
+  border-radius: 8px;
+  background: #f4f8fc;
+}
+
+.employee-document-panel {
+  margin-top: 20px;
+}
+
+.employee-document-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.employee-document-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.employee-document-list {
+  display: grid;
+  gap: 8px;
+}
+
+.employee-document-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto auto minmax(180px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.employee-document-row.is-locked {
+  border-color: #e3b9bd;
+  background: #fff8f8;
+}
+
+.employee-document-row-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.employee-document-row-main small {
+  color: var(--muted);
+}
+
+.employee-document-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.document-locked,
+.document-unlocked {
+  width: max-content;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.document-locked {
+  color: var(--red-text);
+  background: #ffe6e8;
+}
+
+.document-unlocked {
+  color: var(--green-text);
+  background: var(--green-soft);
+}
+
+.employee-document-card small {
+  color: var(--muted);
+}
+.employee-profile-thumbnail {
+  width: 78px;
+  height: 78px;
+  object-fit: cover;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.employee-document-card a {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.document-uploaded,
+.document-missing {
+  width: max-content;
+  padding: 3px 8px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.document-uploaded {
+  color: #176b3a;
+  background: #e6f7ed;
+}
+
+.document-missing {
+  color: #7a5b14;
+  background: #fff4d8;
+}
+
+.post-login-announcement-notice {
+  margin-bottom: 18px;
+  border-color: #c7d9ef;
+  background: linear-gradient(135deg, #f6faff 0%, #ffffff 72%);
+}
+
+.post-login-announcement-notice .panel-header {
+  align-items: flex-start;
+}
+
+.post-login-announcement-notice h2 {
+  margin: 2px 0 4px;
+}
+
+.announcement-unread-badge {
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: #1c4f86;
+  background: #dcecff;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pod-cargo-summary span {
+  color: var(--muted);
+}
+
+.pod-split-history {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #cbdcf1;
+  border-radius: 8px;
+  background: #f4f8fc;
+}
+
+.pod-split-history .table-wrap {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.pod-action-row {
+  flex-wrap: wrap;
+}
+
+.pallet-builder {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+  overflow-x: auto;
+}
+
+.pallet-builder .tariff-charge-entry {
+  grid-template-columns: repeat(4, minmax(90px, 120px)) auto;
+  justify-content: center;
+}
+
+.pallet-builder .cargo-entry {
+  grid-template-columns: 70px 52px repeat(3, 58px) 66px 82px 98px auto;
+  justify-content: stretch;
+}
+
+.cargo-description-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.pallet-builder .tariff-charges-table {
+  min-width: 640px;
+  table-layout: fixed;
+}
+
+.pallet-dimensions-table .pallet-col-sr {
+  width: 54px;
+}
+
+.pallet-dimensions-table .pallet-col-count {
+  width: 112px;
+}
+
+.pallet-dimensions-table .pallet-col-measure {
+  width: 92px;
+}
+
+.pallet-dimensions-table .pallet-col-total {
+  width: 112px;
+}
+
+.pallet-dimensions-table .pallet-col-button {
+  width: 120px;
+}
+
+.pallet-builder .tariff-charges-table th,
+.pallet-builder .tariff-charges-table td {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.tariff-weight-builder {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.tariff-weight-wrap {
+  grid-column: 1 / -1;
+  width: 100%;
+  overflow-x: auto;
+}
+
+.tariff-weight-table {
+  min-width: 620px;
+  table-layout: fixed;
+  border: 1px solid var(--line);
+}
+
+.tariff-weight-table th,
+.tariff-weight-table td {
+  border: 1px solid var(--line);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tariff-weight-table th:first-child {
+  width: 90px;
+}
+
+.tariff-weight-table input {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+.tariff-weight-cell.is-selected {
+  background: #fff3e8;
+}
+
+.dialog-body label:has([name="volumeCategory"]),
+.dialog-body label:has([name="cbm"]),
+.dialog-body label:has([name="chargeableKg"]),
+.dialog-body label:has([name="lastManifestRequestNo"]) {
+  justify-self: center;
+  width: min(100%, 260px);
+}
+
+.charge-line-entry,
+.charge-line-row,
+.charge-line-total {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.charge-line-row,
+.charge-line-total {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.charge-line-total {
+  grid-template-columns: minmax(0, 1fr) auto;
+  font-weight: 700;
+}
+
+table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.table-inline-link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.table-inline-link:hover {
+  filter: none;
+  transform: none;
+  text-decoration: underline;
+}
+
+.document-linked-to {
+  display: inline;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.document-linked-to strong {
+  color: var(--blue);
+  font-size: 12px;
+}
+
+.document-linked-to span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.kpi[data-dashboard-metric] {
+  cursor: pointer;
+}
+
+.kpi[data-dashboard-metric]:hover {
+  box-shadow: 0 16px 36px rgba(18, 32, 47, 0.08);
+}
+
+.alert-list,
+.load-board,
+.job-list,
+.stack-form {
+  display: grid;
+  gap: 12px;
+}
+
+.customer-booking-panel { max-width: 1180px; }
+.customer-booking-intro { max-width: 820px; margin: 0 0 18px; color: var(--muted); line-height: 1.55; }
+.customer-booking-form { gap: 18px; }
+.customer-booking-step { position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; padding: 20px; border: 1px solid #dce5f0; border-radius: 14px; background: linear-gradient(135deg, #ffffff, #f8fbff); box-shadow: 0 5px 16px rgba(25, 56, 91, .05); }
+.customer-booking-step > div > h3 { margin: 2px 0 4px; color: #17365d; }
+.customer-booking-step > div > p { margin: 0 0 16px; color: var(--muted); }
+.customer-step-number { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #1f6fb2; color: #fff; font-weight: 800; box-shadow: 0 3px 8px rgba(31, 111, 178, .24); }
+.customer-document-step { border-color: #bcd8f3; background: #f4f9ff; }
+.customer-file-picker { display: block; padding: 15px; border: 1px dashed #82b4df; border-radius: 10px; background: #fff; color: #17365d; font-weight: 700; }
+.customer-file-picker input { display: block; width: 100%; margin: 10px 0 7px; font-weight: 400; }
+.customer-file-picker small { display: block; color: var(--muted); font-weight: 500; }
+.customer-booking-step[hidden] { display: none; }
+
+@media (max-width: 680px) {
+  .customer-booking-step { grid-template-columns: 32px minmax(0, 1fr); padding: 14px; gap: 10px; }
+  .customer-step-number { width: 28px; height: 28px; }
+}
+
+.alert {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #f1d7db;
+  padding: 14px;
+  background: var(--red-soft);
+}
+
+.alert strong {
+  color: var(--red-text);
+}
+
+.hr-announcement-pinned {
+  border-color: var(--accent);
+  background: var(--green-soft);
+}
+
+.hr-announcement-pinned strong {
+  color: var(--green-text);
+}
+
+.alert span,
+.job-chip span,
+.empty-state {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.job-chip {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.job-chip.warning {
+  color: var(--red-text);
+}
+
+.stack-form {
+  grid-template-columns: 1fr;
+}
+
+.checkbox-field {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.checkbox-field input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
+.section-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.section-access-grid legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.permission-sub-options {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: -2px 0 4px 24px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent);
+  background: var(--blue-soft);
+  border-radius: 6px;
+}
+
+.permission-group-label {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.permission-group-label span {
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.dropdown-menu {
+  position: absolute;
+  z-index: 9999;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 38px rgba(18, 32, 47, 0.18);
+}
+
+.dropdown-menu button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.dropdown-menu button:hover,
+.dropdown-menu button:focus {
+  background: #eef6ff;
+  filter: none;
+  transform: none;
+}
+
+.dropdown-menu strong,
+.dropdown-menu span {
+  overflow-wrap: anywhere;
+}
+
+.dropdown-menu span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.action-stack,
+.bullet-card,
+.summary-card,
+.report-preview-page {
+  display: grid;
+  gap: 12px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.shipment-module-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.shipment-landscape-actions,
+.shipment-register-panel {
+  min-width: 0;
+}
+
+.shipment-quick-open-row {
+  width: 100%;
+  padding-top: 4px;
+}
+
+.shipment-quick-open-field {
+  display: grid;
+  gap: 5px;
+  width: min(620px, 100%);
+}
+
+.shipment-quick-open-field input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.shipment-landscape-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: max-content;
+  padding-top: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.shipment-landscape-action-row > button {
+  flex: 0 0 auto;
+  min-width: 94px;
+  white-space: nowrap;
+}
+
+.shipment-landscape-action-row .shipment-new-action {
+  background: var(--accent);
+  border-color: var(--accent);
+  min-width: 94px;
+}
+
+@media (max-width: 980px) {
+  .shipment-landscape-action-row {
+    padding-bottom: 4px;
+  }
+}
+
+.shipment-document-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-width: max-content;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--line);
+}
+
+.shipment-document-actions .secondary-button,
+.shipment-document-actions .shipment-primary-action {
+  flex: 0 0 auto;
+  min-width: 96px;
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.shipment-document-actions .shipment-primary-action {
+  min-width: 118px;
+}
+
+.shipment-document-actions [data-dialog-action="save-draft"] {
+  min-width: 82px;
+}
+
+.shipment-document-actions [data-dialog-action="upload-shipment-document"] {
+  min-width: 126px;
+}
+
+.shipment-document-actions [data-dialog-action="generate-tcn"] {
+  min-width: 98px;
+}
+
+.shipment-document-actions [data-dialog-action="view-tcn"] {
+  min-width: 82px;
+}
+
+.shipment-document-actions [data-dialog-action="generate-pod"] {
+  min-width: 142px;
+}
+
+.shipment-document-actions [data-dialog-action="duplicate-tcn"] {
+  min-width: 112px;
+}
+
+.shipment-document-actions .shipment-primary-action {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 800;
+}
+
+.shipment-document-actions .shipment-primary-action:hover {
+  background: var(--accent-dark, #d97706);
+  border-color: var(--accent-dark, #d97706);
+}
+
+.shipment-document-actions .shipment-document-name {
+  flex: 0 0 150px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shipment-document-actions .checkbox-field {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 31px;
+  margin: 0;
+  white-space: nowrap;
+}
+.shipment-document-actions .checkbox-field input {
+  width: auto;
+  min-height: 16px;
+  padding: 0;
+}
+.shipment-document-actions [data-shipment-document-name] {
+  flex: 0 1 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shipment entry windows use the full workspace so the action toolbar does not
+   collapse into a cramped strip on wide screens. The existing dialog controls
+   remain unchanged for every other record type. */
+.record-dialog:has(.shipment-document-actions) {
+  width: calc(100vw - 24px);
+  height: calc(100vh - 24px);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  margin: 12px;
+}
+
+.record-dialog:has(.shipment-document-actions) form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.record-dialog:has(.shipment-document-actions) .dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  width: 100%;
+}
+
+.record-dialog:has(.shipment-document-actions) .dialog-actions {
+  display: none;
+}
+
+.status-expand-row td {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 0;
+}
+
+.status-expand-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.status-expand-panel h4 {
+  margin: 4px 0 0;
+}
+
+.status-expand-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status-expand-panel-header h4 {
+  margin: 0;
+}
+
+.inline-status-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.inline-status-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 220px;
+  max-width: 100%;
+}
+
+.inline-status-form input,
+.inline-status-form select {
+  width: 100%;
+}
+
+.inline-status-form .action-row {
+  width: 100%;
+  flex-basis: 100%;
+}
+
+.shipment-journey {
+  display: grid;
+  gap: 14px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.shipment-journey-heading h4,
+.shipment-journey-heading p {
+  margin: 0;
+}
+
+.shipment-journey-heading .empty-state {
+  margin-top: 3px;
+}
+
+.shipment-timeline {
+  display: grid;
+  gap: 0;
+  max-width: 900px;
+}
+
+.shipment-timeline-card {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  position: relative;
+}
+
+.shipment-timeline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.shipment-timeline-dot {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  margin-top: 12px;
+  place-items: center;
+  border: 3px solid #58a87c;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px #edf7f2;
+}
+
+.shipment-timeline-line {
+  width: 2px;
+  min-height: 28px;
+  flex: 1;
+  background: var(--line-strong);
+}
+
+.shipment-timeline-content {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 8px 20px rgba(18, 32, 47, 0.06);
+}
+
+.shipment-timeline-title,
+.shipment-timeline-meta,
+.shipment-timeline-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  align-items: center;
+}
+
+.shipment-timeline-title {
+  justify-content: space-between;
+}
+
+.shipment-timeline-title h5,
+.shipment-timeline-remark {
+  margin: 0;
+}
+
+.shipment-timeline-title h5 {
+  color: var(--green-text);
+  font-size: 15px;
+}
+
+.shipment-timeline-state {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-text);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.shipment-timeline-meta span,
+.shipment-timeline-details span {
+  display: grid;
+  gap: 2px;
+  min-width: 130px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.shipment-timeline-meta b,
+.shipment-timeline-details b,
+.shipment-timeline-remark b {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.shipment-timeline-details {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.shipment-timeline-remark {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.shipment-timeline-card.current .shipment-timeline-dot {
+  border-color: #2c77bb;
+  background: #2c77bb;
+  box-shadow: 0 0 0 4px #e8f2fb;
+}
+
+.shipment-timeline-card.current .shipment-timeline-title h5 { color: #2c77bb; }
+.shipment-timeline-card.current .shipment-timeline-state { background: #e8f2fb; color: #2c77bb; }
+.shipment-timeline-card.cancelled .shipment-timeline-dot { border-color: var(--red-text); box-shadow: 0 0 0 4px var(--red-soft); }
+.shipment-timeline-card.cancelled .shipment-timeline-title h5 { color: var(--red-text); }
+.shipment-timeline-card.cancelled .shipment-timeline-state { background: var(--red-soft); color: var(--red-text); }
+.shipment-timeline-card.delayed .shipment-timeline-dot { border-color: #d7851f; box-shadow: 0 0 0 4px #fff3dd; }
+.shipment-timeline-card.delayed .shipment-timeline-title h5 { color: #b66708; }
+.shipment-timeline-card.delayed .shipment-timeline-state { background: #fff3dd; color: #b66708; }
+
+.shipment-delay-alerts { display: grid; gap: 8px; }
+.shipment-delay-alert { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid #f0bec5; border-radius: 10px; background: var(--red-soft); color: var(--red-text); }
+.shipment-delay-alert > span { font-size: 20px; }
+.shipment-delay-alert strong, .shipment-delay-alert p { margin: 0; }
+.shipment-delay-alert p { margin-top: 3px; font-size: 13px; }
+.shipment-register-indicator { display: inline-block; margin-right: 5px; }
+tr.shipment-row-delivered td { background: #f0faf4; }
+tr.shipment-row-arrival-overdue td, tr.shipment-row-delivery-overdue td { background: #fff0f1; }
+tr.shipment-row-delayed td { background: #fff8e9; }
+tr.shipment-row-cancelled td { background: #f2f3f5; }
+
+@media (max-width: 600px) {
+  .shipment-timeline-card { grid-template-columns: 24px minmax(0, 1fr); gap: 8px; }
+  .shipment-timeline-content { padding: 13px; }
+  .shipment-timeline-dot { margin-top: 16px; }
+  .shipment-timeline-meta span,
+  .shipment-timeline-details span { min-width: 100%; }
+}
+
+.tariff-detail-preview {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+}
+
+.tariff-preview-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.tariff-preview-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.tariff-preview-heading h3 {
+  margin: 0;
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.tariff-preview-heading strong {
+  white-space: nowrap;
+  color: var(--green-text);
+  font-size: 16px;
+}
+
+.tariff-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tariff-preview-grid p {
+  margin: 0;
+  min-width: 0;
+}
+
+.tariff-preview-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tariff-preview-grid strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.manifest-jobs-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.manifest-jobs-totals p {
+  margin: 0;
+  min-width: 0;
+}
+
+.manifest-jobs-totals span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.manifest-jobs-totals strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.dialog-picker,
+.selected-job-list {
+  display: grid;
+  gap: 10px;
+}
+
+/* The manifest's "Add Shipment" picker + added-shipment list was only ever occupying one of the
+   dialog's two grid columns by default, squeezing the shipment table into half the available
+   width. Spanning both columns gives it the full width the data actually needs. */
+[data-consolidation-picker] {
+  grid-column: 1 / -1;
+}
+
+.selected-job-chip {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.inline-link {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.inline-link:hover {
+  filter: none;
+  transform: none;
+  text-decoration: underline;
+}
+
+.bullet-card,
+.summary-card,
+.report-preview-empty {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.bullet-card p,
+.summary-card p {
+  margin: 0;
+}
+
+.bullet-card p {
+  position: relative;
+  padding-left: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.bullet-card p::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.report-toolbar {
+  display: grid;
+  gap: 12px;
+  align-items: end;
+}
+
+.report-toolbar {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.summary-card h3 {
+  margin: 0;
+  color: var(--blue);
+  font-size: 18px;
+}
+
+.summary-card p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.summary-card p:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.summary-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.summary-card strong {
+  color: var(--blue);
+}
+
+.report-preview-shell {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #eef4f8;
+}
+
+.report-preview-page {
+  min-height: 360px;
+  padding: 18px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(18, 32, 47, 0.05);
+}
+
+.report-preview-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: end;
+}
+
+.report-preview-heading h3,
+.report-preview-heading p {
+  margin: 0;
+}
+
+.report-preview-heading h3 {
+  font-size: 20px;
+}
+
+.report-preview-heading p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-badge.ok {
+  background: var(--green-soft);
+  color: var(--green-text);
+}
+
+.status-badge.warn {
+  background: #fff4d6;
+  color: #9b6500;
+}
+
+.status-badge.bad {
+  background: var(--red-soft);
+  color: var(--red-text);
+}
+
+.status-badge.neutral {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.consolidation-jobs {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.job-list-table {
+  display: grid;
+  gap: 10px;
+}
+
+.job-list-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.job-list-main,
+.job-list-detail-grid {
+  min-width: 0;
+}
+
+.branch-sequence-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.branch-sequence-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.branch-sequence-table th,
+.branch-sequence-table td {
+  padding: 13px;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+}
+
+.branch-sequence-table th:last-child,
+.branch-sequence-table td:last-child {
+  border-right: 0;
+}
+
+.branch-sequence-table th {
+  background: #f5f8fc;
+  color: var(--ink);
+}
+
+.branch-sequence-table label {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.branch-sequence-table label:last-child {
+  margin-bottom: 0;
+}
+
+.job-list-main {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.job-list-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.job-list-detail-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.job-list-detail-grid strong {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.record-dialog {
+  width: min(1500px, calc(100vw - 16px));
+  min-width: 480px;
+  min-height: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  resize: both;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.record-dialog::backdrop {
+  background: rgba(18, 32, 47, 0.45);
+}
+
+.record-dialog form {
+  position: relative;
+  min-height: 100%;
+  padding: 18px 20px 20px;
+}
+
+.dialog-header,
+.dialog-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dialog-header > div {
+  min-width: 0;
+}
+
+.dialog-window-controls {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.window-control-button {
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  display: grid;
+  place-items: center;
+}
+
+.window-control-button:hover {
+  background: rgba(18, 32, 47, 0.08);
+  color: var(--ink);
+  transform: none;
+  filter: none;
+}
+
+.window-control-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.window-control-close {
+  color: var(--muted);
+}
+
+.window-control-close:hover {
+  background: rgba(208, 56, 73, 0.12);
+  color: var(--red-text);
+}
+
+.window-control-icon {
+  display: block;
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dialog-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 10px;
+  margin: 14px 0;
+  max-height: calc(100vh - 210px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.dialog-body.single-column {
+  grid-template-columns: 1fr;
+}
+
+/* Keep the User Management access controls together and easy to scan. */
+.user-account-access-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--blue-soft);
+}
+
+.user-account-access-grid label {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .user-account-access-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.record-dialog.is-maximized {
+  width: calc(100vw - 16px);
+  height: calc(100vh - 16px);
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  margin: 8px;
+  resize: none;
+  border-radius: 12px;
+}
+
+.record-dialog.is-maximized form {
+  height: 100%;
+}
+
+.record-dialog.is-minimized {
+  min-height: unset;
+  height: auto;
+  max-height: none;
+  resize: none;
+}
+
+.record-dialog.is-minimized .dialog-body,
+.record-dialog.is-minimized .dialog-actions {
+  display: none;
+}
+
+.dashboard-popup-shell {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.dashboard-popup-shell .report-preview-shell {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dashboard-popup-shell .report-preview-page {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-footer {
+  padding: 10px 24px 14px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 1360px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .date-filter-panel {
+    grid-template-columns: repeat(5, minmax(0, auto));
+  }
+
+  .filter-status {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1160px) {
+  .app-shell,
+  .split-grid,
+  .wide-left {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    gap: 16px;
+  }
+
+  .nav-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-shell {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .date-filter-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-label,
+  .filter-status {
+    grid-column: 1 / -1;
+  }
+
+  .job-list-detail-grid {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+
+  .tariff-preview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .login-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .login-card-shell,
+  .login-brand-panel {
+    padding: 28px;
+  }
+
+  .top-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .login-screen,
+  .workspace,
+  .topbar,
+  .api-banner,
+  .app-footer {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .login-card-shell,
+  .login-brand-panel {
+    padding: 22px;
+  }
+
+  .nav-list,
+  .date-filter-panel,
+  .dialog-body,
+  .kpi-grid,
+  .report-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .job-list-row {
+    grid-template-columns: 1fr;
+  }
+
+  .job-list-detail-grid {
+    grid-template-columns: repeat(2, minmax(110px, 1fr));
+  }
+
+  .tariff-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tariff-charge-entry,
+  .password-input-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .cargo-description-row {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-heading {
+    font-size: 23px;
+  }
+
+  .page-heading h1 {
+    font-size: 24px;
+  }
+}
+
+/* Customer portal booking/tracking cleanup */
+.customer-booking-panel{max-width:100%;}
+.customer-booking-form{gap:18px;}
+.customer-booking-step{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;padding:18px;border:1px solid var(--border,#ddd);border-radius:12px;background:var(--panel-bg,#fff);}
+.customer-booking-step>div{min-width:0;}
+.customer-booking-step>.form-section-grid,.customer-booking-step>.customer-file-picker,.customer-booking-step>.tariff-charge-entry,.customer-booking-step>.tariff-charge-table,.customer-booking-step>.cargo-totals{grid-column:1 / -1;}
+.customer-step-number{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;background:var(--accent,#333);color:#fff;}
+.customer-booking-step h3{margin:0 0 4px;}
+.customer-booking-step p{margin:0 0 10px;}
+.customer-tracking-page{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;}
+.customer-tracking-page .panel{min-width:0;}
+.customer-tracking-detail{display:flex;flex-direction:column;gap:18px;}
+.customer-tracking-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px;border:1px solid var(--border,#ddd);border-radius:12px;}
+.customer-tracking-summary>div{min-width:0;padding:8px;}
+.customer-tracking-summary h3{margin:4px 0;}
+.customer-tracking-summary p{margin:0;}
+.customer-tracking-status{display:inline-block;margin-top:4px;}
+@media(max-width:900px){.customer-tracking-page{grid-template-columns:1fr}.customer-tracking-summary{grid-template-columns:1fr}.customer-booking-step{grid-template-columns:1fr}.customer-step-number{margin-bottom:2px}}
+
+/* HR Leave Portal */
+.hr-page{display:grid;gap:16px}.hr-hero{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:20px;border-radius:14px;background:linear-gradient(135deg,#f5f8ff,#fff);border:1px solid #dce5f4}.hr-hero h2{margin:4px 0}.hr-hero p{margin:4px 0}.hr-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.hr-kpi{padding:16px;border:1px solid #dfe5ec;border-radius:12px;background:#fff;display:grid;gap:4px}.hr-kpi strong{font-size:26px}.hr-kpi span{font-weight:700}.hr-kpi small{color:#667085}.hr-panel{padding:0;overflow:hidden}.hr-panel-head{padding:16px 18px;border-bottom:1px solid #e5e7eb}.hr-panel-head h3{margin:0}.hr-panel-head small{color:#667085}.hr-balance-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:16px}.hr-balance-card{border:1px solid #dfe5ec;border-radius:12px;padding:16px;background:#fff}.hr-balance-number{font-size:30px;font-weight:800;margin-top:8px}.hr-balance-card dl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.hr-balance-card dl div{background:#f7f8fa;border-radius:8px;padding:8px}.hr-balance-card dt{font-size:11px;color:#667085}.hr-balance-card dd{margin:2px 0 0;font-weight:700}.hr-projected{border-top:1px solid #eee;padding-top:10px;font-size:12px}.hr-table-wrap{overflow:auto}.hr-table{width:100%;border-collapse:collapse}.hr-table th,.hr-table td{padding:11px 12px;border-bottom:1px solid #edf0f3;text-align:left;vertical-align:top}.hr-table th{font-size:12px;background:#f8fafc}.hr-status{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700}.hr-status-pending{background:#fff4cc}.hr-status-approved{background:#dff7e8}.hr-status-rejected,.hr-status-cancelled{background:#ffe3e3}.hr-weekend-list{display:flex;flex-wrap:wrap;gap:8px;padding:16px}.hr-weekend-list span{padding:9px 12px;border:1px solid #dfe5ec;border-radius:8px}.hr-weekend-list .is-weekend{font-weight:700;background:#eef4ff}.hr-rule-box{padding:18px}.hr-form{padding:16px;display:grid;gap:16px}.hr-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.hr-form label{display:grid;gap:6px;font-weight:600}.hr-form input,.hr-form select,.hr-form textarea{width:100%;box-sizing:border-box}.hr-full{grid-column:1/-1}.hr-inline-form{padding:16px}.hr-weekend-checks{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px}.hr-weekend-checks label{display:flex;gap:6px;align-items:center;font-weight:600}.hr-weekend-checks input{width:auto}.hr-calculation{padding:12px;border:1px solid #dbe4f0;border-radius:10px;background:#f7faff}.hr-declaration{display:flex!important;grid-template-columns:none!important;gap:10px!important;align-items:flex-start}.hr-declaration input{width:auto!important;margin-top:3px}.hr-form-message{min-height:20px;font-weight:600}.hr-modal-backdrop,.hr-detail-modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;display:grid;place-items:center;padding:20px}.hr-modal{background:#fff;width:min(900px,96vw);max-height:92vh;overflow:auto;border-radius:16px;box-shadow:0 25px 80px rgba(0,0,0,.25)}.hr-modal-head{display:flex;justify-content:space-between;align-items:center;padding:18px;border-bottom:1px solid #e5e7eb}.hr-modal-head h2{margin:0}.hr-detail-grid{display:grid;grid-template-columns:180px 1fr;gap:10px;padding:20px}.hr-detail-grid strong{color:#475467}.hr-detail-grid span{white-space:pre-wrap}@media(max-width:900px){.hr-kpi-grid,.hr-balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hr-form-grid{grid-template-columns:1fr}}@media(max-width:600px){.hr-kpi-grid,.hr-balance-grid{grid-template-columns:1fr}.hr-hero{align-items:flex-start;flex-direction:column}.hr-detail-grid{grid-template-columns:1fr}.hr-table{min-width:760px}}.hr-hero form.hr-inline-form{padding:0;flex-shrink:0}.hr-branch-picker{grid-template-columns:1fr!important;min-width:160px}.hr-status-sent-back{background:#ffe8cc}.hr-review-form{padding:0 20px 20px;display:grid;gap:10px}.hr-review-form h3{margin:0}.hr-review-form label{display:grid;gap:6px;font-weight:600}.hr-review-form textarea{width:100%;box-sizing:border-box}.hr-warning-box{background:#fff8e6;border:1px solid #f0d998}
+/* HR completion additions */
+.hr-form-section{padding:16px;border:1px solid #e5e7eb;border-radius:12px;background:#fff;display:grid;gap:12px}.hr-form-section h3{margin:0}.hr-form-section .form-help,.hr-form-section small{color:#667085}.hr-leave-application{width:min(980px,96vw)}.hr-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:#dfe5ec;padding:1px}.hr-cal-head{background:#f8fafc;padding:10px;font-size:12px;font-weight:700;text-align:center}.hr-cal-cell{min-height:82px;background:#fff;padding:8px;display:flex;flex-direction:column;gap:5px}.hr-cal-cell strong{font-size:15px}.hr-cal-cell small{font-size:10px;color:#667085;overflow:hidden;text-overflow:ellipsis}.hr-cal-cell.is-empty{background:#f8fafc}.hr-cal-cell.is-weekend{background:#f3f4f6}.hr-cal-cell.is-holiday{background:#e9f7ee}.hr-cal-cell.is-blackout{background:#fff1f2}.hr-cal-cell.is-leave-approved{outline:2px solid #72b987;outline-offset:-2px}.hr-cal-cell.is-leave-pending{outline:2px solid #e5b93f;outline-offset:-2px}.hr-cal-cell.is-leave-rejected{outline:2px solid #e58a8a;outline-offset:-2px}.hr-legend{display:flex;flex-wrap:wrap;gap:10px;padding:16px}.hr-legend span{padding:8px 12px;border:1px solid #dfe5ec;border-radius:8px;font-size:12px}.hr-legend span:nth-child(1){background:#f3f4f6}.hr-legend span:nth-child(2){background:#e9f7ee}.hr-legend span:nth-child(3){background:#eef8f0}.hr-legend span:nth-child(4){background:#fff1f2}
+@media(max-width:600px){.hr-calendar-grid{font-size:11px}.hr-cal-cell{min-height:64px;padding:5px}.hr-cal-head{padding:7px 3px}}
+
+/* Apollo Connected CRM — sales workspace built on the Apollo V12 design language. */
+.crm-portal-theme {
+  --crm-navy:#071827;
+  --crm-navy-2:#0b2234;
+  --crm-orange:#f05a22;
+  --crm-orange-2:#ff6a29;
+  --crm-soft:#f3f5f6;
+  --crm-line:#d9dde1;
+  --crm-green:#15755b;
+  --crm-red:#a64242;
+  --crm-amber:#a56d14;
+}
+.crm-portal-theme .sidebar{border-top-color:var(--crm-orange)}
+.crm-portal-theme .nav-list button.active{background:#163044;border-left-color:var(--crm-orange)}
+.crm-portal-theme .page-heading h1{letter-spacing:-.04em}
+.crm-portal-theme .date-filter-panel{display:none!important}
+.crm-portal-theme #apiBanner{display:none!important}
+.crm-portal-theme .top-actions>label:first-child{display:none!important}
+.crm-portal-theme .workspace{background:linear-gradient(180deg,#f7f8f9 0,#f3f5f6 100%)}
+
+.crm-shell{display:grid;gap:18px}
+.crm-hero{
+  position:relative;overflow:hidden;background:linear-gradient(120deg,#071827 0%,#0b2234 70%,#163044 100%);
+  color:#fff;padding:26px 28px;border:1px solid #071827;min-height:150px;display:flex;align-items:center;justify-content:space-between;gap:24px
+}
+.crm-hero:after{content:"";position:absolute;right:-56px;top:-70px;width:250px;height:250px;border:46px solid rgba(240,90,34,.14);border-radius:50%}
+.crm-hero-copy{position:relative;z-index:1;max-width:780px}
+.crm-hero-eyebrow{font-size:10px;letter-spacing:.17em;text-transform:uppercase;font-weight:800;color:#ff9a70;margin:0 0 8px}
+.crm-hero h2{font-size:28px;line-height:1.05;letter-spacing:-.035em;margin:0 0 9px}
+.crm-hero p{margin:0;color:#c9d4dc;max-width:680px;font-size:13px}
+.crm-hero-actions{position:relative;z-index:1;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.crm-hero-actions button{background:var(--crm-orange);border-color:var(--crm-orange);color:#fff}
+.crm-hero-actions .secondary-button{background:transparent;color:#fff;border-color:#526474}
+
+.crm-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.crm-kpi{background:#fff;border:1px solid var(--crm-line);padding:18px 18px 16px;position:relative;min-height:112px}
+.crm-kpi:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--crm-orange)}
+.crm-kpi-label{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:800;color:#687582;margin-bottom:8px}
+.crm-kpi-value{font-size:28px;font-weight:900;letter-spacing:-.04em;color:#071827;line-height:1}
+.crm-kpi-note{margin-top:8px;color:#7a8790;font-size:11px}
+
+.crm-grid-2{display:grid;grid-template-columns:1.25fr .75fr;gap:16px}
+.crm-grid-equal{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.crm-panel{background:#fff;border:1px solid var(--crm-line)}
+.crm-panel-head{padding:16px 18px;border-bottom:1px solid var(--crm-line);display:flex;justify-content:space-between;gap:12px;align-items:center}
+.crm-panel-head h3{margin:0;font-size:15px;color:#071827}
+.crm-panel-head p{margin:3px 0 0;color:#7b8790;font-size:11px}
+.crm-panel-body{padding:16px 18px}
+.crm-panel-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.crm-panel-actions button{min-height:36px;font-size:11px;padding:7px 11px}
+
+.crm-toolbar{display:flex;gap:10px;align-items:end;justify-content:space-between;flex-wrap:wrap;background:#fff;border:1px solid var(--crm-line);padding:12px 14px}
+.crm-toolbar-group{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.crm-toolbar label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#687582;display:grid;gap:5px}
+.crm-toolbar input,.crm-toolbar select{min-height:38px;min-width:150px;background:#fff}
+.crm-toolbar .crm-search{min-width:270px}
+
+.crm-table-wrap{overflow:auto;border:1px solid var(--crm-line);background:#fff}
+.crm-table{width:100%;border-collapse:collapse;min-width:880px}
+.crm-table th{position:sticky;top:0;background:#f2f4f5;color:#53606a;font-size:10px;text-transform:uppercase;letter-spacing:.07em;text-align:left;padding:11px 12px;border-bottom:1px solid var(--crm-line);white-space:nowrap}
+.crm-table td{padding:11px 12px;border-bottom:1px solid #edf0f2;font-size:12px;color:#25313c;vertical-align:top}
+.crm-table tbody tr:hover{background:#fafbfb}
+.crm-table .crm-primary{font-weight:800;color:#071827}
+.crm-table .crm-sub{display:block;color:#7a8790;font-size:10px;margin-top:2px}
+.crm-table button.crm-link{background:none;border:0;color:#0b2234;text-decoration:underline;padding:0;min-height:0;font-size:12px;text-align:left}
+
+.crm-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;background:#edf1f4;color:#42515e;white-space:nowrap}
+.crm-badge.orange{background:#fff0e9;color:#b5481b}.crm-badge.green{background:#eaf6f1;color:#12644e}.crm-badge.red{background:#fff0f0;color:#953b3b}.crm-badge.amber{background:#fff6df;color:#805a10}.crm-badge.navy{background:#eaf0f5;color:#163044}
+
+.crm-pipeline{display:grid;grid-template-columns:repeat(5,minmax(200px,1fr));gap:10px;overflow:auto;padding-bottom:4px}
+.crm-stage{background:#f4f6f7;border:1px solid var(--crm-line);min-height:270px;padding:10px}
+.crm-stage-head{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:10px;padding:2px 2px 8px;border-bottom:2px solid #d9dde1}
+.crm-stage-head strong{font-size:11px;text-transform:uppercase;letter-spacing:.07em}.crm-stage-head span{font-size:10px;color:#77838c}
+.crm-opportunity-card{background:#fff;border:1px solid #dfe4e7;border-left:3px solid var(--crm-orange);padding:10px;margin-bottom:8px;box-shadow:0 4px 14px rgba(7,24,39,.04)}
+.crm-opportunity-card strong{display:block;font-size:12px;margin-bottom:4px}.crm-opportunity-card span{font-size:10px;color:#71808a;display:block;margin-top:2px}
+.crm-opportunity-card .value{font-size:13px;font-weight:900;color:#071827;margin-top:8px}
+
+.crm-timeline{display:grid;gap:0}
+.crm-event{display:grid;grid-template-columns:18px 1fr;gap:10px;padding:0 0 14px;position:relative}
+.crm-event:before{content:"";position:absolute;left:7px;top:16px;bottom:-3px;width:1px;background:#d7dde1}.crm-event:last-child:before{display:none}
+.crm-event-dot{width:15px;height:15px;border-radius:50%;background:#fff;border:4px solid var(--crm-orange);margin-top:3px;z-index:1}
+.crm-event-body{border:1px solid #e1e5e8;background:#fff;padding:11px 12px}.crm-event-body strong{font-size:12px}.crm-event-body p{font-size:11px;color:#63717b;margin:4px 0 0}.crm-event-meta{font-size:9px;color:#87939b;text-transform:uppercase;letter-spacing:.05em;margin-top:5px}
+
+.crm-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.crm-form-grid .wide{grid-column:1/-1}
+.crm-form-grid label{display:grid;gap:6px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#66737d}
+.crm-form-grid input,.crm-form-grid select,.crm-form-grid textarea{width:100%;min-height:40px;background:#fff}
+.crm-form-grid textarea{min-height:92px;resize:vertical}
+.crm-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--crm-line)}
+
+.crm-account-banner{background:#fff;border:1px solid var(--crm-line);border-top:4px solid var(--crm-orange);padding:18px;display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center}
+.crm-account-banner h3{margin:0 0 5px;font-size:20px}.crm-account-meta{display:flex;gap:8px;flex-wrap:wrap;color:#66737d;font-size:11px}.crm-account-owner{min-width:210px;background:#f4f6f7;padding:11px 12px}.crm-account-owner span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:#7a8790}.crm-account-owner strong{font-size:13px}
+
+.crm-security-callout{display:grid;grid-template-columns:44px 1fr;gap:12px;background:#071827;color:#fff;padding:16px 18px;border-left:4px solid var(--crm-orange)}
+.crm-security-icon{width:38px;height:38px;border:1px solid #496071;display:grid;place-items:center;font-weight:900;color:#ff7d45}.crm-security-callout strong{font-size:13px}.crm-security-callout p{font-size:11px;color:#c7d2d9;margin:4px 0 0}
+
+.crm-permission-matrix{display:grid;gap:8px}.crm-permission-row{display:grid;grid-template-columns:minmax(160px,1.4fr) repeat(6,minmax(80px,.7fr));gap:1px;background:#dfe4e7;border:1px solid #dfe4e7}.crm-permission-row>div{background:#fff;padding:9px 10px;font-size:10px;display:flex;align-items:center}.crm-permission-row.header>div{background:#f2f4f5;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#5f6c75}.crm-permission-row .user-cell{display:block}.crm-permission-row .user-cell strong{display:block;font-size:11px;color:#071827}.crm-permission-row .user-cell span{display:block;color:#7a8790;margin-top:2px}
+
+.crm-empty{padding:28px 18px;text-align:center;color:#7c8992;font-size:12px;border:1px dashed #cfd7dc;background:#fbfcfc}
+.crm-loading{padding:28px;text-align:center;color:#65737e;font-size:12px}
+.crm-error{background:#fff2f1;border:1px solid #efc8c3;color:#943c32;padding:12px 14px;font-size:12px}
+.crm-inline-note{font-size:10px;color:#7a8790}
+.crm-danger{background:#fff1f0!important;color:#8b352e!important;border-color:#e5b8b4!important}
+.crm-success{background:#edf7f2!important;color:#1d6a52!important;border-color:#bfdfd2!important}
+
+@media(max-width:1180px){.crm-kpis{grid-template-columns:repeat(2,1fr)}.crm-grid-2,.crm-grid-equal{grid-template-columns:1fr}.crm-pipeline{grid-template-columns:repeat(5,240px)}}
+@media(max-width:720px){.crm-kpis{grid-template-columns:1fr}.crm-hero{align-items:flex-start;flex-direction:column;padding:22px}.crm-form-grid{grid-template-columns:1fr}.crm-form-grid .wide{grid-column:auto}.crm-account-banner{grid-template-columns:1fr}.crm-toolbar .crm-search{min-width:100%}.crm-permission-row{grid-template-columns:minmax(150px,1.4fr) repeat(6,90px);overflow:auto}}
+
+/* Wider, scroll-safe dialog for CRM records and security controls */
+.crm-dialog{width:min(1040px,calc(100vw - 32px));max-height:92vh}
+.crm-dialog .dialog-body{max-height:72vh;overflow:auto}
+@media(max-width:680px){.crm-dialog{width:calc(100vw - 18px)}}
+
+
+.preview-page{display:none}.preview-page.active{display:grid;gap:18px}.preview-page>.crm-hero{margin-bottom:0}
+.preview-watermark{position:fixed;right:18px;bottom:12px;background:#071827;color:#fff;padding:7px 10px;font-size:10px;z-index:10;opacity:.86}
+.preview-note{margin:0;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;color:#9a4b14;font-size:11px}
+.preview-only-title{font-size:10px;color:#8a97a5;text-transform:uppercase;letter-spacing:.12em;margin:0}
+.topbar{grid-template-columns:1fr auto}.top-actions-preview{display:flex;align-items:center;gap:8px}.top-actions-preview span{font-size:11px;color:#687582;background:#f3f5f6;padding:8px 10px;border-radius:7px}
+.sidebar{position:sticky;top:0;height:100vh;overflow:auto}.sidebar .brand-logo{width:170px;height:auto;object-fit:contain;filter:none}.sidebar-brand{display:block}.sidebar-brand .eyebrow{margin-top:8px}
+.workspace{padding:18px 24px 36px}.crm-security-callout{margin-bottom:16px}
+@media(max-width:900px){.app-shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.nav-list{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{grid-template-columns:1fr}.workspace{padding:14px}.preview-watermark{display:none}}
+</style></head><body class="crm-portal-theme">
+<div class="app-shell"><aside class="sidebar"><div class="sidebar-brand-shell"><div class="sidebar-brand"><img class="brand-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAA7CAYAAAA+XsUpAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyJpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMy1jMDExIDY2LjE0NTY2MSwgMjAxMi8wMi8wNi0xNDo1NjoyNyAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENTNiAoV2luZG93cykiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6RjZGNTc1MjdFMjQ0MTFFNzlBMEFCMjUwMDBGM0Y4OEMiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6RjZGNTc1MjhFMjQ0MTFFNzlBMEFCMjUwMDBGM0Y4OEMiPiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDpGNkY1NzUyNUUyNDQxMUU3OUEwQUIyNTAwMEYzRjg4QyIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDpGNkY1NzUyNkUyNDQxMUU3OUEwQUIyNTAwMEYzRjg4QyIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PrIqhDoAABeQSURBVHja7F0HmFzV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" alt="Apollo Freight Solutions"><p class="eyebrow eyebrow-light company-name-ui">Apollo <span class="connected-word">Connected</span></p></div><p class="sidebar-tagline">CRM / SALES WORKSPACE</p><div class="brand-divider"></div></div><nav class="nav-list" id="previewNav"><button data-target="dashboard" class="active">CRM Dashboard</button><button data-target="accounts" class="">Accounts</button><button data-target="contacts" class="">Contacts</button><button data-target="opportunities" class="">Opportunities</button><button data-target="visits" class="">Sales Visits</button><button data-target="meetings" class="">Meeting Minutes</button><button data-target="tasks" class="">Follow-ups</button><button data-target="activity" class="">Activity Timeline</button><button data-target="reports" class="">CRM Reports</button><button data-target="team" class="">Team & Assignments</button><button data-target="security" class="">CRM Security</button></nav><section class="portal-access-panel"><p class="portal-access-title">Portal Access</p><button class="portal-switch-button">Open HR Portal</button><button class="portal-switch-button portal-switch-secondary">Open Maintenance Portal</button><button class="portal-switch-button active">CRM / Sales</button></section></aside>
+<div class="workspace-shell"><header class="topbar"><div class="topbar-main"><div class="brand-ribbon"><p class="eyebrow company-name-ui">Apollo <span class="connected-word">Connected</span></p><span>We bring continents closer.</span></div><div class="page-heading"><p class="eyebrow" id="screenEyebrow">CRM / SALES</p><h1 id="screenTitle">CRM Dashboard</h1><p id="screenSubtitle">Apollo customer relationship and sales control.</p><p class="context-copy">User: Khaldoun | CRM Role: Management | Account Scope: All Accounts</p></div></div><div class="top-actions-preview"><span>DESIGN PREVIEW · SAMPLE DATA</span></div></header><main class="workspace"><p class="preview-note">Interactive design review only. Use the left menu to preview every CRM screen. Sample names and figures are illustrative.</p><section class="preview-page active" data-page="dashboard"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>CRM Dashboard</h2><p>Accounts remain Apollo property. Sales visibility follows account assignment and server-side permissions.</p></div><div class="crm-hero-actions"><button>New Account</button><button class="secondary-button">Log Visit</button></div></section>
+<section class="crm-kpis"><article class="crm-kpi"><div class="crm-kpi-label">Assigned Accounts</div><div class="crm-kpi-value">38</div><div class="crm-kpi-note">11 active · 27 prospects</div></article><article class="crm-kpi"><div class="crm-kpi-label">Open Opportunities</div><div class="crm-kpi-value">17</div><div class="crm-kpi-note">AED 2.48M pipeline</div></article><article class="crm-kpi"><div class="crm-kpi-label">Weighted Pipeline</div><div class="crm-kpi-value">AED 1.31M</div><div class="crm-kpi-note">Probability-adjusted value</div></article><article class="crm-kpi"><div class="crm-kpi-label">Actions Due</div><div class="crm-kpi-value">6</div><div class="crm-kpi-note">Next 7 days</div></article></section>
+<section class="crm-grid-2"><section class="crm-panel"><div class="crm-panel-head"><div><h3>Priority Follow-ups</h3><p>Open tasks requiring attention</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Follow-up</th><th>Account</th><th>Due</th><th>Priority</th><th>Owner</th></tr></thead><tbody><tr><td>Send revised Qatar rate</td><td>Gulf Retail LLC</td><td>2026-09-13</td><td><span class="crm-badge red">High</span></td><td>Sara</td></tr><tr><td>Schedule customs demo</td><td>Maison Luxe ME</td><td>2026-09-14</td><td><span class="crm-badge navy">Normal</span></td><td>Ahkhmed</td></tr><tr><td>Tender clarification</td><td>Global Tech FZE</td><td>2026-09-15</td><td><span class="crm-badge red">High</span></td><td>Sara</td></tr></tbody></table></div></div></section><section class="crm-panel"><div class="crm-panel-head"><div><h3>Recent Activity</h3><p>Immutable CRM audit trail</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-timeline">
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Visit logged with Chalhoub Group</strong><p>Outcome: requested updated Kuwait / Qatar consolidation proposal.</p><div class="crm-event-meta">Ahkhmed · Today 15:40</div></div></div>
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Account reassigned: Gulf Retail LLC → Sara</strong><p>Ownership change recorded by management and retained in audit history.</p><div class="crm-event-meta">Khaldoun · Today 11:12</div></div></div>
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Opportunity moved to Proposal</strong><p>Dubai → Kuwait daily consolidation.</p><div class="crm-event-meta">Sara · Yesterday 16:20</div></div></div></div></div></section></section>
+<section class="crm-panel"><div class="crm-panel-head"><div><h3>Pipeline Snapshot</h3><p>High-value opportunities</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-pipeline" style="grid-template-columns:repeat(3,minmax(230px,1fr))"><div class="crm-opportunity-card"><strong>Daily Kuwait Consolidation</strong><span>Maison Luxe ME</span><span class="crm-badge orange">Proposal</span><div class="value">AED 780,000</div></div><div class="crm-opportunity-card"><strong>Qatar Last Mile Tender</strong><span>Gulf Retail LLC</span><span class="crm-badge amber">Negotiation</span><div class="value">AED 650,000</div></div><div class="crm-opportunity-card"><strong>Saudi FTL Program</strong><span>Global Tech FZE</span><span class="crm-badge navy">Discovery</span><div class="value">AED 420,000</div></div></div></div></section></section><section class="preview-page" data-page="accounts"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Accounts</h2><p>Every account has an accountable salesperson. A sales executive sees only accounts assigned to their login.</p></div><div class="crm-hero-actions"></div></section><div class="crm-toolbar"><div class="crm-toolbar-group"><label>Search<input class="crm-search" value=""></label><label>Status<select><option>All</option><option>Prospect</option><option>Active</option></select></label></div><div class="crm-toolbar-group"><button>New Account</button><button class="secondary-button">Export CSV</button></div></div><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Account</th><th>Status</th><th>Assigned Salesperson</th><th>Industry</th><th>Territory</th><th>Potential</th><th>Next Action</th><th>Last Visit</th><th></th></tr></thead><tbody><tr><td><strong>Gulf Retail LLC</strong><span class="crm-sub">CRM-2026-00031</span></td><td><span class="crm-badge green">Active</span></td><td><span class="crm-primary">Sara</span></td><td>Retail</td><td>Kuwait</td><td>AED 900,000</td><td>Contract review<span class="crm-sub">2026-09-18</span></td><td>2026-09-10</td><td><button class="secondary-button">Edit</button></td></tr><tr><td><strong>Maison Luxe ME</strong><span class="crm-sub">CRM-2026-00032</span></td><td><span class="crm-badge orange">Prospect</span></td><td><span class="crm-primary">Ahkhmed</span></td><td>Fashion</td><td>Dubai / GCC</td><td>AED 780,000</td><td>Submit proposal<span class="crm-sub">2026-09-14</span></td><td>2026-09-09</td><td><button class="secondary-button">Edit</button></td></tr><tr><td><strong>Global Tech FZE</strong><span class="crm-sub">CRM-2026-00033</span></td><td><span class="crm-badge orange">Lead</span></td><td><span class="crm-primary">Sara</span></td><td>Technology</td><td>UAE / KSA</td><td>AED 600,000</td><td>Tender reply<span class="crm-sub">2026-09-15</span></td><td>2026-09-08</td><td><button class="secondary-button">Edit</button></td></tr></tbody></table></div></section><section class="preview-page" data-page="contacts"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Contacts</h2><p>Decision makers and operational contacts stay attached to Apollo-owned accounts, even after reassignment.</p></div><div class="crm-hero-actions"><button>New Contact</button></div></section><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Name</th><th>Account</th><th>Title</th><th>Email</th><th>Mobile</th><th>Influence</th><th>Primary</th><th></th></tr></thead><tbody><tr><td><strong>Omar N.</strong></td><td>Gulf Retail LLC</td><td>Logistics Director</td><td>omar@example.com</td><td>+965 5XX XXX XX</td><td><span class="crm-badge orange">High</span></td><td><span class="crm-badge green">Primary</span></td><td><button class="secondary-button">Edit</button></td></tr><tr><td><strong>Layla M.</strong></td><td>Maison Luxe ME</td><td>Supply Chain Manager</td><td>layla@example.com</td><td>+971 5X XXX XXXX</td><td><span class="crm-badge navy">Decision Maker</span></td><td>—</td><td><button class="secondary-button">Edit</button></td></tr><tr><td><strong>Rami K.</strong></td><td>Global Tech FZE</td><td>Procurement Manager</td><td>rami@example.com</td><td>+971 5X XXX XXXX</td><td><span class="crm-badge navy">Medium</span></td><td>—</td><td><button class="secondary-button">Edit</button></td></tr></tbody></table></div></section><section class="preview-page" data-page="opportunities"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Opportunities</h2><p>A freight-focused pipeline from qualification through won or lost.</p></div><div class="crm-hero-actions"><button>New Opportunity</button><button class="secondary-button">Export CSV</button></div></section><div class="crm-pipeline"><section class="crm-stage"><div class="crm-stage-head"><strong>Qualification</strong><span>1</span></div><div class="crm-opportunity-card"><strong>New Automotive Lane</strong><span>Auto Parts GCC</span><span>Owner: Sara</span><div class="value">AED 180,000</div></div></section><section class="crm-stage"><div class="crm-stage-head"><strong>Discovery</strong><span>1</span></div><div class="crm-opportunity-card"><strong>Saudi FTL Program</strong><span>Global Tech FZE</span><span>Owner: Sara</span><div class="value">AED 420,000</div></div></section><section class="crm-stage"><div class="crm-stage-head"><strong>Proposal</strong><span>1</span></div><div class="crm-opportunity-card"><strong>Daily Kuwait Consolidation</strong><span>Maison Luxe ME</span><span>Owner: Sara</span><div class="value">AED 780,000</div></div></section><section class="crm-stage"><div class="crm-stage-head"><strong>Negotiation</strong><span>1</span></div><div class="crm-opportunity-card"><strong>Qatar Last Mile Tender</strong><span>Gulf Retail LLC</span><span>Owner: Sara</span><div class="value">AED 650,000</div></div></section><section class="crm-stage"><div class="crm-stage-head"><strong>Won</strong><span>1</span></div><div class="crm-opportunity-card"><strong>Customs Clearance Program</strong><span>Premium Retail Group</span><span>Owner: Sara</span><div class="value">AED 530,000</div></div></section></div></section><section class="preview-page" data-page="visits"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Sales Visits</h2><p>Proof of field activity with account, contact, purpose, outcome and mandatory next-step discipline.</p></div><div class="crm-hero-actions"><button>Log Visit</button></div></section><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Date</th><th>Account</th><th>Contact</th><th>Type</th><th>Purpose</th><th>Outcome</th><th>Follow-up</th><th>Logged By</th><th></th></tr></thead><tbody><tr><td><strong>2026-09-10</strong><span class="crm-sub">11:30</span></td><td>Gulf Retail LLC</td><td>Omar N.</td><td><span class="crm-badge navy">Client Visit</span></td><td>Qatar tender review</td><td>Requested final SLA and pricing</td><td>2026-09-13<span class="crm-sub">Send SLA</span></td><td>Sara</td><td><button class="secondary-button">Edit</button></td></tr><tr><td><strong>2026-09-09</strong><span class="crm-sub">14:00</span></td><td>Maison Luxe ME</td><td>Layla M.</td><td><span class="crm-badge navy">Presentation</span></td><td>Introduce Apollo Connected</td><td>Positive; wants Kuwait demo</td><td>2026-09-14<span class="crm-sub">Arrange demo</span></td><td>Ahkhmed</td><td><button class="secondary-button">Edit</button></td></tr></tbody></table></div></section><section class="preview-page" data-page="meetings"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Meeting Minutes</h2><p>Structured minutes, decisions and actions remain company records instead of leaving with an employee.</p></div><div class="crm-hero-actions"><button>New Minutes</button></div></section><div class="crm-grid-equal"><section class="crm-panel"><div class="crm-panel-head"><div><h3>Qatar Tender Commercial Review</h3><p>Gulf Retail LLC · 2026-09-10 11:30</p></div><div class="crm-panel-actions"><button class="secondary-button">Edit Minutes</button></div></div><div class="crm-panel-body"><p><strong>Attendees</strong><br>Omar N., Sara, Operations</p><p><strong>Minutes</strong><br>Reviewed SLA, cut-off times, delivery KPIs and reporting requirements.</p><p><strong>Decisions</strong><br>Apollo to submit final service matrix.</p><p><strong>Action Items</strong><br>Sara: commercial revision. Ops: final transit schedule.</p></div></section><section class="crm-panel"><div class="crm-panel-head"><div><h3>Kuwait Consolidation Proposal</h3><p>Maison Luxe ME · 2026-09-09 14:00</p></div><div class="crm-panel-actions"><button class="secondary-button">Edit Minutes</button></div></div><div class="crm-panel-body"><p><strong>Attendees</strong><br>Layla M., Ahkhmed</p><p><strong>Minutes</strong><br>Client requested daily cut-off visibility and POD reporting.</p><p><strong>Decisions</strong><br>Proceed to formal proposal stage.</p><p><strong>Action Items</strong><br>Send revised deck and portal demo.</p></div></section></div></section><section class="preview-page" data-page="tasks"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Follow-ups</h2><p>A disciplined next-action queue so customer promises do not disappear in chats or personal notebooks.</p></div><div class="crm-hero-actions"><button>New Follow-up</button></div></section><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Task</th><th>Account</th><th>Due</th><th>Priority</th><th>Status</th><th>Assigned To</th><th></th></tr></thead><tbody><tr><td><strong>Send revised Qatar rate</strong></td><td>Gulf Retail LLC</td><td>2026-09-13</td><td><span class="crm-badge red">High</span></td><td><span class="crm-badge orange">Open</span></td><td>Sara</td><td><button class="secondary-button">Complete</button></td></tr><tr><td><strong>Arrange Apollo Connected demo</strong></td><td>Maison Luxe ME</td><td>2026-09-14</td><td><span class="crm-badge navy">Normal</span></td><td><span class="crm-badge amber">In Progress</span></td><td>Ahkhmed</td><td><button class="secondary-button">Edit</button></td></tr><tr><td><strong>Tender clarification response</strong></td><td>Global Tech FZE</td><td>2026-09-15</td><td><span class="crm-badge red">Critical</span></td><td><span class="crm-badge orange">Open</span></td><td>Sara</td><td><button class="secondary-button">Edit</button></td></tr></tbody></table></div></section><section class="preview-page" data-page="activity"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Activity Timeline</h2><p>A searchable audit history of account ownership, visits, minutes, opportunities, follow-ups and security changes.</p></div><div class="crm-hero-actions"></div></section><section class="crm-panel"><div class="crm-panel-head"><div><h3>Company CRM History</h3><p>Latest recorded actions</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-timeline">
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Visit logged with Chalhoub Group</strong><p>Outcome: requested updated Kuwait / Qatar consolidation proposal.</p><div class="crm-event-meta">Ahkhmed · Today 15:40</div></div></div>
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Account reassigned: Gulf Retail LLC → Sara</strong><p>Ownership change recorded by management and retained in audit history.</p><div class="crm-event-meta">Khaldoun · Today 11:12</div></div></div>
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Opportunity moved to Proposal</strong><p>Dubai → Kuwait daily consolidation.</p><div class="crm-event-meta">Sara · Yesterday 16:20</div></div></div></div><div class="crm-timeline">
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Visit logged with Chalhoub Group</strong><p>Outcome: requested updated Kuwait / Qatar consolidation proposal.</p><div class="crm-event-meta">Ahkhmed · Today 15:40</div></div></div>
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Account reassigned: Gulf Retail LLC → Sara</strong><p>Ownership change recorded by management and retained in audit history.</p><div class="crm-event-meta">Khaldoun · Today 11:12</div></div></div>
+<div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>Opportunity moved to Proposal</strong><p>Dubai → Kuwait daily consolidation.</p><div class="crm-event-meta">Sara · Yesterday 16:20</div></div></div></div></div></section></section><section class="preview-page" data-page="reports"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>CRM Reports</h2><p>Management visibility across account ownership, pipeline, field activity and lead sources.</p></div><div class="crm-hero-actions"></div></section><section class="crm-kpis"><article class="crm-kpi"><div class="crm-kpi-label">Team Accounts</div><div class="crm-kpi-value">126</div><div class="crm-kpi-note">Across active CRM owners</div></article><article class="crm-kpi"><div class="crm-kpi-label">Open Pipeline</div><div class="crm-kpi-value">AED 6.4M</div><div class="crm-kpi-note">31 open opportunities</div></article><article class="crm-kpi"><div class="crm-kpi-label">Visits · 30 Days</div><div class="crm-kpi-value">47</div><div class="crm-kpi-note">Client-facing activity</div></article><article class="crm-kpi"><div class="crm-kpi-label">Won · QTD</div><div class="crm-kpi-value">AED 1.8M</div><div class="crm-kpi-note">Recorded opportunity value</div></article></section><section class="crm-grid-2"><section class="crm-panel"><div class="crm-panel-head"><div><h3>Performance by Owner</h3><p>Accounts and activity</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Salesperson</th><th>Accounts</th><th>Open Opps</th><th>Pipeline</th><th>Visits</th></tr></thead><tbody><tr><td>Sara</td><td>48</td><td>14</td><td>AED 2.7M</td><td>19</td></tr><tr><td>Ahkhmed</td><td>39</td><td>9</td><td>AED 1.9M</td><td>16</td></tr><tr><td>Nadia</td><td>39</td><td>8</td><td>AED 1.8M</td><td>12</td></tr></tbody></table></div></div></section><section class="crm-panel"><div class="crm-panel-head"><div><h3>Pipeline by Stage</h3><p>Current open pipeline</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-progress-list"><p><strong>Negotiation</strong><br>AED 1.9M</p><p><strong>Proposal</strong><br>AED 2.2M</p><p><strong>Discovery</strong><br>AED 1.5M</p><p><strong>Qualification</strong><br>AED 0.8M</p></div></div></section></section></section><section class="preview-page" data-page="team"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>Team & Assignments</h2><p>Management can transfer customer ownership immediately. All contacts, visits, minutes, tasks and opportunity history stay with the account.</p></div><div class="crm-hero-actions"></div></section><div class="crm-security-callout"><strong>Employee departure control</strong><span>Disable the employee login, select their accounts, reassign them to another salesperson, and access changes take effect server-side.</span></div><section class="crm-grid-2"><section class="crm-panel"><div class="crm-panel-head"><div><h3>Reassign Accounts</h3><p>Transfer ownership without losing history</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-form-grid"><label>Current Owner<select><option>Sara</option><option>Ahkhmed</option></select></label><label>New Owner<select><option>Nadia</option><option>Management</option></select></label><label class="wide">Reason<textarea>Territory reassignment / employee departure</textarea></label></div><div class="crm-panel-actions"><button>Reassign All Accounts</button></div></div></section><section class="crm-panel"><div class="crm-panel-head"><div><h3>Owner Summary</h3><p>Current account custody</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Owner</th><th>Accounts</th><th>Open Opps</th><th>Last Activity</th></tr></thead><tbody><tr><td>Sara</td><td>48</td><td>14</td><td>Today</td></tr><tr><td>Ahkhmed</td><td>39</td><td>9</td><td>Today</td></tr><tr><td>Nadia</td><td>39</td><td>8</td><td>Yesterday</td></tr></tbody></table></div></div></section></section></section><section class="preview-page" data-page="security"><section class="crm-hero"><div class="crm-hero-copy"><p class="crm-hero-eyebrow">Apollo Connected · CRM</p><h2>CRM Security</h2><p>Owner-controlled, granular access. Hiding a button is not security; these permissions are enforced by the server.</p></div><div class="crm-hero-actions"></div></section><div class="crm-security-callout"><strong>Recommended sales profile</strong><span>CRM enabled · Assigned accounts only · No reassignment · No export · No archive · No security admin.</span></div><div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>User</th><th>CRM Role</th><th>CRM Access</th><th>Account Scope</th><th>Reassign</th><th>Export</th><th>Archive</th><th>Team Reports</th><th>Admin</th><th></th></tr></thead><tbody><tr><td><strong>Khaldoun</strong></td><td>Management</td><td><span class="crm-badge green">Enabled</span></td><td>All Accounts</td><td><span class="crm-badge green">Yes</span></td><td><span class="crm-badge green">Yes</span></td><td><span class="crm-badge green">Yes</span></td><td><span class="crm-badge green">Yes</span></td><td><span class="crm-badge green">Yes</span></td><td><button class="secondary-button">Permissions</button></td></tr><tr><td><strong>Sara</strong></td><td>Sales Executive</td><td><span class="crm-badge green">Enabled</span></td><td>Assigned Only</td><td><span class="crm-badge red">No</span></td><td><span class="crm-badge red">Blocked</span></td><td><span class="crm-badge red">Blocked</span></td><td><span class="crm-badge navy">Own Only</span></td><td><span class="crm-badge red">No</span></td><td><button class="secondary-button">Permissions</button></td></tr><tr><td><strong>Ahkhmed</strong></td><td>Sales Executive</td><td><span class="crm-badge green">Enabled</span></td><td>Assigned Only</td><td><span class="crm-badge red">No</span></td><td><span class="crm-badge red">Blocked</span></td><td><span class="crm-badge red">Blocked</span></td><td><span class="crm-badge navy">Own Only</span></td><td><span class="crm-badge red">No</span></td><td><button class="secondary-button">Permissions</button></td></tr><tr><td><strong>Former Sales User</strong></td><td>Sales Executive</td><td><span class="crm-badge red">Disabled</span></td><td>None</td><td><span class="crm-badge red">No</span></td><td><span class="crm-badge red">Blocked</span></td><td><span class="crm-badge red">Blocked</span></td><td><span class="crm-badge navy">None</span></td><td><span class="crm-badge red">No</span></td><td><button class="secondary-button">Permissions</button></td></tr></tbody></table></div><section class="crm-panel"><div class="crm-panel-head"><div><h3>Audit & Protection</h3><p>Security events retained</p></div><div class="crm-panel-actions"></div></div><div class="crm-panel-body"><div class="crm-timeline"><div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>CRM permissions changed for Sara</strong><p>Export permission changed from Allowed to Blocked.</p><div class="crm-event-meta">Khaldoun · 2026-09-12 01:28</div></div></div><div class="crm-event"><span class="crm-event-dot"></span><div class="crm-event-body"><strong>48 accounts reassigned</strong><p>Ownership moved from Former Sales User to Nadia.</p><div class="crm-event-meta">Khaldoun · 2026-09-11 17:05</div></div></div></div></div></section></section></main><footer class="app-footer">Apollo Connected · Apollo Freight Solutions · CRM Preview</footer></div></div><div class="preview-watermark">CRM GCP FINAL PREVIEW</div>
+<script>
+const titles={"dashboard": "CRM Dashboard", "accounts": "Accounts", "contacts": "Contacts", "opportunities": "Opportunities", "visits": "Sales Visits", "meetings": "Meeting Minutes", "tasks": "Follow-ups", "activity": "Activity Timeline", "reports": "CRM Reports", "team": "Team & Assignments", "security": "CRM Security"};
+document.querySelectorAll('#previewNav button').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('#previewNav button').forEach(x=>x.classList.remove('active'));btn.classList.add('active');document.querySelectorAll('.preview-page').forEach(x=>x.classList.remove('active'));document.querySelector('.preview-page[data-page="'+btn.dataset.target+'"]').classList.add('active');document.getElementById('screenTitle').textContent=titles[btn.dataset.target]||btn.textContent;window.scrollTo(0,0);}));
+</script></body></html>

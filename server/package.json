@@ -2,7 +2,7 @@
   "name": "apollofreighterp-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Separate Render-ready API for ApolloFreightERP",
+  "description": "Apollo Connected ERP + CRM server for Google Cloud Run",
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",

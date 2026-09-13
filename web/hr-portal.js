@@ -1,7 +1,7 @@
 /* Apollo Connected - HR Portal
  * HR/Employee leave UI is isolated from the core ERP runtime.
  */
-const HR_API_URL = (window.APOLLO_API_URL || window.location.origin).replace(/\/$/, "");
+const HR_API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const HR_SESSION_KEY = "apollofreighterp-session";
 const HR_DECLARATION = "I declare that the information provided in this leave application is true and complete. I understand that weekends and public holidays marked by HR are not deducted from my leave balance, and I will return to work on the stated rejoining date unless an approved extension is granted.";
 const esc = (v) => String(v ?? "").replace(/[&<>\"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));

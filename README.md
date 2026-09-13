@@ -1,89 +1,51 @@
-# Apollo Freight Solutions Portal - Cargo Shipments
+# Apollo Connected — ERP + HR + Maintenance + CRM
 
-Tagline: We Bring Continents closer...
+This package is the merged Apollo Connected application prepared from the latest IT ZIP supplied on 12 Sep 2026, with the Apollo CRM module merged on top.
 
-Brand mark: A F S in orange.
+## Production target
 
-Web console and Render API for land freight shipment operations.
+Google Cloud is the recommended production target:
 
-## Deployment
+- Cloud Run: one Node/Express service serving the UI and API
+- Cloud SQL for PostgreSQL: ERP/HR/Maintenance/CRM database
+- Secret Manager: database URL and session-signing secret
+- Artifact Registry + Cloud Build: container build and image storage
+- Private Cloud Storage bucket: reserved for future real file uploads
+- `connected.apollo-freight.com`: production hostname
 
-- Backend API: `server/` on Render
-- Web console: `web/` on Vercel
-- Database: Neon PostgreSQL
+See `GCP_DEPLOYMENT.md` for the deployment sequence.
 
-Keep this project fully isolated from any older live project:
+## CRM
 
-- do not reuse the old database
-- do not reuse the old backend
-- do not reuse old environment variables
-- do not reuse old Vercel or Render projects
+The CRM is integrated into Apollo Connected and uses the same authentication system. A CRM user must have CRM Portal access. Normal sales users see only accounts assigned to their username; this is enforced by the API, not only by the interface.
 
-## Included Modules
+CRM features include accounts, contacts, opportunities, client visits, meeting minutes, follow-ups/tasks, activity history, reports, account reassignment/handover, exports controlled by permission, archive controls, and CRM administration.
 
-- Dashboard
-- Shipments / Jobs
-- Consolidation
-- Customers
-- Suppliers / Transporters
-- Tariffs / Rate Master
-- Documents
-- Billing / Invoices
-- POD / Delivery
-- Reports
-- User Management / Settings
-- Audit Log
+Database migration for the CRM is `server/sql/037_crm_module.sql`. The IT-supplied build already contains `036_hr_weekend_overrides.sql`, so CRM was intentionally renumbered from 036 to 037 during this merge.
 
-## Current Version
+When an account is reassigned, active opportunities and open follow-ups that still belong to the previous account owner are transferred to the new owner while the historical activity remains intact.
 
-This build uses the live Render API and Neon PostgreSQL database for shipments, consolidations, customers, suppliers, tariffs, documents, invoices, additional charges, users, admin requests, settings, and audit data.
+## Transition compatibility
 
-## Test Login
+`vercel.json` and `render.yaml` are kept for rollback/transition only. `web/config.js` uses the current origin on Google Cloud, but still recognizes a `*.vercel.app` host and points it to the existing Render API during the migration period.
 
-- User name: `admin`
-- Password: `admin123`
+## Security notes
 
-## Render And Vercel
+- Production disables the historical `admin / admin123` database-failure fallback.
+- CRM account visibility is enforced server-side.
+- CRM export, assignment, archive, team-report and admin capabilities are separate permissions.
+- Use a strong, stable `CUSTOMER_PORTAL_SECRET` from Secret Manager in production.
+- Run reviewed SQL migrations explicitly in production; production startup does not auto-run the migration directory.
 
-Render deploys the API from the root `render.yaml`.
+## Final verification before users are enabled
 
-Vercel deploys the static web console from `web/`.
+After deployment, test at minimum:
 
-Important: set the Neon pooled PostgreSQL connection string in Render. Preferred key is `NEON_DATABASE_URL`; using `DATABASE_URL` also works. Use the pooled Neon URL and keep `sslmode=require`.
+1. Management can enter CRM and assign an account to Sales A.
+2. Sales A can see that account and its contacts/opportunities/visits/minutes.
+3. Sales B cannot access the account, including by manually changing an ID in an API request.
+4. Sales A without export permission cannot export CRM data.
+5. Management can reassign the account from Sales A to Sales B and the account immediately disappears from Sales A and appears for Sales B.
+6. The audit trail records the reassignment.
 
-Recommended GitHub deployment settings:
-
-```text
-Render Blueprint: use render.yaml from the repo root
-Vercel Root Directory: web
-Vercel Framework Preset: Other
-Vercel Build Command: empty
-Vercel Output Directory: .
-```
-
-Live deployment URLs:
-
-```text
-GitHub: https://github.com/nilkalalkw-design/apollo-freighterp
-Render API: https://apollo-freighterp-f9kt.onrender.com
-Vercel Web: https://apollo-freighterp.vercel.app
-Neon DB: set in Render as `NEON_DATABASE_URL`
-```
-
-The new backend is in `server/`, and the web console is in `web/`.
-
-Database setup is now included:
-
-- `server/sql/001_init.sql`
-- `server/sql/002_seed.sql`
-- `server/sql/003_views.sql`
-- `npm run db:setup` from `server/`
-
-See:
-
-```text
-Apollo Freight Solutions Portal\server\README.md
-Apollo Freight Solutions Portal\web\README.md
-```
-
-It is prepared as a separate Node.js API service for Render with its own PostgreSQL connection and SQL starter schema.
+Do not decommission Vercel/Render/Neon until the Google Cloud copy has passed the live data, login, permission and rollback checks.

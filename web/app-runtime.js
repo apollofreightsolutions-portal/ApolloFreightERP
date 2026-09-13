@@ -1,4 +1,4 @@
-const API_URL = (window.APOLLO_API_URL || window.location.origin).replace(/\/$/, "");
+const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
 const SESSION_KEY = "apollofreighterp-session";
 const MAINTENANCE_PORTAL_URL = "/maintenance/";
@@ -32,6 +32,20 @@ const hrAdminModules = [
   ["Manage Payslips", "Issue payslips to employees"],
   ["Post Announcement", "Publish a company announcement"]
 ];
+
+const crmModules = [
+  ["CRM Dashboard", "Accounts, pipeline, follow-ups, and relationship activity"],
+  ["Accounts", "Company-owned customer and prospect accounts"],
+  ["Contacts", "Decision makers and account contacts"],
+  ["Opportunities", "Sales pipeline, lanes, value, and next steps"],
+  ["Sales Visits", "Client visit log, outcomes, and follow-ups"],
+  ["Meeting Minutes", "Structured meeting records, decisions, and action items"],
+  ["Follow-ups", "Tasks and next actions"],
+  ["Activity Timeline", "Auditable CRM activity history"],
+  ["CRM Reports", "Pipeline and sales activity reporting"]
+];
+const crmManagerModules = [["Team & Assignments", "Account ownership and staff handover controls"]];
+const crmAdminModules = [["CRM Security", "CRM access, visibility, export, archive, and admin permissions"]];
 
 const modules = [
   ["Dashboard", "Live operational summary for land freight consolidation"],
@@ -169,7 +183,15 @@ function rememberSession(sessionOrUserName) {
       isHrAdmin: Boolean(session.isHrAdmin),
       hrPortalAccess: session.hrPortalAccess === true,
       erpPortalAccess: session.erpPortalAccess !== false,
-      maintenancePortalAccess: session.maintenancePortalAccess === true
+      maintenancePortalAccess: session.maintenancePortalAccess === true,
+      crmPortalAccess: session.crmPortalAccess === true,
+      crmRole: session.crmRole || "Sales Executive",
+      crmViewAllAccounts: session.crmViewAllAccounts === true,
+      crmManageAssignments: session.crmManageAssignments === true,
+      crmExportAccess: session.crmExportAccess === true,
+      crmArchiveAccess: session.crmArchiveAccess === true,
+      crmViewTeamReports: session.crmViewTeamReports === true,
+      crmAdminAccess: session.crmAdminAccess === true
     })
   );
 }
@@ -217,9 +239,9 @@ function seedState() {
     shipmentRequests: [],
     shipmentStatusHistory: [],
     users: [
-      user("admin", "admin@apollofreightsolution.com", "Admin", "Active", "Both", "All Branches", "All", true, true, true, true, "admin123", "System temporary admin"),
-      user("ops-kuwait", "operations.kuwait@apollofreightsolution.com", "Operations", "Active", "Kuwait HO", "Assigned Branch Only", "Dashboard, Shipment / Airway, Manifest, Customers, Suppliers / Transporters, Documents, Tariffs / Rate Master, Reports", true, false, false, false, "ops123", "Can create and track Kuwait HO shipments"),
-      user("billing-dubai", "billing.dubai@apollofreightsolution.com", "Billing", "Active", "Dubai", "Assigned Branch Only", "Dashboard, Billing / Invoices, POD / Delivery, Shipment Status, Reports", true, false, true, true, "billing123", "Invoice and finance access for Dubai")
+      user("admin", "admin@apollofreightsolution.com", "Admin", "Active", "Both", "All Branches", "All", true, true, true, true, "", "System administrator"),
+      user("ops-kuwait", "operations.kuwait@apollofreightsolution.com", "Operations", "Active", "Kuwait HO", "Assigned Branch Only", "Dashboard, Shipment / Airway, Manifest, Customers, Suppliers / Transporters, Documents, Tariffs / Rate Master, Reports", true, false, false, false, "", "Can create and track Kuwait HO shipments"),
+      user("billing-dubai", "billing.dubai@apollofreightsolution.com", "Billing", "Active", "Dubai", "Assigned Branch Only", "Dashboard, Billing / Invoices, POD / Delivery, Shipment Status, Reports", true, false, true, true, "", "Invoice and finance access for Dubai")
     ],
     customerUsers: [],
     unblockRequests: [],
@@ -1011,7 +1033,15 @@ function user(
   canBillingCostEntry = true,
   erpPortalAccess = true,
   isHrAdmin = false,
-  maintenancePortalAccess = false
+  maintenancePortalAccess = false,
+  crmPortalAccess = false,
+  crmRole = "Sales Executive",
+  crmViewAllAccounts = false,
+  crmManageAssignments = false,
+  crmExportAccess = false,
+  crmArchiveAccess = false,
+  crmViewTeamReports = false,
+  crmAdminAccess = false
 ) {
   return {
     userName,
@@ -1033,7 +1063,15 @@ function user(
     canBillingCostEntry: isChecked(canBillingCostEntry),
     erpPortalAccess: isChecked(erpPortalAccess),
     isHrAdmin: isChecked(isHrAdmin),
-    maintenancePortalAccess: isChecked(maintenancePortalAccess)
+    maintenancePortalAccess: isChecked(maintenancePortalAccess),
+    crmPortalAccess: isChecked(crmPortalAccess),
+    crmRole: crmRole || "Sales Executive",
+    crmViewAllAccounts: isChecked(crmViewAllAccounts),
+    crmManageAssignments: isChecked(crmManageAssignments),
+    crmExportAccess: isChecked(crmExportAccess),
+    crmArchiveAccess: isChecked(crmArchiveAccess),
+    crmViewTeamReports: isChecked(crmViewTeamReports),
+    crmAdminAccess: isChecked(crmAdminAccess)
   };
 }
 
@@ -1911,6 +1949,10 @@ function isHrSession() {
   return String(currentSession()?.portal || "").toLowerCase() === "employee";
 }
 
+function isCrmSession() {
+  return String(currentSession()?.portal || "").toLowerCase() === "crm";
+}
+
 // HR Admin = ERP role is "Admin" or "HR" (unchanged from before - main admins and HR-role users
 // keep working exactly as they did) OR the independent "Is HR Admin" checkbox is set on this
 // account - lets someone be HR Admin in the Employee portal without needing to also be an ERP
@@ -1922,12 +1964,19 @@ function isHrAdmin() {
 }
 
 function isAdminSession() {
-  return !isCustomerSession() && !isHrSession() && (currentSession()?.role || "").toLowerCase() === "admin";
+  return !isCustomerSession() && !isHrSession() && !isCrmSession() && (currentSession()?.role || "").toLowerCase() === "admin";
 }
 
 function visibleModules() {
   if (isCustomerSession()) return customerModules;
   if (isHrSession()) return isHrAdmin() ? hrModules.concat(hrAdminModules) : hrModules;
+  if (isCrmSession()) {
+    const session = currentSession() || {};
+    let items = crmModules.slice();
+    if (session.crmManageAssignments === true) items = items.concat(crmManagerModules);
+    if (session.crmAdminAccess === true) items = items.concat(crmAdminModules);
+    return items;
+  }
   if (isAdminSession()) return modules;
   const session = currentSession();
   const configured = String(session?.sectionAccess || "").trim();
@@ -1969,9 +2018,11 @@ function renderModuleNav() {
     const hrButton = portalAccessPanel.querySelector("[data-portal-switch='hr']");
     const erpButton = portalAccessPanel.querySelector("[data-portal-switch='erp']");
     const maintenanceButton = portalAccessPanel.querySelector("[data-portal-switch='maintenance']");
+    const crmButton = portalAccessPanel.querySelector("[data-portal-switch='crm']");
     if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || session.hrPortalAccess !== true;
-    if (erpButton) erpButton.hidden = isCustomerSession() || !isHrSession() || session.erpPortalAccess === false;
+    if (erpButton) erpButton.hidden = isCustomerSession() || (!isHrSession() && !isCrmSession()) || session.erpPortalAccess === false;
     if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || session.maintenancePortalAccess !== true;
+    if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || session.crmPortalAccess !== true;
   }
 }
 
@@ -2253,6 +2304,14 @@ async function handleLogin(event) {
       rememberSession({ ...session, portal: "company" });
       window.location.assign(`${MAINTENANCE_PORTAL_URL}#erpToken=${encodeURIComponent(session.token || "")}`);
       return;
+    } else if (loginMode === "crm") {
+      const session = await attemptApiLogin(userName, password, "crm");
+      if (!session.crmPortalAccess) {
+        throw new Error("CRM Portal access is not enabled for this account. Contact Company Management.");
+      }
+      customerPortalData = null;
+      rememberSession({ ...session, portal: "crm" });
+      activeModule = "CRM Dashboard";
     } else {
       const session = await attemptApiLogin(userName, password);
       if (session.erpPortalAccess === false) {
@@ -2331,9 +2390,13 @@ async function switchPortal(target) {
     }
     return;
   }
-  const portal = target === "hr" ? "employee" : "company";
+  const portal = target === "hr" ? "employee" : target === "crm" ? "crm" : "company";
   if (portal === "employee" && session.hrPortalAccess !== true) {
     notifyDenied("Access denied", "HR Portal access is not enabled for this account. Contact Company Management.");
+    return;
+  }
+  if (portal === "crm" && session.crmPortalAccess !== true) {
+    notifyDenied("Access denied", "CRM Portal access is not enabled for this account. Contact Company Management.");
     return;
   }
   if (portal === "company" && session.erpPortalAccess === false) {
@@ -2348,7 +2411,7 @@ async function switchPortal(target) {
     });
     customerPortalData = null;
     rememberSession(result.session);
-    activeModule = portal === "employee" ? "HR Dashboard" : "Dashboard";
+    activeModule = portal === "employee" ? "HR Dashboard" : portal === "crm" ? "CRM Dashboard" : "Dashboard";
     showApp();
   } catch (error) {
     notifyDenied("Portal switch failed", error.message || "The requested portal could not be opened.");
@@ -2368,8 +2431,15 @@ function showApp() {
   loginScreen.classList.add("is-hidden");
   appShell.classList.remove("is-hidden");
   appShell.classList.toggle("hr-portal-theme", isHrSession());
+  appShell.classList.toggle("crm-portal-theme", isCrmSession());
   renderModuleNav();
   updateUserContext();
+  if (isCrmSession()) {
+    stopSharedShipmentRefresh();
+    window.ApolloCRM?.invalidate?.();
+    render();
+    return;
+  }
   // This first render happens before syncFromApi()'s data has arrived - it uses whatever was
   // cached locally from the last session, which can be stale or incomplete (missing anything
   // added since). Show a visible loading indicator so that's obvious, rather than silently
@@ -2382,7 +2452,7 @@ function showApp() {
 }
 
 function canRefreshSharedShipmentData() {
-  return Boolean(currentSession()?.token) && !isCustomerSession() && !isHrSession() && !document.hidden && !recordDialog?.open;
+  return Boolean(currentSession()?.token) && !isCustomerSession() && !isHrSession() && !isCrmSession() && !document.hidden && !recordDialog?.open;
 }
 
 async function refreshSharedShipmentData() {
@@ -2818,7 +2888,15 @@ function apiUser(row) {
     row.can_billing_cost_entry === undefined ? true : isChecked(row.can_billing_cost_entry),
     row.erp_portal_access === undefined ? true : isChecked(row.erp_portal_access),
     isChecked(row.is_hr_admin),
-    isChecked(row.maintenance_portal_access)
+    isChecked(row.maintenance_portal_access),
+    isChecked(row.crm_portal_access),
+    row.crm_role || "Sales Executive",
+    isChecked(row.crm_view_all_accounts),
+    isChecked(row.crm_manage_assignments),
+    isChecked(row.crm_export_access),
+    isChecked(row.crm_archive_access),
+    isChecked(row.crm_view_team_reports),
+    isChecked(row.crm_admin_access)
   );
 }
 
@@ -3073,6 +3151,19 @@ function renderHrModule(methodName, label) {
   }
 }
 
+function renderCrmModule(methodName, label) {
+  const method = window.ApolloCRM?.[methodName];
+  if (typeof method !== "function") {
+    return `<section class="panel">${panelHeader(label)}${empty(`Loading ${label}...`)}</section>`;
+  }
+  try {
+    return method() || `<section class="panel">${panelHeader(label)}${empty(`No CRM data available for ${label}.`)}</section>`;
+  } catch (error) {
+    console.error(`CRM module render failed for ${label}`, error);
+    return `<section class="panel">${panelHeader(label)}${empty(`Something went wrong loading ${label}. Refresh and try again.`)}</section>`;
+  }
+}
+
 function render() {
   // Column filter inputs live inside moduleContent, which this function fully replaces on every
   // call (including on every keystroke - see handleColumnFilterInput). Without this, retyping a
@@ -3096,9 +3187,9 @@ function render() {
   })) : [];
 
   if (!visibleModules().some(([name]) => name === activeModule)) {
-    activeModule = isCustomerSession() ? "Customer Dashboard" : isHrSession() ? "HR Dashboard" : "Dashboard";
+    activeModule = isCustomerSession() ? "Customer Dashboard" : isHrSession() ? "HR Dashboard" : isCrmSession() ? "CRM Dashboard" : "Dashboard";
   }
-  const activeModules = isCustomerSession() ? customerModules : isHrSession() ? hrModules.concat(hrAdminModules) : modules;
+  const activeModules = isCustomerSession() ? customerModules : isHrSession() ? hrModules.concat(hrAdminModules) : isCrmSession() ? crmModules.concat(crmManagerModules, crmAdminModules) : modules;
   const module = activeModules.find(([name]) => name === activeModule) || activeModules[0];
   pageEyebrow.textContent = "";
   pageTitle.textContent = module[0];
@@ -3108,10 +3199,11 @@ function render() {
   updateDateFilterStatus();
   moduleNav.querySelectorAll("button").forEach((button) => button.classList.toggle("active", button.dataset.module === activeModule));
   if (apiBanner) {
+    apiBanner.hidden = isCrmSession();
     const apiHealthy = state.api.database === "connected";
     apiBanner.className = `api-banner ${apiHealthy ? "is-ok" : "is-warning"}`;
     const errorText = state.api.error ? ` | Detail: ${escapeHtml(state.api.error)}` : "";
-    apiBanner.innerHTML = `<strong>${escapeHtml(state.api.status)}</strong><span>Render: ${escapeHtml(API_URL)} | Database: ${escapeHtml(state.api.database)} | Mode: ${escapeHtml(state.api.mode)}${errorText}</span>`;
+    apiBanner.innerHTML = `<strong>${escapeHtml(state.api.status)}</strong><span>API: ${escapeHtml(API_URL)} | Database: ${escapeHtml(state.api.database)} | Mode: ${escapeHtml(state.api.mode)}${errorText}</span>`;
   }
 
   const renderers = {
@@ -3151,7 +3243,18 @@ function render() {
     "HR Leave Balances": () => renderHrModule("renderAdminBalance", "HR Leave Balances"),
     "HR Leave Policies": () => renderHrModule("renderAdminPolicies", "HR Leave Policies"),
     "Manage Payslips": renderHrAdminPayslips,
-    "Post Announcement": renderHrAdminAnnouncements
+    "Post Announcement": renderHrAdminAnnouncements,
+    "CRM Dashboard": () => renderCrmModule("renderDashboard", "CRM Dashboard"),
+    "Accounts": () => renderCrmModule("renderAccounts", "Accounts"),
+    "Contacts": () => renderCrmModule("renderContacts", "Contacts"),
+    "Opportunities": () => renderCrmModule("renderOpportunities", "Opportunities"),
+    "Sales Visits": () => renderCrmModule("renderVisits", "Sales Visits"),
+    "Meeting Minutes": () => renderCrmModule("renderMeetings", "Meeting Minutes"),
+    "Follow-ups": () => renderCrmModule("renderTasks", "Follow-ups"),
+    "Activity Timeline": () => renderCrmModule("renderActivity", "Activity Timeline"),
+    "CRM Reports": () => renderCrmModule("renderReports", "CRM Reports"),
+    "Team & Assignments": () => renderCrmModule("renderTeam", "Team & Assignments"),
+    "CRM Security": () => renderCrmModule("renderAdmin", "CRM Security")
   };
   moduleContent.innerHTML = (renderers[activeModule] || renderDashboard)();
   if (hrFormState.length) {
@@ -3169,6 +3272,7 @@ function render() {
   }
   renderErpAnnouncementsDropdown();
   window.__APOLLO_HR_RENDER = () => { if (typeof render === "function") render(); };
+  window.__APOLLO_CRM_RENDER = () => { if (typeof render === "function" && isCrmSession()) render(); };
   // Lets hr-portal.js (a separate script, loaded independently) write to the same audit log as
   // the rest of the app after an HR Admin action - approvals, rejections, send-backs, holiday and
   // weekend rule changes, and balance/policy adjustments - since it has no direct access to
@@ -3197,6 +3301,10 @@ function updateUserContext() {
   }
   if (isHrSession()) {
     userContextText.textContent = `Employee: ${session.userName}${isHrAdmin() ? " | HR Admin" : ""}`;
+    return;
+  }
+  if (isCrmSession()) {
+    userContextText.textContent = `CRM User: ${session.userName} | ${session.crmRole || "Sales Executive"}${session.crmViewAllAccounts ? " | All Accounts" : " | Assigned Accounts Only"}`;
     return;
   }
   userContextText.textContent = `User: ${session.userName} | Branch: ${session.branchAccess}`;
@@ -6724,6 +6832,14 @@ function openRecord(type, id, presetRecord) {
           erpPortalAccess: isChecked(data.erpPortalAccess),
           isHrAdmin: isChecked(data.isHrAdmin),
           maintenancePortalAccess: isChecked(data.maintenancePortalAccess),
+          crmPortalAccess: isChecked(data.crmPortalAccess),
+          crmRole: data.crmRole || record.crmRole || "Sales Executive",
+          crmViewAllAccounts: isChecked(data.crmViewAllAccounts),
+          crmManageAssignments: isChecked(data.crmManageAssignments),
+          crmExportAccess: isChecked(data.crmExportAccess),
+          crmArchiveAccess: isChecked(data.crmArchiveAccess),
+          crmViewTeamReports: isChecked(data.crmViewTeamReports),
+          crmAdminAccess: isChecked(data.crmAdminAccess),
           notes: data.notes || record.notes || ""
         };
         const payload = { ...updatedRecord };
@@ -8260,7 +8376,15 @@ function userDialogBody(record) {
       erpPortalChecked: loaded ? isChecked(fieldValue("erpPortalAccess", true)) : true,
       hrPortalChecked: isChecked(fieldValue("hrPortalAccess", false)),
       hrAdminChecked: isChecked(fieldValue("isHrAdmin", false)),
-      maintenancePortalChecked: isChecked(fieldValue("maintenancePortalAccess", false))
+      maintenancePortalChecked: isChecked(fieldValue("maintenancePortalAccess", false)),
+      crmPortalChecked: isChecked(fieldValue("crmPortalAccess", false)),
+      crmRole: fieldValue("crmRole", "Sales Executive"),
+      crmViewAllChecked: isChecked(fieldValue("crmViewAllAccounts", false)),
+      crmAssignChecked: isChecked(fieldValue("crmManageAssignments", false)),
+      crmExportChecked: isChecked(fieldValue("crmExportAccess", false)),
+      crmArchiveChecked: isChecked(fieldValue("crmArchiveAccess", false)),
+      crmTeamReportsChecked: isChecked(fieldValue("crmViewTeamReports", false)),
+      crmAdminChecked: isChecked(fieldValue("crmAdminAccess", false))
     })}
     ${checkbox("canViewAllEntry", "User can view all entry", isChecked(fieldValue("canViewAllEntry", false)))}
     ${checkbox("canViewOnlySelfEntry", "User can view only self entry", loaded ? isChecked(fieldValue("canViewOnlySelfEntry", true)) : true)}
@@ -8280,7 +8404,7 @@ function changePasswordDialogBody() {
 }
 
 function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
-  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false } = options;
+  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false } = options;
   return `<fieldset class="section-access-grid">
     <legend>Menu Access Permissions</legend>
     ${modules.map(([name]) => {
@@ -8298,7 +8422,18 @@ function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
       ${checkbox("erpPortalAccess", "Allow ERP Portal access (Company Login)", erpPortalChecked)}
       ${checkbox("hrPortalAccess", "Allow HR Portal access (Employee Login)", hrPortalChecked)}
       ${checkbox("maintenancePortalAccess", "Allow Maintenance Portal access", maintenancePortalChecked)}
+      ${checkbox("crmPortalAccess", "Allow CRM / Sales Portal access", crmPortalChecked)}
       ${checkbox("isHrAdmin", "Is HR Admin (independent of ERP role - manage all employee records, leave, payslips, announcements)", hrAdminChecked)}
+    </div>
+    <div class="checkbox-field permission-group-label"><span>CRM Security & Ownership</span></div>
+    <div class="permission-sub-options">
+      ${strictSelect("crmRole", "CRM Role", ["Sales Executive", "Senior Sales", "Sales Manager", "Commercial Manager", "Management"], crmRole)}
+      ${checkbox("crmViewAllAccounts", "CRM: View all accounts (otherwise assigned accounts only)", crmViewAllChecked)}
+      ${checkbox("crmManageAssignments", "CRM: Assign / reassign customer accounts", crmAssignChecked)}
+      ${checkbox("crmExportAccess", "CRM: Export / download sales data", crmExportChecked)}
+      ${checkbox("crmArchiveAccess", "CRM: Archive / restore accounts", crmArchiveChecked)}
+      ${checkbox("crmViewTeamReports", "CRM: View team-wide reports and audit", crmTeamReportsChecked)}
+      ${checkbox("crmAdminAccess", "CRM: Administer CRM permissions", crmAdminChecked)}
     </div>
   </fieldset>`;
 }
@@ -10939,7 +11074,7 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
     </head>
     <body>
       <div class="page">
-        <div class="toolbar"><button onclick="window.print()">Print / Save PDF</button></div>
+        <div class="toolbar"><button id="documentPrintButton" type="button">Print / Save PDF</button></div>
         <header class="document-head">
           <div class="brand">
             <div class="logo">${logoMarkup}</div>
@@ -11170,8 +11305,18 @@ function openPrintableDocument(html) {
     notifyDenied("Popup blocked", "Allow popups to preview the document.");
     return;
   }
+  printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
+  const printButton = printWindow.document.querySelector(
+    "#tcnPrintButton, #documentPrintButton"
+  );
+  if (printButton) {
+    printButton.addEventListener("click", () => {
+      printWindow.focus();
+      printWindow.print();
+    });
+  }
   printWindow.focus();
 }
 
@@ -11828,7 +11973,15 @@ async function createUser(data) {
     isChecked(data.canBillingCostEntry),
     isChecked(data.erpPortalAccess),
     isChecked(data.isHrAdmin),
-    isChecked(data.maintenancePortalAccess)
+    isChecked(data.maintenancePortalAccess),
+    isChecked(data.crmPortalAccess),
+    String(data.crmRole || "Sales Executive").trim(),
+    isChecked(data.crmViewAllAccounts),
+    isChecked(data.crmManageAssignments),
+    isChecked(data.crmExportAccess),
+    isChecked(data.crmArchiveAccess),
+    isChecked(data.crmViewTeamReports),
+    isChecked(data.crmAdminAccess)
   );
   state.users.unshift(record);
   await postRecord("user", record);
@@ -13368,7 +13521,7 @@ function duplicateTcnDocumentHtml(record) {
   const cell = (label, value, extra = "") => `<div class="dw-cell"><b>${escapeHtml(label)}</b><span>${escapeHtml(value || "")}</span>${extra}</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.tcnNumber || record.jobNo || "Duplicate TCN")}</title><style>
     @page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font-family:"Courier New",monospace;font-size:10px}.waybill{width:190mm;margin:0 auto;border:1px solid #111}.top{padding:5px 7px;border-bottom:1px solid #111;font-weight:700}.top span{float:right;font-size:20px;letter-spacing:.04em}.top small{font-size:8px}.grid{display:grid;grid-template-columns:1fr 1fr}.dw-cell{min-height:28mm;padding:5px 7px;border-bottom:1px solid #111}.grid>.dw-cell:nth-child(odd){border-right:1px solid #111}.dw-cell b{display:block;text-decoration:underline;margin-bottom:8px}.dw-cell span{display:block;white-space:pre-line}.logo-cell{text-align:center}.logo-cell img{display:block;width:48mm;height:22mm;object-fit:contain;margin:2px auto}.small{min-height:12mm}.cargo{border-bottom:1px solid #111}.cargo-title{text-align:center;font-weight:700;padding:4px;border-bottom:1px solid #111}.cargo-head,.cargo-row{display:grid;grid-template-columns:1.1fr 1.1fr 2fr;border-bottom:1px solid #111}.cargo-head b,.cargo-row span{padding:4px 7px;border-right:1px solid #111}.cargo-head b:last-child,.cargo-row span:last-child{border-right:0}.total{padding:5px 7px;border-bottom:1px solid #111}.total-split{display:grid;grid-template-columns:1fr 1fr;padding:0}.total-split span{padding:5px 7px}.total-split span+span{border-left:1px solid #111}.notes{min-height:42mm;padding:6px 7px;border-bottom:1px solid #111}.charges{display:grid;grid-template-columns:1fr 1fr;min-height:25mm;border-bottom:1px solid #111}.charges>div{padding:5px 7px}.charges>div:first-child{border-right:1px solid #111}.alt-ref-cell{display:flex;align-items:center;justify-content:space-between;gap:8px}.alt-ref-cell img{width:30mm;height:16mm;object-fit:contain}.footer{text-align:center;padding:4px}.print{position:fixed;right:12px;top:12px;padding:7px 12px;border:1px solid #555;background:#eee;font-family:Arial,sans-serif}@media print{.print{display:none}.waybill{width:100%}}
-  </style></head><body><button class="print" onclick="window.print()">Print</button><main class="waybill">
+  </style></head><body><button class="print" id="tcnPrintButton" type="button">Print</button><main class="waybill">
     <div class="top">TRUCK WAY BILL NUMBER <span>: ${escapeHtml(record.tcnNumber || record.jobNo || "")}</span><small><br>To be used for Single Consignment, Full Truck Load and Less Truck Load</small></div>
     <div class="grid">${cell("Shipper's Name and Address:", [record.shipperName || record.customer || "", record.shipperAddress || "", record.shipperCountry || ""].filter(Boolean).join("\n"))}${cell("TRUCK WAY BILL NUMBER", record.tcnNumber || record.airwayBillNo || record.jobNo || "")}${cell("Consignee Name and Address:", [record.consigneeName || record.customer || "", record.consigneeAddress || "", record.consigneeCountry || ""].filter(Boolean).join("\n"))}${cell("Truck AWB Issued By", "", '<div class="logo-cell"><img src="' + escapeHtml(logo) + '" alt="' + escapeHtml(company) + '"><span>' + escapeHtml(company) + '</span></div>')}${cell("Delivery Agent", record.deliveryLocation || record.deliveryAddress || "")}${cell("Booking Party", record.bookingParty || "APOLLO FREIGHT SOLUTIONS FZCO")}${cell("Origin", [record.origin || record.pickupLocation || "", record.originCity || ""].filter(Boolean).join("     "))}${cell("Destination", [record.destination || record.deliveryLocation || "", record.destinationCity || ""].filter(Boolean).join("     "))}</div>
     <section class="cargo"><div class="cargo-title">PARTICULARS FURNISHED BY SHIPPER - CARRIER/AGENT NOT RESPONSIBLE</div><div class="cargo-head"><b>No of Pieces</b><b>Gross Weight (kgs.)</b><b>Description</b></div><div class="cargo-row"><span>${escapeHtml(pieces ? `${pieces} PACKAGE` : "")}</span><span>${escapeHtml(weight ? `${weight.toLocaleString()} Kgs` : "")}</span><span>${escapeHtml(description)}</span></div><div class="total total-split"><span>Total&nbsp;&nbsp; ${escapeHtml(pieces ? `${pieces} PACKAGE` : "")}&nbsp;&nbsp;&nbsp; ${escapeHtml(weight ? `${weight.toLocaleString()} Kgs` : "")}</span><span>Remark: ${escapeHtml(remark)}</span></div></section>

@@ -4,7 +4,7 @@ const { databaseUrl, nodeEnv } = require("./config");
 let pool = null;
 
 // Cloud Run's Cloud SQL integration connects over a local Unix socket
-// (postgresql://localhost:5432/apollo_freighterp rather than a normal
+// (postgresql://user:pass@/dbname?host=/cloudsql/PROJECT:REGION:INSTANCE) rather than a normal
 // TCP host. That connection is already local/trusted, so it must NOT use TLS - unlike Neon or any
 // other regular TCP Postgres host in production, which does need it.
 function isCloudSqlSocketUrl(value) {

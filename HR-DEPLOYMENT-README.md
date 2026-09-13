@@ -1,5 +1,7 @@
 # Apollo Freight ERP — HR Portal Completion Package
 
+> **Historical HR implementation note:** This file documents the HR feature set and earlier migration stages. For the current production deployment target and migration order, follow `GCP_DEPLOYMENT.md`. Do not deploy this file's old hosting assumptions independently.
+
 ## Base
 This package is based on the current project supplied by the user (`apollo-freighterp-main (27).zip`).
 

@@ -1,0 +1,25 @@
+Apollo Connected CRM + GCP merge
+
+New CRM files:
+server/sql/037_crm_module.sql
+server/src/crm.js
+web/crm-portal.js
+web/crm-portal.css
+CRM-PREVIEW.html
+CRM-DEPLOYMENT-README.md
+CRM-QA-REPORT.md
+
+Merged/updated files:
+server/src/index.js
+server/package.json
+web/index.html
+web/app.js
+web/app-runtime.js
+web/config.js
+web/hr-portal.js
+web/hr-profile-photo.js
+vercel.json
+README.md
+GCP_DEPLOYMENT.md
+
+Important: IT's existing 036_hr_weekend_overrides.sql is retained. CRM is migration 037.

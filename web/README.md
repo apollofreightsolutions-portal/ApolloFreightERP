@@ -1,29 +1,11 @@
-# Apollo Freight Solutions Portal Web
+# Apollo Connected web client
 
-Static web console for Vercel.
+The web client is served directly by the Node/Express application on Google Cloud Run. `config.js` defaults the API URL to the current browser origin, so Cloud Run serves UI + API as one application.
 
-## Vercel settings
+During the migration period only, if the page is running on a `*.vercel.app` hostname, `config.js` continues to use the existing Render API. A `<meta name="apollo-api-url" content="...">` override still takes precedence when needed.
 
-- Repository: `nilkalalkw-design/apollo-freighterp`
-- Root Directory: `web`
-- Framework Preset: `Other`
-- Build Command: leave empty
-- Output Directory: `.`
+CRM assets:
+- `crm-portal.js`
+- `crm-portal.css`
 
-## API URL
-
-The default API URL is in `config.js`.
-
-The live API URL is:
-
-```text
-https://apollo-freighterp-f9kt.onrender.com
-```
-
-The live Vercel URL is:
-
-```text
-https://apollo-freighterp.vercel.app
-```
-
-You can also change the API URL from the web console and it will be saved in the browser.
+The CRM login option and portal switch are shown only according to the session's CRM permissions. Server-side API authorization remains the security boundary.
