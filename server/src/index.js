@@ -5,6 +5,7 @@ const fs = require("fs");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const path = require("path");
+const { Storage } = require("@google-cloud/storage");
 const { allowedOrigins, autoMigrate, configuredSecret, databaseHost, databaseUrl, databaseUrlSource, isCloudSqlSocket, isNeonDatabase, port } = require("./config");
 const { getPool, query, testConnection } = require("./db");
 const { runMigrations } = require("./migrate");
@@ -46,6 +47,26 @@ function cloudinaryConfig() {
   } catch {
     return null;
   }
+}
+
+let googleCloudStorageClient = null;
+function googleCloudStorageConfig() {
+  const bucketName = String(process.env.GCS_BUCKET || process.env.GOOGLE_CLOUD_STORAGE_BUCKET || "").trim();
+  if (!bucketName) return null;
+  if (!googleCloudStorageClient) googleCloudStorageClient = new Storage();
+  return {
+    bucket: googleCloudStorageClient.bucket(bucketName),
+    prefix: String(process.env.GCS_PREFIX || "apollo-freight/employee-documents").trim().replace(/^\/+|\/+$/g, "")
+  };
+}
+
+async function googleCloudStorageSignedUrl(bucket, objectName, action = "read") {
+  const [url] = await bucket.file(objectName).getSignedUrl({
+    version: "v4",
+    action,
+    expires: Date.now() + 10 * 60 * 1000
+  });
+  return url;
 }
 
 function employeeDocumentNo(userName, typeConfig) {
@@ -1302,11 +1323,15 @@ function requireFields(config, columns) {
 }
 
 async function getRows(resourceName, config) {
+  // Dashboard KPIs and live shipment boards must be calculated from the complete
+  // shipment history. Keep the defensive cap for ancillary resources, but never
+  // truncate shipments or their status history at 500 rows.
+  const limitClause = resourceName === "shipments" || resourceName === "shipmentStatusHistory" ? "" : "limit 500";
   const result = await query(
     `select ${columnsFor(config)}
      from ${config.table}
      order by ${config.order}
-     limit 500`
+     ${limitClause}`
   );
   return {
     ok: true,
@@ -2559,12 +2584,18 @@ app.get("/api/employee-profile-documents/:documentNo/view", requireEmployeePorta
     const documentItem = result.rows[0];
     if (!documentItem?.storage_url) return response.status(404).json({ ok: false, error: "Uploaded file not found." });
     const typeConfig = employeeDocumentType(documentItem.type);
+    let metadata = {};
+    try { metadata = JSON.parse(documentItem.notes || "{}"); } catch { metadata = {}; }
+    if (metadata.storageProvider === "gcs" && metadata.objectName) {
+      const storage = googleCloudStorageConfig();
+      if (!storage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server." });
+      const url = await googleCloudStorageSignedUrl(storage.bucket, metadata.objectName);
+      return response.json({ ok: true, url });
+    }
     if (!typeConfig?.privateAsset) return response.json({ ok: true, url: documentItem.storage_url });
 
     const cloudinary = cloudinaryConfig();
     if (!cloudinary) return response.status(503).json({ ok: false, error: "Cloudinary is not configured on the server." });
-    let metadata = {};
-    try { metadata = JSON.parse(documentItem.notes || "{}"); } catch { metadata = {}; }
     const url = cloudinaryPrivateDownloadUrl(cloudinary, {
       publicId: String(metadata.cloudinaryPublicId || ""),
       fileName: documentItem.file_name,
@@ -2603,15 +2634,35 @@ app.post("/api/employee-profile-documents", requireEmployeePortalAuth, async (re
     if (metadata.locked === true) return response.status(423).json({ ok: false, error: "This document is locked by HR. Contact HR to unlock it before replacing the file." });
   }
 
-  const cloudinary = cloudinaryConfig();
-  if (!cloudinary) {
-    return response.status(503).json({ ok: false, error: "Cloudinary is not configured on the server." });
-  }
-
   try {
     const fileBuffer = Buffer.from(contentBase64, "base64");
     if (!fileBuffer.length || fileBuffer.length > typeConfig.maxBytes) {
       return response.status(400).json({ ok: false, error: `File must be ${typeConfig.maxBytes / 1024 / 1024} MB or smaller.` });
+    }
+    const storage = googleCloudStorageConfig();
+    if (storage) {
+      const objectName = `${storage.prefix}/${safeEmployeeDocumentPart(userName)}/${typeConfig.code.toLowerCase()}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
+      const object = storage.bucket.file(objectName);
+      await object.save(fileBuffer, {
+        resumable: false,
+        validation: "crc32c",
+        metadata: { contentType: mimeType, contentDisposition: `inline; filename="${fileName.replace(/["\\\r\n]/g, "_")}"` }
+      });
+      const documentNo = employeeDocumentNo(userName, typeConfig);
+      const notes = JSON.stringify({ storageProvider: "gcs", bucket: storage.bucket.name, objectName, bytes: fileBuffer.length });
+      const saved = await query(
+        `insert into documents (document_no, linked_no, type, status, date, owner, file_name, storage_url, notes, created_by)
+         values ($1, $2, $3, 'Uploaded', current_date, $2, $4, $5, $6, $2)
+         on conflict (document_no) do update set file_name = excluded.file_name, storage_url = excluded.storage_url, notes = excluded.notes, status = 'Uploaded', date = current_date, updated_at = now()
+         returning document_no, linked_no, type, status, date, owner, file_name, storage_url, notes, created_at`,
+        [documentNo, userName, documentTypeName, fileName, `gs://${storage.bucket.name}/${objectName}`, notes]
+      );
+      return response.status(201).json({ ok: true, row: saved.rows[0] });
+    }
+
+    const cloudinary = cloudinaryConfig();
+    if (!cloudinary) {
+      return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server." });
     }
     const timestamp = Math.floor(Date.now() / 1000);
     const folder = "apollo-freight/employee-private";

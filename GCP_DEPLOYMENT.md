@@ -210,9 +210,35 @@ gcloud run services update "$SERVICE" \
 
 If IT still needs the raw Cloud Run URL for browser testing, include both origins separated by a comma until testing is complete.
 
-## 13. Cloud Storage for future real attachments
+## 13. Google Cloud Storage for new uploads
 
-The present ERP/CRM stores links/filenames; it does not yet upload binary documents into cloud storage. Create a private bucket only when the upload feature is implemented, and serve downloads through authorized server endpoints or short-lived signed URLs. Never make customer documents publicly readable.
+New employee document uploads use Google Cloud Storage when `GCS_BUCKET` is configured. The bucket must remain private. The server uses the Cloud Run service account through Application Default Credentials, stores only a `gs://` object reference and metadata in PostgreSQL, and returns a ten-minute signed URL only after the existing portal authorization checks succeed. Existing Cloudinary records are not migrated by this change.
+
+Create the bucket and grant the deployed Cloud Run service account object access:
+
+```bash
+export GCS_BUCKET="apollo-freight-private-${PROJECT_ID}"
+export SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+gcloud storage buckets create "gs://${GCS_BUCKET}" \
+  --project="$PROJECT_ID" \
+  --location="$REGION" \
+  --uniform-bucket-level-access
+
+gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectAdmin"
+```
+
+Configure Cloud Run with the bucket name and optional object prefix:
+
+```bash
+gcloud run services update "$SERVICE" \
+  --region="$REGION" \
+  --update-env-vars="GCS_BUCKET=${GCS_BUCKET},GCS_PREFIX=apollo-freight/employee-documents"
+```
+
+Do not make this bucket publicly readable and do not commit service-account key files. For local development, use Application Default Credentials (`gcloud auth application-default login`) or a separately managed service account; production should use the Cloud Run service identity.
 
 ## 14. Cutover / rollback rule
 
