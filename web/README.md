@@ -1,4 +1,4 @@
-# Apollo Connected web client
+# Apollo Connected web clien
 
 The web client is served directly by the Node/Express application on Google Cloud Run. `config.js` defaults the API URL to the current browser origin, so Cloud Run serves UI + API as one application.
 
