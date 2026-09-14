@@ -1962,6 +1962,24 @@ th {
   gap: 14px;
 }
 
+.stacked-module-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.module-action-panel-top {
+  order: 0;
+}
+
+.module-action-buttons {
+  align-items: center;
+}
+
+.module-action-buttons > button {
+  min-width: 112px;
+}
+
 .shipment-landscape-actions,
 .shipment-register-panel {
   min-width: 0;

@@ -4154,16 +4154,22 @@ function renderConsolidation() {
   });
   const selectedLoad = rows.find((row) => row.loadNo === state.ui.selectedLoadNo) || null;
   return `
-    <section class="split-grid wide-left">
+    <section class="stacked-module-layout">
+      <article class="panel module-action-panel-top">${panelHeader("Manifest Actions", "Select a manifest, then choose an action")}
+        <div class="action-stack">
+          ${loadSelectorMarkup("load", "Manifest to Open / Manage")}
+          <div class="action-row module-action-buttons">
+            <button type="button" class="primary-button" data-action="new-record" data-type="load">New Manifest</button>
+            <button type="button" class="secondary-button" data-action="load-record" data-type="load">Open</button>
+            <button type="button" class="secondary-button" data-action="generate-document" data-type="load">Generate Manifest</button>
+            <button type="button" class="secondary-button" data-action="export-document" data-type="load">Save / Export</button>
+          </div>
+          <p class="empty-state">Select a manifest by typing to filter its number, route, status, and transport details. Existing manifest actions use the same handlers as before.</p>
+        </div>
+      </article>
       <article class="panel">${panelHeader("Manifest Register", "Loads / Trips")} ${registerColumnSettingsMarkup("load", "Manifest Register columns", defaultColumnLayouts().load)} ${table("load", rows, loadColumns(), false, "load")}
         ${selectedLoad ? consolidationJobsPanel(selectedLoad) : `<div class="report-preview-empty"><p class="empty-state">Select a manifest from the list to open the related job numbers below.</p></div>`}
       </article>
-      ${moduleActionPanel("Manifest Actions", "load", "Generate, load, print, export, and update consolidation manifests from separate popup windows.", documentActionControls("load", "Manifest") + actionChecklist([
-        "Select a manifest, then load it to review or edit.",
-        "New button opens a fresh manifest builder.",
-        "Click any job below the manifest list to open that shipment.",
-        "Non-admin manifest changes go to admin approval first."
-      ]))}
     </section>
     ${adminDeletePanel("load", "Manifest", "Deleting a manifest removes the trip/manifest only. Shipments stay available.")}`;
 }
@@ -4296,18 +4302,18 @@ function renderPod() {
 function renderShipmentStatus() {
   const rows = prioritizeBookedStatus(filteredRows(visibleRows(state.shipments)));
   return `
-    <section class="split-grid wide-left">
-      <article class="panel">${panelHeader("Shipment Status Register", "Click Job No for shipment details or AWB No for grouped status update")} ${registerColumnSettingsMarkup("shipmentStatus", "Shipment Status columns", shipmentStatusColumns())} ${shipmentStatusTable(rows)}</article>
-      <article class="panel">${panelHeader("Status Actions", "Quick Open / Email")}
+    <section class="stacked-module-layout">
+      <article class="panel module-action-panel-top">${panelHeader("Status Actions", "Select a shipment, then choose an action")}
         <div class="action-stack">
-          <p class="empty-state">Pick a Job No below to expand it in the register, or click any row directly. Change status, add a remark, and it's saved to tracking history. Use Send Update to email the customer.</p>
-          ${loadSelectorMarkup("status", "Shipment To Open")}
-          <div class="action-row">
-            <button type="button" data-action="load-record" data-type="status">Open</button>
+          ${loadSelectorMarkup("status", "Shipment to Open / Update")}
+          <div class="action-row module-action-buttons">
+            <button type="button" class="primary-button" data-action="load-record" data-type="status">Open</button>
             <button type="button" class="secondary-button" data-action="send-status-email" data-type="status">Send Update</button>
           </div>
+          <p class="empty-state">Type to filter by job number, AWB, customer, origin, destination, or status. Status changes continue to use the existing register and tracking-history handlers.</p>
         </div>
       </article>
+      <article class="panel">${panelHeader("Shipment Status Register", "Click Job No for shipment details or AWB No for grouped status update")} ${registerColumnSettingsMarkup("shipmentStatus", "Shipment Status columns", shipmentStatusColumns())} ${shipmentStatusTable(rows)}</article>
     </section>
     ${adminDeletePanel("statusHistory", "Status History", "Deletes only the selected status-history entry; the shipment remains unchanged.")}`;
 }
@@ -4701,7 +4707,7 @@ function loadSelectorMarkup(type, label = "Saved Records") {
     return `<p class="empty-state">No saved ${escapeHtml(type)} records available.</p>`;
   }
 
-  if (["shipment", "status", "pod"].includes(type)) {
+  if (["shipment", "status", "pod", "load"].includes(type)) {
     return searchableRecordSelectorMarkup(type, "data-load-select", label, rows);
   }
 
@@ -4735,7 +4741,7 @@ function loadOptionLabel(type, row) {
   }
 
   if (type === "load") {
-    return `${row.loadNo} | ${row.route} | ${row.status}`;
+    return `${row.loadNo} | ${row.route || `${row.origin || ""} to ${row.destination || ""}`} | ${row.transporter || ""} | ${row.vehicleNo || ""} | ${row.status || ""}`;
   }
 
   if (type === "user") {
@@ -4769,7 +4775,7 @@ function searchableRecordSelectorMarkup(type, attribute, label, rows) {
     return `<option value="${escapeHtml(value)}" label="${escapeHtml(loadOptionLabel(type, row))}"></option>`;
   }).join("");
   return `<label>${escapeHtml(label)}
-    <input type="text" ${attribute}="${escapeHtml(type)}" value="${escapeHtml(firstValue)}" list="${escapeHtml(listId)}" placeholder="Type to filter shipment numbers" autocomplete="off" />
+    <input type="text" ${attribute}="${escapeHtml(type)}" value="${escapeHtml(firstValue)}" list="${escapeHtml(listId)}" placeholder="Type to search and select" autocomplete="off" />
     <datalist id="${escapeHtml(listId)}">${options}</datalist>
   </label>`;
 }
@@ -8566,7 +8572,7 @@ function consolidationShipmentPicker(initialJobs = "", currentLoadNo = "") {
   return `<div class="dialog-picker" data-consolidation-picker>
     <input type="hidden" name="jobNumbers" value="${escapeHtml(initialJobs)}" />
     <label>Add Shipment To Manifest
-      <input type="text" data-consolidation-job-select value="${escapeHtml(shipmentOptionIds[0] || "")}" list="consolidation-shipment-options" placeholder="Type to filter shipment numbers" autocomplete="off" />
+      <input type="text" data-consolidation-job-select value="${escapeHtml(shipmentOptionIds[0] || "")}" list="consolidation-shipment-options" placeholder="Type to search and select" autocomplete="off" />
       <datalist id="consolidation-shipment-options">${shipmentOptionsMarkup}</datalist>
     </label>
     <div class="action-row">
