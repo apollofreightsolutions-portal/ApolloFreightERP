@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import logo from "./assets/logo.png";
 
-const DEFAULT_API_BASE_URL = import.meta.env.PROD
-  ? "https://apollo-freighterp-f9kt.onrender.com"
-  : "http://localhost:4000";
+const DEFAULT_API_BASE_URL = import.meta.env.PROD ? "" : "http://localhost:4000";
 const API_BASE_URL = (import.meta.env.VITE_API_URL || DEFAULT_API_BASE_URL).replace(/\/$/, "");
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 const REPORT_FOOTER_TEXT =
