@@ -2021,7 +2021,7 @@ function renderModuleNav() {
     const crmButton = portalAccessPanel.querySelector("[data-portal-switch='crm']");
     if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || session.hrPortalAccess !== true;
     if (erpButton) erpButton.hidden = isCustomerSession() || (!isHrSession() && !isCrmSession()) || session.erpPortalAccess === false;
-    if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || session.maintenancePortalAccess !== true;
+    if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || (session.maintenancePortalAccess !== true && session.erpPortalAccess !== true);
     if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || session.crmPortalAccess !== true;
   }
 }
@@ -2297,7 +2297,7 @@ async function handleLogin(event) {
       rememberSession({ ...session, portal: "employee" });
     } else if (loginMode === "maintenance") {
       const session = await attemptApiLogin(userName, password, "maintenance");
-      if (!session.maintenancePortalAccess) {
+      if (!session.maintenancePortalAccess && !session.erpPortalAccess) {
         throw new Error("Maintenance Portal access is not enabled for this account. Contact your Admin to enable it.");
       }
       customerPortalData = null;
