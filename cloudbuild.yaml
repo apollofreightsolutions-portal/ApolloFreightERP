@@ -1,0 +1,30 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'apollo-freighterp'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'
