@@ -358,7 +358,7 @@ function App() {
             <h1><BrandName /></h1>
             <p className="hero-copy auth-copy">
               {authMode === "login"
-                ? "Sign in with your active ERP account. Maintenance Portal access must be enabled by an administrator."
+                ? "Sign in with your active ERP account to open the Maintenance Portal."
                 : authMode === "forgot"
                   ? "Enter the registered email to receive a password reset OTP."
                   : "Enter the OTP from your email and choose a new password."}

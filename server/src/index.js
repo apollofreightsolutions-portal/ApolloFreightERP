@@ -2008,7 +2008,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
     if (employeeLogin && !row.hr_portal_access) {
       return response.status(403).json({ ok: false, error: "HR Portal access is not enabled for this account." });
     }
-    if (maintenanceLogin && !row.maintenance_portal_access) {
+    if (maintenanceLogin && !row.maintenance_portal_access && !row.erp_portal_access) {
       return response.status(403).json({ ok: false, error: "Maintenance Portal access is not enabled for this account." });
     }
     if (crmLogin && !crmSessionFlags(row).crmPortalAccess) {
