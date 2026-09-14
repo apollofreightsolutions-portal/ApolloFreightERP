@@ -348,20 +348,6 @@ function App() {
     return <div className="shell"><div className="panel">API error: {error}</div></div>;
   }
 
-  if (!user && !token) {
-    return (
-      <div className="shell">
-        <div className="panel auth-panel">
-          <img className="company-logo auth-logo" src={logo} alt="Apollo-Freight Solutions logo" />
-          <p className="eyebrow auth-eyebrow">Apollo-Freight Solutions</p>
-          <h1><BrandName /></h1>
-          <p className="hero-copy auth-copy">Please sign in to the ERP portal and open Maintenance Portal from Switch Portal.</p>
-          {error ? <p className="auth-error">{error}</p> : null}
-        </div>
-      </div>
-    );
-  }
-
   if (!user) {
     return (
       <div className="shell">
@@ -372,7 +358,7 @@ function App() {
             <h1><BrandName /></h1>
             <p className="hero-copy auth-copy">
               {authMode === "login"
-                ? "Secure access for Apollo-Freight Solutions users."
+                ? "Sign in with your active ERP account. Maintenance Portal access must be enabled by an administrator."
                 : authMode === "forgot"
                   ? "Enter the registered email to receive a password reset OTP."
                   : "Enter the OTP from your email and choose a new password."}
@@ -1158,30 +1144,38 @@ function App() {
     setMessage("");
 
     try {
-      const response = await fetch(apiUrl("/api/maintenance/auth/login"), {
+      const response = await fetch(apiUrl("/api/login"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(authForm)
+        body: JSON.stringify({
+          userName: authForm.username,
+          password: authForm.password,
+          loginMode: "maintenance"
+        })
       });
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.message || "Login failed.");
+        throw new Error(data.error || data.message || "Login failed.");
       }
 
-      setUser({
-        id: data.id,
-        name: data.name,
-        username: data.username,
-        email: data.email,
-        role: data.role,
-        permissions: data.permissions || {}
+      const erpSession = data.session;
+      if (!erpSession?.token) {
+        throw new Error("ERP login did not return a valid session.");
+      }
+      const meResponse = await fetch(apiUrl("/api/maintenance/auth/me"), {
+        headers: authHeaders(erpSession.token)
       });
-      setToken(data.token);
-      localStorage.setItem("afs_token", data.token);
-      const { usersData, vehiclesData, expensesData } = await loadAuthedData(data.token, data);
+      const me = await meResponse.json();
+      if (!meResponse.ok) {
+        throw new Error(me.message || "ERP session could not be opened in Maintenance Portal.");
+      }
+      setUser(me);
+      setToken(erpSession.token);
+      localStorage.setItem("afs_token", erpSession.token);
+      const { usersData, vehiclesData, expensesData } = await loadAuthedData(erpSession.token, me);
       setUsers(usersData);
       setVehicles(
         vehiclesData.map((vehicle) => ({
@@ -1216,7 +1210,7 @@ function App() {
           createdByUsername: expense.created_by_username
         }))
       );
-      setMessage(`Welcome back, ${data.name || data.username || "ERP user"}.`);
+      setMessage(`Welcome back, ${me.name || me.username || "ERP user"}.`);
     } catch (loginError) {
       setAuthError(loginError.message);
     }
