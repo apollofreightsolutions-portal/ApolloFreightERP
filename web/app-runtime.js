@@ -10810,11 +10810,11 @@ function tcnDocumentHtml(record) {
         <tbody><tr><td>${escapeHtml(totalPieces)}</td><td>${escapeHtml(grandTotalCbm)}</td><td>${money(totalGrossWeight)}</td><td>${money(chargeableWeight)}</td><td>${escapeHtml(mergedRecord.natureOfGoods || "")}</td></tr></tbody>
       </table>
       ${printOnlyCargoDetails ? "" : tcnDimensionsTable(cargoLines, mergedRecord.volumeCategory)}
-      ${tcnTermsHtml()}
-      <section class="tcn-tracking-notice">
-        <strong>PLEASE TRACK YOUR SHIPMENT</strong>
-        <span>Enter your shipment number or AWB at:</span>
-        <a href="https://www.apollo-freight.com/tracking.html">https://www.apollo-freight.com/tracking.html</a>
+      <section class="tcn-terms-tracking-layout">
+        <div class="tcn-terms-column">${tcnTermsHtml()}</div>
+        <aside class="tcn-tracking-notice">
+          <a href="https://www.apollo-freight.com/tracking.html">Track your shipment</a>
+        </aside>
       </section>
       <section class="tcn-signatures">
       </section>
@@ -11034,11 +11034,14 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-terms h2 { margin-top: 0; font-size: 14px; }
         .tcn-terms ol { margin: 6px 0 0 18px; padding: 0; }
         .tcn-terms p { font-weight: 700; margin-top: 8px; }
-        .tcn-tracking-notice { margin-top: 16px; padding: 12px 14px; border: 2px solid #d96f16; background: #fff8f2; text-align: center; page-break-inside: avoid; }
-        .tcn-tracking-notice strong, .tcn-tracking-notice span, .tcn-tracking-notice a { display: block; }
-        .tcn-tracking-notice strong { color: #172033; font-size: 14px; letter-spacing: .04em; }
-        .tcn-tracking-notice span { margin-top: 5px; color: #5d6c7b; font-size: 11px; }
-        .tcn-tracking-notice a { margin-top: 5px; color: #075985; font-size: 12px; font-weight: 700; text-decoration: underline; }
+        .tcn-terms-tracking-layout { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 18px; page-break-inside: avoid; }
+        .tcn-terms-column { min-width: 0; flex: 1 1 auto; }
+        .tcn-terms-column .tcn-terms { margin-top: 0; }
+        .tcn-terms-column .tcn-terms h2 { display: inline; }
+        .tcn-tracking-notice { flex: 0 0 auto; margin: 0; padding: 0; text-align: right; white-space: nowrap; }
+        .tcn-tracking-notice strong, .tcn-tracking-notice a { display: inline; }
+        .tcn-tracking-notice strong { color: #172033; font-size: 9px; font-weight: 700; }
+        .tcn-tracking-notice a { margin-left: 4px; color: #075985; font-size: 8px; font-weight: 700; overflow-wrap: anywhere; text-decoration: underline; }
         .manifest-header-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #d96f16; margin-bottom: 10px; }
         .manifest-header-grid p { min-height: 42px; margin: 0; padding: 7px; border-right: 1px solid #d96f16; border-bottom: 1px solid #d96f16; }
         .manifest-header-grid p:nth-child(4n) { border-right: 0; }
@@ -11098,9 +11101,9 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
           .receiver-remarks-block .remark-line { height: 16px; }
           .receiver-remarks-block .remark-line + .remark-line { margin-top: 8px; }
           .acknowledgement { padding: 6px 8px; margin-top: 8px; font-size: 10px; }
-          .tcn-tracking-notice { margin-top: 8px; padding: 7px 9px; }
-          .tcn-tracking-notice strong { font-size: 11px; }
-          .tcn-tracking-notice span, .tcn-tracking-notice a { font-size: 9px; }
+          .tcn-terms-tracking-layout { gap: 8px; margin-top: 8px; }
+          .tcn-tracking-notice strong { font-size: 8px; }
+          .tcn-tracking-notice a { margin-left: 3px; font-size: 7px; }
           .document-summary strong { font-size: 14px; }
           .footer-note { margin-top: 10px; padding-top: 8px; font-size: 10px; }
         }
