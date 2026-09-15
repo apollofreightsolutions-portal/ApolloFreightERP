@@ -2036,8 +2036,8 @@ th {
   gap: 6px;
   align-items: center;
   width: 100%;
-  min-width: max-content;
-  overflow-x: auto;
+  min-width: 0;
+  overflow-x: visible;
   overflow-y: hidden;
   padding: 8px 0 4px;
   border-top: 1px solid var(--line);

@@ -10821,7 +10821,7 @@ function tcnDocumentHtml(record) {
       <section class="tcn-terms-tracking-layout">
         <div class="tcn-terms-column">${tcnTermsHtml()}</div>
         <aside class="tcn-tracking-notice">
-          <a href="https://www.apollo-freight.com/tracking.html">Track your shipment</a>
+          <strong>Track your shipment</strong><a href="https://www.apollo-freight.com/tracking.html">https://www.apollo-freight.com/tracking.html</a>
         </aside>
       </section>
       <section class="tcn-signatures">
