@@ -1,0 +1,27 @@
+APOLLO AI GEMINI V1 — CHANGED / ADDED FILES
+
+ADDED
+- APOLLO-AI-README.md
+- APOLLO-AI-QA-REPORT.md
+- APOLLO-AI-CHANGED-FILES.txt
+- server/src/apollo-ai.js
+- server/sql/038_apollo_ai.sql
+- web/apollo-ai.js
+- web/apollo-ai.css
+
+CHANGED
+- README.md
+- server/src/index.js
+  - mounts /api/ai router
+  - adds ai_access to user resource / login session handling
+  - hardens user create/update/delete so only Admin can change user accounts/permissions
+- web/app.js
+  - loads Apollo AI UI module
+- web/index.html
+  - loads Apollo AI stylesheet
+- web/app-runtime.js
+  - persists aiAccess in session/user state
+  - adds Admin user permission toggle for Apollo AI
+
+NO DATABASE WRITE ACTIONS ARE EXPOSED TO APOLLO AI V1.
+The only AI-module INSERT is metadata-only ai_audit_log logging.

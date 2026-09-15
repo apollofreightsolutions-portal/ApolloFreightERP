@@ -1,6 +1,6 @@
 # Apollo Connected — ERP + HR + Maintenance + CRM
 
-This package is the merged Apollo Connected application prepared from the latest IT ZIP supplied on 12 Sep 2026, with the Apollo CRM module merged on top.
+This package is based on the latest Apollo Connected source ZIP supplied on 14 Sep 2026, with Apollo CRM retained and Apollo AI (Gemini V1) integrated on top.
 
 ## Production target
 
@@ -24,6 +24,12 @@ CRM features include accounts, contacts, opportunities, client visits, meeting m
 Database migration for the CRM is `server/sql/037_crm_module.sql`. The IT-supplied build already contains `036_hr_weekend_overrides.sql`, so CRM was intentionally renumbered from 036 to 037 during this merge.
 
 When an account is reassigned, active opportunities and open follow-ups that still belong to the previous account owner are transferred to the new owner while the historical activity remains intact.
+
+## Apollo AI (Gemini V1)
+
+This package includes Apollo AI as a read-only, permission-scoped assistant. The Gemini API key remains server-side, user access is controlled by `app_users.ai_access`, shipment context is branch-scoped, CRM context follows account ownership / existing CRM view-all permission, and the free-tier-safe defaults exclude financial amounts and personal HR data.
+
+See `APOLLO-AI-README.md` before deployment. Migration `server/sql/038_apollo_ai.sql` must be reviewed and applied.
 
 ## Transition compatibility
 

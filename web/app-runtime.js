@@ -191,7 +191,8 @@ function rememberSession(sessionOrUserName) {
       crmExportAccess: session.crmExportAccess === true,
       crmArchiveAccess: session.crmArchiveAccess === true,
       crmViewTeamReports: session.crmViewTeamReports === true,
-      crmAdminAccess: session.crmAdminAccess === true
+      crmAdminAccess: session.crmAdminAccess === true,
+      aiAccess: session.aiAccess === true
     })
   );
 }
@@ -1041,7 +1042,8 @@ function user(
   crmExportAccess = false,
   crmArchiveAccess = false,
   crmViewTeamReports = false,
-  crmAdminAccess = false
+  crmAdminAccess = false,
+  aiAccess = false
 ) {
   return {
     userName,
@@ -1071,7 +1073,8 @@ function user(
     crmExportAccess: isChecked(crmExportAccess),
     crmArchiveAccess: isChecked(crmArchiveAccess),
     crmViewTeamReports: isChecked(crmViewTeamReports),
-    crmAdminAccess: isChecked(crmAdminAccess)
+    crmAdminAccess: isChecked(crmAdminAccess),
+    aiAccess: isChecked(aiAccess)
   };
 }
 
@@ -1300,7 +1303,8 @@ function normalizeUsers(users) {
     canEditAllEntry: isChecked(record.canEditAllEntry),
     canViewUpdatedHistory: isChecked(record.canViewUpdatedHistory),
     canBillingSalesEntry: record.canBillingSalesEntry === undefined ? true : isChecked(record.canBillingSalesEntry),
-    canBillingCostEntry: record.canBillingCostEntry === undefined ? true : isChecked(record.canBillingCostEntry)
+    canBillingCostEntry: record.canBillingCostEntry === undefined ? true : isChecked(record.canBillingCostEntry),
+    aiAccess: isChecked(record.aiAccess ?? record.ai_access)
   }));
 }
 
@@ -2898,7 +2902,8 @@ function apiUser(row) {
     isChecked(row.crm_export_access),
     isChecked(row.crm_archive_access),
     isChecked(row.crm_view_team_reports),
-    isChecked(row.crm_admin_access)
+    isChecked(row.crm_admin_access),
+    isChecked(row.ai_access)
   );
 }
 
@@ -6848,6 +6853,7 @@ function openRecord(type, id, presetRecord) {
           crmArchiveAccess: isChecked(data.crmArchiveAccess),
           crmViewTeamReports: isChecked(data.crmViewTeamReports),
           crmAdminAccess: isChecked(data.crmAdminAccess),
+          aiAccess: isChecked(data.aiAccess),
           notes: data.notes || record.notes || ""
         };
         const payload = { ...updatedRecord };
@@ -8392,7 +8398,8 @@ function userDialogBody(record) {
       crmExportChecked: isChecked(fieldValue("crmExportAccess", false)),
       crmArchiveChecked: isChecked(fieldValue("crmArchiveAccess", false)),
       crmTeamReportsChecked: isChecked(fieldValue("crmViewTeamReports", false)),
-      crmAdminChecked: isChecked(fieldValue("crmAdminAccess", false))
+      crmAdminChecked: isChecked(fieldValue("crmAdminAccess", false)),
+      aiChecked: isChecked(fieldValue("aiAccess", false))
     })}
     ${checkbox("canViewAllEntry", "User can view all entry", isChecked(fieldValue("canViewAllEntry", false)))}
     ${checkbox("canViewOnlySelfEntry", "User can view only self entry", loaded ? isChecked(fieldValue("canViewOnlySelfEntry", true)) : true)}
@@ -8412,7 +8419,7 @@ function changePasswordDialogBody() {
 }
 
 function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
-  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false } = options;
+  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false, aiChecked = false } = options;
   return `<fieldset class="section-access-grid">
     <legend>Menu Access Permissions</legend>
     ${modules.map(([name]) => {
@@ -8431,6 +8438,7 @@ function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
       ${checkbox("hrPortalAccess", "Allow HR Portal access (Employee Login)", hrPortalChecked)}
       ${checkbox("maintenancePortalAccess", "Allow Maintenance Portal access", maintenancePortalChecked)}
       ${checkbox("crmPortalAccess", "Allow CRM / Sales Portal access", crmPortalChecked)}
+      ${checkbox("aiAccess", "Allow Apollo AI access (read-only, permission-scoped)", aiChecked)}
       ${checkbox("isHrAdmin", "Is HR Admin (independent of ERP role - manage all employee records, leave, payslips, announcements)", hrAdminChecked)}
     </div>
     <div class="checkbox-field permission-group-label"><span>CRM Security & Ownership</span></div>
@@ -12027,7 +12035,8 @@ async function createUser(data) {
     isChecked(data.crmExportAccess),
     isChecked(data.crmArchiveAccess),
     isChecked(data.crmViewTeamReports),
-    isChecked(data.crmAdminAccess)
+    isChecked(data.crmAdminAccess),
+    isChecked(data.aiAccess)
   );
   state.users.unshift(record);
   await postRecord("user", record);

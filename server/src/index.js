@@ -15,6 +15,7 @@ const { usersRouter: maintenanceUsersRouter } = require("./maintenance/routes/us
 const { vehiclesRouter: maintenanceVehiclesRouter } = require("./maintenance/routes/vehicles");
 const { healthRouter: maintenanceHealthRouter } = require("./maintenance/routes/health");
 const { createCrmRouter } = require("./crm");
+const { createApolloAiRouter } = require("./apollo-ai");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -940,6 +941,7 @@ const resources = {
       field("crm_archive_access", ["crmArchiveAccess", "crm_archive_access"]),
       field("crm_view_team_reports", ["crmViewTeamReports", "crm_view_team_reports"]),
       field("crm_admin_access", ["crmAdminAccess", "crm_admin_access"]),
+      field("ai_access", ["aiAccess", "ai_access"]),
       field("notes")
     ]
   },
@@ -1346,7 +1348,7 @@ async function loginUser(identifier, password) {
       `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
               can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
               can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin,
-              crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, password
+              crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, ai_access, password
        from app_users
        where lower(user_name) = lower($1) or lower(email) = lower($1)
        limit 1`,
@@ -1383,6 +1385,7 @@ async function loginUser(identifier, password) {
       result.rows[0].crm_archive_access = String(result.rows[0].role || "").toLowerCase() === "admin";
       result.rows[0].crm_view_team_reports = String(result.rows[0].role || "").toLowerCase() === "admin";
       result.rows[0].crm_admin_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].ai_access = String(result.rows[0].role || "").toLowerCase() === "admin";
     }
   }
 
@@ -1955,6 +1958,7 @@ app.post("/api/session/handoff", loginRateLimiter, async (request, response, nex
         erpPortalAccess: row.erp_portal_access !== false,
         maintenancePortalAccess: Boolean(row.maintenance_portal_access),
         isHrAdmin: Boolean(row.is_hr_admin),
+        aiAccess: Boolean(row.ai_access),
         ...crmSessionFlags(row),
         token: signCustomerToken({
           userName: row.user_name,
@@ -2037,6 +2041,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
         erpPortalAccess: row.erp_portal_access !== false,
         maintenancePortalAccess: Boolean(row.maintenance_portal_access),
         isHrAdmin: Boolean(row.is_hr_admin),
+        aiAccess: Boolean(row.ai_access),
         ...crmSessionFlags(row),
         token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: employeeLogin, crmPortal: crmLogin, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
       }
@@ -2058,6 +2063,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
             hrPortalAccess: true,
             erpPortalAccess: true,
             isHrAdmin: true,
+            aiAccess: true,
             crmPortalAccess: true,
             crmRole: "Management",
             crmViewAllAccounts: true,
@@ -2093,7 +2099,7 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
         `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
                 can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
                 can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin,
-                crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access
+                crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, ai_access
          from app_users where lower(user_name) = lower($1) limit 1`,
         [request.appSession.userName]
       );
@@ -2119,6 +2125,7 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
         result.rows[0].crm_archive_access = String(result.rows[0].role || "").toLowerCase() === "admin";
         result.rows[0].crm_view_team_reports = String(result.rows[0].role || "").toLowerCase() === "admin";
         result.rows[0].crm_admin_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+        result.rows[0].ai_access = String(result.rows[0].role || "").toLowerCase() === "admin";
       }
     }
     const row = result.rows[0];
@@ -2153,6 +2160,7 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
         erpPortalAccess: row.erp_portal_access !== false,
         maintenancePortalAccess: Boolean(row.maintenance_portal_access),
         isHrAdmin: Boolean(row.is_hr_admin),
+        aiAccess: Boolean(row.ai_access),
         ...crmSessionFlags(row),
         portal: requestedPortal === "employee" ? "employee" : requestedPortal === "crm" ? "crm" : "company",
         token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: requestedPortal === "employee", crmPortal: requestedPortal === "crm", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
@@ -3770,6 +3778,7 @@ app.use("/api/maintenance/auth", maintenanceAuthRouter);
 app.use("/api/maintenance/expenses", maintenanceExpensesRouter);
 app.use("/api/maintenance/users", maintenanceUsersRouter);
 app.use("/api/maintenance/vehicles", maintenanceVehiclesRouter);
+app.use("/api/ai", createApolloAiRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth }));
 
 app.get("/api/:resource", requireErpPortalAuth, async (request, response, next) => {
@@ -3801,6 +3810,10 @@ app.post("/api/:resource", requireErpPortalAuth, async (request, response, next)
 
   if (!config) {
     return next();
+  }
+
+  if (resourceName === "users" && String(request.appSession?.role || "").toLowerCase() !== "admin") {
+    return response.status(403).json({ ok: false, error: "Only Admin can create or change user accounts and permissions." });
   }
 
   try {
@@ -3893,6 +3906,10 @@ app.put("/api/:resource/:id", requireErpPortalAuth, async (request, response, ne
     return next();
   }
 
+  if (resourceName === "users" && String(request.appSession?.role || "").toLowerCase() !== "admin") {
+    return response.status(403).json({ ok: false, error: "Only Admin can create or change user accounts and permissions." });
+  }
+
   try {
     const recordId = decodeURIComponent(request.params.id);
     if (resourceName === "consolidations" && (request.body?.jobNumbers !== undefined || request.body?.job_numbers !== undefined)) {
@@ -3947,6 +3964,10 @@ app.delete("/api/:resource/:id", requireErpPortalAuth, async (request, response,
     return next();
   }
 
+  if (resourceName === "users" && String(request.appSession?.role || "").toLowerCase() !== "admin") {
+    return response.status(403).json({ ok: false, error: "Only Admin can create or change user accounts and permissions." });
+  }
+
   try {
     const row = await deleteRow(config, decodeURIComponent(request.params.id));
     response.json({
@@ -3967,10 +3988,12 @@ app.delete("/api/:resource/:id", requireErpPortalAuth, async (request, response,
 });
 
 app.use((error, _request, response, _next) => {
-  response.status(error.status || 500).json({
+  const payload = {
     ok: false,
     error: error.message || "Unexpected server error."
-  });
+  };
+  if (error.requestId) payload.requestId = error.requestId;
+  response.status(error.status || 500).json(payload);
 });
 
 function start() {

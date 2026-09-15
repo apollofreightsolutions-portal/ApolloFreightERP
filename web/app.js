@@ -14,3 +14,7 @@ import("./hs-code-customer-portal.js").catch((error) => {
 import("./crm-portal.js").catch((error) => {
   console.warn("CRM Portal is unavailable.", error);
 });
+
+import("./apollo-ai.js").catch((error) => {
+  console.warn("Apollo AI is unavailable.", error);
+});
