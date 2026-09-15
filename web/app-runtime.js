@@ -11042,11 +11042,11 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-terms h2 { margin-top: 0; font-size: 14px; }
         .tcn-terms ol { margin: 6px 0 0 18px; padding: 0; }
         .tcn-terms p { font-weight: 700; margin-top: 8px; }
-        .tcn-terms-tracking-layout { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 18px; page-break-inside: avoid; }
-        .tcn-terms-column { min-width: 0; flex: 1 1 auto; }
+        .tcn-terms-tracking-layout { display: block; margin-top: 18px; page-break-inside: avoid; }
+        .tcn-terms-column { width: 100%; }
         .tcn-terms-column .tcn-terms { margin-top: 0; }
         .tcn-terms-column .tcn-terms h2 { display: inline; }
-        .tcn-tracking-notice { flex: 0 0 auto; margin: 0; padding: 0; text-align: right; white-space: nowrap; }
+        .tcn-tracking-notice { margin: 8px 0 0; padding: 0; text-align: right; white-space: nowrap; }
         .tcn-tracking-notice strong, .tcn-tracking-notice a { display: inline; }
         .tcn-tracking-notice strong { color: #172033; font-size: 10px; font-weight: 700; }
         .tcn-tracking-notice a { margin-left: 4px; color: #075985; font-size: 9px; font-weight: 700; overflow-wrap: anywhere; text-decoration: underline; }
