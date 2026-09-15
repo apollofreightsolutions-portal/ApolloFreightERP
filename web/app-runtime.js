@@ -8747,11 +8747,46 @@ function bindShipmentCustomerAutofill() {
   const tariffDatalist = dialogBody.querySelector("#tariffNoOptions");
   if (!customerField && !codeField && !billToField) return;
 
-  const findCustomer = (value) =>
-    state.customers.find((row) =>
-      String(row.name || "").trim().toLowerCase() === value ||
-      String(row.code || "").trim().toLowerCase() === value
-    );
+  const normalizeCustomerSearch = (value) => String(value || "").trim().toLowerCase();
+  const customerContactValue = (customer) => customer?.contactPerson || customer?.contact_person || customer?.contact || "";
+  const customerExactValues = (customer) => [
+    customer?.name,
+    customer?.code,
+    customer?.locationOrLane,
+    customer?.fullAddress,
+    customer?.email,
+    customer?.mobile,
+    customerContactValue(customer)
+  ].map(normalizeCustomerSearch).filter(Boolean);
+  const customerPartialText = (customer) => [
+    customer?.name,
+    customer?.code,
+    customer?.locationOrLane,
+    customer?.fullAddress,
+    customerContactValue(customer)
+  ].map(normalizeCustomerSearch).filter((field) => field.length >= 3);
+  const findCustomer = (value) => {
+    const query = normalizeCustomerSearch(value);
+    if (!query) return null;
+    const exactMatches = state.customers.filter((row) => customerExactValues(row).includes(query));
+    const exact = exactMatches.length === 1 ? exactMatches[0] : null;
+    if (exact) return exact;
+    // Partial lookup is intentionally restricted to text fields. Partial phone numbers,
+    // emails, and other numeric fragments can incorrectly identify another customer.
+    if (query.length < 3 || /[0-9@+]/.test(query)) return null;
+    const matches = state.customers.filter((row) => customerPartialText(row).some((field) => field.includes(query)));
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+  const fillCustomerSection = (source, fields) => {
+    const customer = findCustomer(source?.value);
+    if (!customer) return;
+    setDialogValue(fields.name, customer.name);
+    setDialogValue(fields.address, customer.fullAddress || customer.locationOrLane);
+    setDialogValue(fields.contact, customerContactValue(customer));
+    setDialogValue(fields.mobile, customer.mobile);
+    if (fields.email) setDialogValue(fields.email, customer.email);
+  };
 
   // Tariff options are filtered to the selected customer only, matching the same behavior as the
   // Invoice dialog's Job No/Tariff No fields - without this, the tariff list would only reflect
@@ -8780,10 +8815,12 @@ function bindShipmentCustomerAutofill() {
     setDialogValue("customerCode", customer.code);
     setDialogValue("customerEmail", customer.email);
     setDialogValue("customerMobile", customer.mobile);
-    setDialogValue("customerContactPerson", customer.name);
+    setDialogValue("customerContactPerson", customerContactValue(customer));
     setDialogValue("customerAddress", customer.fullAddress || customer.locationOrLane);
     setDialogValue("billTo1", customer.name);
     setDialogValue("billingParty1Address", customer.fullAddress || customer.locationOrLane);
+    setDialogValue("billingParty1ContactPerson", customerContactValue(customer));
+    setDialogValue("billingParty1Mobile", customer.mobile);
     setDialogValue("billingParty1Email", customer.email);
     setDialogValue("billingParty1CreditTerms", customer.terms);
   };
@@ -8798,7 +8835,8 @@ function bindShipmentCustomerAutofill() {
     if (!customer) return;
 
     setDialogValue("billingParty1Address", customer.fullAddress || customer.locationOrLane);
-    setDialogValue("billingParty1ContactPerson", customer.name);
+    setDialogValue("billTo1", customer.name);
+    setDialogValue("billingParty1ContactPerson", customerContactValue(customer));
     setDialogValue("billingParty1Mobile", customer.mobile);
     setDialogValue("billingParty1Email", customer.email);
     setDialogValue("billingParty1CreditTerms", customer.terms);
@@ -8810,6 +8848,29 @@ function bindShipmentCustomerAutofill() {
   codeField?.addEventListener("change", () => fill(codeField));
   billToField?.addEventListener("input", () => fillBillingPartyOnly(billToField));
   billToField?.addEventListener("change", () => fillBillingPartyOnly(billToField));
+
+  [
+    [["shipperName", "shipperAddress", "shipperContactPerson", "shipperMobile", "shipperEmail"], { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
+    [["shipperAddress", "shipperName", "shipperContactPerson", "shipperMobile", "shipperEmail"], { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
+    [["consigneeName", "consigneeAddress", "consigneeContactPerson", "consigneeMobile", "consigneeEmail"], { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
+    [["consigneeAddress", "consigneeName", "consigneeContactPerson", "consigneeMobile", "consigneeEmail"], { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
+    [["pickupLocation", "pickupAddress", "pickupContactPerson", "pickupMobile"], { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
+    [["pickupAddress", "pickupLocation", "pickupContactPerson", "pickupMobile"], { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
+    [["deliveryLocation", "deliveryAddress", "deliveryContactPerson", "deliveryMobile"], { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }],
+    [["deliveryAddress", "deliveryLocation", "deliveryContactPerson", "deliveryMobile"], { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }],
+    [["billTo1", "billingParty1Address", "billingParty1ContactPerson", "billingParty1Mobile", "billingParty1Email", "billingParty1CreditTerms"], null]
+  ].forEach(([fieldNames, fields]) => {
+    fieldNames.forEach((fieldName) => {
+      const field = dialogBody.querySelector(`[name='${fieldName}']`);
+      if (fieldNames[0] === "billTo1") {
+        field?.addEventListener("input", () => fillBillingPartyOnly(field));
+        field?.addEventListener("change", () => fillBillingPartyOnly(field));
+        return;
+      }
+      field?.addEventListener("input", () => fillCustomerSection(field, fields));
+      field?.addEventListener("change", () => fillCustomerSection(field, fields));
+    });
+  });
 }
 
 function customerDialogSnapshot() {
@@ -8817,7 +8878,7 @@ function customerDialogSnapshot() {
     name: dialogValue("customer"),
     code: dialogValue("customerCode"),
     address: dialogValue("customerAddress") || customerAddressFor(dialogValue("customer"), dialogValue("customerCode")),
-    contact: dialogValue("customerContactPerson") || dialogValue("customer"),
+    contact: dialogValue("customerContactPerson"),
     mobile: dialogValue("customerMobile"),
     email: dialogValue("customerEmail"),
     country: ""
@@ -11042,11 +11103,11 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-terms h2 { margin-top: 0; font-size: 14px; }
         .tcn-terms ol { margin: 6px 0 0 18px; padding: 0; }
         .tcn-terms p { font-weight: 700; margin-top: 8px; }
-        .tcn-terms-tracking-layout { display: block; margin-top: 18px; page-break-inside: avoid; }
+        .tcn-terms-tracking-layout { position: relative; margin-top: 18px; page-break-inside: avoid; }
         .tcn-terms-column { width: 100%; }
         .tcn-terms-column .tcn-terms { margin-top: 0; }
-        .tcn-terms-column .tcn-terms h2 { display: inline; }
-        .tcn-tracking-notice { margin: 8px 0 0; padding: 0; text-align: right; white-space: nowrap; }
+        .tcn-terms-column .tcn-terms h2 { display: block; padding-right: 280px; }
+        .tcn-tracking-notice { position: absolute; top: 0; right: 0; margin: 0; padding: 0; text-align: right; white-space: nowrap; }
         .tcn-tracking-notice strong, .tcn-tracking-notice a { display: inline; }
         .tcn-tracking-notice strong { color: #172033; font-size: 10px; font-weight: 700; }
         .tcn-tracking-notice a { margin-left: 4px; color: #075985; font-size: 9px; font-weight: 700; overflow-wrap: anywhere; text-decoration: underline; }
@@ -11752,10 +11813,15 @@ async function approveLoadManifest(loadNo) {
   const loadItem = state.loads.find((row) => row.loadNo === loadNo);
   if (!loadItem) return;
   loadItem.manifestStatus = "Approved";
-  await persistRecord("load", loadItem);
+  const saved = await persistRecord("load", loadItem);
+  if (!saved) {
+    notifyDenied("Manifest not generated", "The manifest status could not be saved. Please try again.");
+    return;
+  }
   addHistory("Generated manifest", loadNo);
   saveState();
   render();
+  generateRecordDocument("load", loadNo);
 }
 
 async function handleModuleSubmit(event) {
