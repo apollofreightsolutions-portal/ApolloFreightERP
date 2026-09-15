@@ -1772,6 +1772,13 @@ async function boot() {
   moduleContent.addEventListener("keydown", handleModuleKeydown);
   moduleContent.addEventListener("submit", handleModuleSubmit);
   moduleContent.addEventListener("change", (event) => {
+    const recordSelector = event.target.closest("[data-load-select]");
+    if (recordSelector) {
+      state.ui.selectedRecordSelectors = state.ui.selectedRecordSelectors || {};
+      state.ui.selectedRecordSelectors[recordSelector.dataset.loadSelect] = String(recordSelector.value || "").trim();
+      if (recordSelector.dataset.loadSelect === "shipment") state.ui.activeShipmentNo = String(recordSelector.value || "").trim();
+      saveState();
+    }
     const activityFilter = event.target.closest("[data-customer-activity-filter]");
     if (activityFilter) {
       state.ui.customerActivityFilter = activityFilter.value || "All";
@@ -4776,7 +4783,10 @@ function loadOptionLabel(type, row) {
 
 function searchableRecordSelectorMarkup(type, attribute, label, rows) {
   const listId = `${attribute}-${type}-options`;
-  const firstValue = rows.length ? rowId(type, rows[0]) : "";
+  const savedValue = state.ui.selectedRecordSelectors?.[type] || "";
+  const firstValue = rows.some((row) => rowId(type, row) === savedValue)
+    ? savedValue
+    : (rows.length ? rowId(type, rows[0]) : "");
   const options = rows.map((row) => {
     const value = rowId(type, row);
     return `<option value="${escapeHtml(value)}" label="${escapeHtml(loadOptionLabel(type, row))}"></option>`;
@@ -6600,10 +6610,10 @@ function handleModuleKeydown(event) {
 }
 
 function selectedRecordId(type) {
-  if (type === "shipment") {
-    return state.ui.activeShipmentNo || moduleContent.querySelector(`[data-load-select='${type}']`)?.value || "";
-  }
-  return moduleContent.querySelector(`[data-load-select='${type}']`)?.value || "";
+  // The searchable selector is the source of truth for action buttons. The legacy
+  // activeShipmentNo value can point at a previously opened or latest shipment and
+  // must never override the user's current selection.
+  return String(moduleContent.querySelector(`[data-load-select='${type}']`)?.value || "").trim();
 }
 
 function selectedNewRecordType(type) {
@@ -13193,13 +13203,18 @@ async function updatePod(data) {
 }
 
 async function updateStatus(data) {
-  const jobNo = data.jobNo;
+  const jobNo = String(data.jobNo || "").trim();
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
     notifyDenied("Shipment not found", "Select a valid Job No.");
     return false;
   }
-  const newStatus = String(data.status || shipmentItem.status).trim();
+  const requestedStatus = String(data.status || "").trim();
+  const newStatus = statusOptions().find((option) => option.toLowerCase() === requestedStatus.toLowerCase()) || "";
+  if (!newStatus) {
+    notifyDenied("Status not selected", "Choose a valid shipment status before saving the update.");
+    return false;
+  }
   const oldStatus = shipmentItem.status;
   const airwayBillNo = String(shipmentItem.airwayBillNo || "").trim();
   const normalizedAwb = airwayBillNo.toLowerCase();
@@ -13273,8 +13288,6 @@ async function updateStatus(data) {
     state.ui.expandedStatusJob = jobNo;
     state.ui.expandedStatusAwb = "";
   }
-  saveState();
-  render();
 }
 
 
