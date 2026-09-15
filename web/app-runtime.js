@@ -10600,8 +10600,21 @@ function cargoItemsPrintTable(record) {
 }
 
 function qrMarkup(value) {
-  const encoded = encodeURIComponent(String(value || ""));
-  return `<img class="qr-code" loading="eager" decoding="sync" src="https://api.qrserver.com/v1/create-qr-code/?size=96x96&data=${encoded}" alt="QR ${escapeHtml(value || "")}" />`;
+  const text = String(value || "").trim();
+  let src = "";
+  if (text && typeof window.qrcode === "function") {
+    try {
+      const qr = window.qrcode(0, "M");
+      qr.addData(text, "Byte");
+      qr.make();
+      src = qr.createDataURL(3, 4);
+    } catch (error) {
+      console.warn("Unable to generate local QR code:", error);
+    }
+  }
+  return src
+    ? `<img class="qr-code" decoding="sync" src="${src}" alt="QR ${escapeHtml(text)}" />`
+    : `<span class="qr-code qr-code-unavailable" role="img" aria-label="QR unavailable">QR unavailable</span>`;
 }
 
 function invoiceDocumentHtml(record) {
@@ -10798,6 +10811,11 @@ function tcnDocumentHtml(record) {
       </table>
       ${printOnlyCargoDetails ? "" : tcnDimensionsTable(cargoLines, mergedRecord.volumeCategory)}
       ${tcnTermsHtml()}
+      <section class="tcn-tracking-notice">
+        <strong>PLEASE TRACK YOUR SHIPMENT</strong>
+        <span>Enter your shipment number or AWB at:</span>
+        <a href="https://www.apollo-freight.com/tracking.html">https://www.apollo-freight.com/tracking.html</a>
+      </section>
       <section class="tcn-signatures">
       </section>
     `,
@@ -11016,6 +11034,11 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-terms h2 { margin-top: 0; font-size: 14px; }
         .tcn-terms ol { margin: 6px 0 0 18px; padding: 0; }
         .tcn-terms p { font-weight: 700; margin-top: 8px; }
+        .tcn-tracking-notice { margin-top: 16px; padding: 12px 14px; border: 2px solid #d96f16; background: #fff8f2; text-align: center; page-break-inside: avoid; }
+        .tcn-tracking-notice strong, .tcn-tracking-notice span, .tcn-tracking-notice a { display: block; }
+        .tcn-tracking-notice strong { color: #172033; font-size: 14px; letter-spacing: .04em; }
+        .tcn-tracking-notice span { margin-top: 5px; color: #5d6c7b; font-size: 11px; }
+        .tcn-tracking-notice a { margin-top: 5px; color: #075985; font-size: 12px; font-weight: 700; text-decoration: underline; }
         .manifest-header-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #d96f16; margin-bottom: 10px; }
         .manifest-header-grid p { min-height: 42px; margin: 0; padding: 7px; border-right: 1px solid #d96f16; border-bottom: 1px solid #d96f16; }
         .manifest-header-grid p:nth-child(4n) { border-right: 0; }
@@ -11075,6 +11098,9 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
           .receiver-remarks-block .remark-line { height: 16px; }
           .receiver-remarks-block .remark-line + .remark-line { margin-top: 8px; }
           .acknowledgement { padding: 6px 8px; margin-top: 8px; font-size: 10px; }
+          .tcn-tracking-notice { margin-top: 8px; padding: 7px 9px; }
+          .tcn-tracking-notice strong { font-size: 11px; }
+          .tcn-tracking-notice span, .tcn-tracking-notice a { font-size: 9px; }
           .document-summary strong { font-size: 14px; }
           .footer-note { margin-top: 10px; padding-top: 8px; font-size: 10px; }
         }
