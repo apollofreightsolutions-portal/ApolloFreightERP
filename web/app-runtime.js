@@ -11034,7 +11034,7 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-grid strong, .tcn-two-col strong { display: block; font-size: 13px; color: #172033; }
         .tcn-two-col { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #d96f16; margin-bottom: 10px; }
         .tcn-two-col p { margin: 5px 0 0; font-size: 12px; line-height: 1.35; }
-        .tcn-cargo-head { grid-template-columns: 1fr 2fr; }
+        .tcn-cargo-head { grid-template-columns: 1fr 1fr; }
         .tcn-cargo-table th, .tcn-cargo-table td { text-align: center; }
         .tcn-signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; margin-top: 44px; }
         .tcn-signatures div { min-height: 92px; border-top: 1px solid #d96f16; padding-top: 8px; }
