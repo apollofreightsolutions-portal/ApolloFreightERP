@@ -7522,7 +7522,7 @@ function podSplitHistoryMarkup(shipmentItem, splits, totalPieces) {
           <button type="button" class="table-inline-link" data-pod-split-download data-job-no="${escapeHtml(shipmentItem.jobNo)}" data-split-no="${escapeHtml(String(split.splitNo || ""))}">Part ${escapeHtml(String(split.splitNo || ""))} - Download</button>
         </td>
         <td>
-          ${podDoc?.storageUrl ? `<button type="button" class="table-inline-link" data-pod-split-view="${escapeHtml(podDoc.storageUrl)}">POD ${escapeHtml(String(split.splitNo || ""))} - View</button>` : `<span class="empty-state">Not uploaded</span>`}<br />
+          ${podDoc?.storageUrl ? `<button type="button" class="table-inline-link" data-pod-split-view="${escapeHtml(podDoc.documentNo)}">POD ${escapeHtml(String(split.splitNo || ""))} - View</button>` : `<span class="empty-state">Not uploaded</span>`}<br />
           <button type="button" class="table-inline-link" data-pod-split-upload data-job-no="${escapeHtml(shipmentItem.jobNo)}" data-split-no="${escapeHtml(String(split.splitNo || ""))}">POD ${escapeHtml(String(split.splitNo || ""))} - ${podDoc?.storageUrl ? "Replace" : "Upload"}</button>
         </td>
       </tr>`;
@@ -7567,7 +7567,9 @@ function bindPodShipmentDialog() {
   dialogBody.addEventListener("click", async (event) => {
     const historyViewButton = event.target.closest("[data-pod-split-view]");
     if (historyViewButton) {
-      window.open(historyViewButton.dataset.podSplitView, "_blank", "noopener");
+      const viewer=window.open("", "_blank");
+      try { const result=await fetchJson(`/api/documents/${encodeURIComponent(historyViewButton.dataset.podSplitView)}/view`); if(!result?.url) throw new Error("The POD file could not be opened."); if(viewer){viewer.opener=null;viewer.location.href=result.url;} }
+      catch(error){if(viewer)viewer.close();notifyDenied("POD not available",error.message||"The POD file could not be opened.");}
       return;
     }
     // Regenerates the printable Delivery Note for ANY past delivery on demand (Part 1, Part 2,
@@ -11989,7 +11991,11 @@ async function createDocument(data) {
 async function createShipmentDocument(data, shipmentNo) {
   const upload = data?.shipmentDocumentUpload;
   if (!upload || typeof upload !== "object" || !upload.name || !shipmentNo) return true;
-  return createDocument({ documentNo: nextNumber("DOC", state.documents, "documentNo"), linkedNo: shipmentNo, type: "Shipment Document", status: "Uploaded", date: today(), owner: currentUserName(), fileUpload: upload });
+  if (!["application/pdf", "image/jpeg", "image/png"].includes(String(upload.type || "").toLowerCase())) throw new Error("Shipment document must be a PDF, JPG, JPEG, or PNG file.");
+  if (upload.size > 10 * 1024 * 1024) throw new Error("Shipment document must be 10 MB or smaller.");
+  const result = await fetchJson("/api/shipment-documents", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({shipmentNo,fileName:upload.name,mimeType:upload.type,contentBase64:await readFileAsBase64(upload)}) });
+  state.documents.unshift(apiDocument(result.row || {}));
+  return true;
 }
 
 async function createCharge(data) {

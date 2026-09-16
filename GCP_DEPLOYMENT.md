@@ -212,7 +212,7 @@ If IT still needs the raw Cloud Run URL for browser testing, include both origin
 
 ## 13. Google Cloud Storage for new uploads
 
-New employee document uploads use Google Cloud Storage when `GCS_BUCKET` is configured. The bucket must remain private. The server uses the Cloud Run service account through Application Default Credentials, stores only a `gs://` object reference and metadata in PostgreSQL, and returns a ten-minute signed URL only after the existing portal authorization checks succeed. Existing Cloudinary records are not migrated by this change.
+All new uploaded files—shipment documents, signed PODs, HR leave attachments, and employee profile documents—use Google Cloud Storage when `GCS_BUCKET` is configured. The bucket must remain private. The server uses the Cloud Run service account through Application Default Credentials, stores only a `gs://` object reference and metadata in PostgreSQL, and returns a ten-minute signed URL only after the existing portal authorization checks succeed. Existing Cloudinary records remain readable during the transition and are not deleted automatically.
 
 Create the bucket and grant the deployed Cloud Run service account object access:
 
@@ -235,7 +235,7 @@ Configure Cloud Run with the bucket name and optional object prefix:
 ```bash
 gcloud run services update "$SERVICE" \
   --region="$REGION" \
-  --update-env-vars="GCS_BUCKET=${GCS_BUCKET},GCS_PREFIX=apollo-freight/employee-documents"
+  --update-env-vars="GCS_BUCKET=${GCS_BUCKET},GCS_PREFIX=apollo-freight"
 ```
 
 Do not make this bucket publicly readable and do not commit service-account key files. For local development, use Application Default Credentials (`gcloud auth application-default login`) or a separately managed service account; production should use the Cloud Run service identity.

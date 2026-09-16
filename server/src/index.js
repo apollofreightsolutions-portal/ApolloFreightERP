@@ -70,6 +70,16 @@ async function googleCloudStorageSignedUrl(bucket, objectName, action = "read") 
   return url;
 }
 
+async function saveToGoogleCloudStorage(storage, objectName, fileBuffer, mimeType, fileName) {
+  const object = storage.bucket.file(objectName);
+  await object.save(fileBuffer, {
+    resumable: false,
+    validation: "crc32c",
+    metadata: { contentType: mimeType, contentDisposition: `inline; filename="${String(fileName || "file").replace(/["\\\r\n]/g, "_")}"` }
+  });
+  return `gs://${storage.bucket.name}/${objectName}`;
+}
+
 function employeeDocumentNo(userName, typeConfig) {
   return `EMP-${safeEmployeeDocumentPart(userName).toUpperCase()}-${typeConfig.code}`;
 }
@@ -2740,6 +2750,20 @@ app.delete("/api/employee-profile-documents/:documentNo", requireEmployeePortalA
   } catch (error) { return next(error); }
 });
 
+app.post("/api/shipment-documents", requireErpPortalAuth, async (request,response,next)=>{
+  try {
+    const userName=String(request.appSession?.userName||"").trim(), shipmentNo=String(request.body?.shipmentNo||"").trim(), fileName=String(request.body?.fileName||"").trim(), mimeType=String(request.body?.mimeType||"").toLowerCase().trim(), contentBase64=String(request.body?.contentBase64||"").replace(/^data:[^,]+,/,'').trim();
+    if (!userName||!shipmentNo||!fileName||!contentBase64||!["application/pdf","image/jpeg","image/png"].includes(mimeType)) return response.status(400).json({ok:false,error:"Shipment document must be a PDF, JPG, JPEG, or PNG file."});
+    const storage=googleCloudStorageConfig(); if(!storage) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server."});
+    const shipment=(await query("select job_no from shipments where lower(job_no)=lower($1) limit 1",[shipmentNo])).rows[0]; if(!shipment) return response.status(404).json({ok:false,error:"Shipment not found."});
+    const buffer=Buffer.from(contentBase64,'base64'); if(!buffer.length||buffer.length>10*1024*1024) return response.status(400).json({ok:false,error:"Shipment document must be 10 MB or smaller."});
+    const documentNo=`DOC-${safeEmployeeDocumentPart(shipmentNo).toUpperCase()}-${Date.now()}`, objectName=`${storage.prefix}/shipments/${safeEmployeeDocumentPart(shipmentNo)}/${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
+    const storageUrl=await saveToGoogleCloudStorage(storage,objectName,buffer,mimeType,fileName), notes=JSON.stringify({storageProvider:"gcs",bucket:storage.bucket.name,objectName,bytes:buffer.length});
+    const saved=await query(`insert into documents (document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_by) values ($1,$2,'Shipment Document','Uploaded',current_date,$3,$4,$5,$6,$3) returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`,[documentNo,shipmentNo,userName,fileName,storageUrl,notes]);
+    return response.status(201).json({ok:true,row:saved.rows[0]});
+  } catch(error){return next(error);}
+});
+
 app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, next) => {
   const userName = String(request.appSession?.userName || "").trim();
   const jobNo = String(request.body?.jobNo || "").trim();
@@ -2764,6 +2788,21 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
     const fileBuffer = Buffer.from(contentBase64, "base64");
     if (!fileBuffer.length || fileBuffer.length > 10 * 1024 * 1024) {
       return response.status(400).json({ ok: false, error: "POD file must be 10 MB or smaller." });
+    }
+    const gcsStorage = googleCloudStorageConfig();
+    if (gcsStorage) {
+      const objectName = `${gcsStorage.prefix}/pod/${safeEmployeeDocumentPart(jobNo)}/${Date.now()}-${safeEmployeeDocumentPart(splitNo || "1")}-${safeEmployeeDocumentPart(fileName)}`;
+      const storageUrl = await saveToGoogleCloudStorage(gcsStorage, objectName, fileBuffer, mimeType, fileName);
+      const documentNo = splitNo ? `POD-${safeEmployeeDocumentPart(jobNo).toUpperCase()}-${safeEmployeeDocumentPart(splitNo).toUpperCase()}` : `POD-${safeEmployeeDocumentPart(jobNo).toUpperCase()}`;
+      const notes = JSON.stringify({ storageProvider: "gcs", bucket: gcsStorage.bucket.name, objectName, bytes: fileBuffer.length, signedPod: true, splitNo: splitNo || "" });
+      const saved = await query(`insert into documents (document_no, linked_no, type, status, date, owner, file_name, storage_url, notes, created_by) values ($1,$2,'POD','Uploaded',current_date,$3,$4,$5,$6,$3) on conflict (document_no) do update set file_name=excluded.file_name,storage_url=excluded.storage_url,notes=excluded.notes,status='Uploaded',date=current_date,owner=excluded.owner,updated_at=now() returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`, [documentNo, jobNo, userName, fileName, storageUrl, notes]);
+      const airwayBillNo = String(shipment.rows[0]?.airway_bill_no || requestedAirwayBillNo || "").trim();
+      let relatedRows = shipment.rows;
+      if (airwayBillNo) {
+        const updated = await query("update shipments set status='Delivered',pod_status='Uploaded',updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
+        relatedRows = updated.rows;
+      }
+      return response.status(201).json({ ok: true, row: saved.rows[0], airwayBillNo, relatedRows, relatedDocuments: [saved.rows[0]] });
     }
     const kind = mimeType === "application/pdf" ? "raw" : "image";
     const timestamp = Math.floor(Date.now() / 1000);
@@ -2824,6 +2863,23 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
   }
 });
 
+
+
+app.get("/api/documents/:documentNo/view", requireErpPortalAuth, async (request, response, next) => {
+  try {
+    const documentNo = String(request.params.documentNo || "").trim();
+    const result = await query("select storage_url, notes from documents where document_no=$1 limit 1", [documentNo]);
+    const item = result.rows[0];
+    if (!item?.storage_url) return response.status(404).json({ ok: false, error: "Uploaded file not found." });
+    let metadata = {}; try { metadata = JSON.parse(item.notes || "{}"); } catch {}
+    if (metadata.storageProvider === "gcs" && metadata.objectName) {
+      const storage = googleCloudStorageConfig();
+      if (!storage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server." });
+      return response.json({ ok: true, url: await googleCloudStorageSignedUrl(storage.bucket, metadata.objectName) });
+    }
+    return response.json({ ok: true, url: item.storage_url });
+  } catch (error) { return next(error); }
+});
 
 
 // --- HR Leave Management ----------------------------------------------------
@@ -3178,8 +3234,16 @@ app.post("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAu
     if (!fileName || !contentBase64 || !allowed.has(mimeType)) return response.status(400).json({ok:false,error:"Supporting document must be a PDF, JPG or PNG."});
     const buffer = Buffer.from(contentBase64, "base64");
     if (!buffer.length || buffer.length > 10 * 1024 * 1024) return response.status(400).json({ok:false,error:"Supporting document must be 10 MB or smaller."});
+    const gcsStorage = googleCloudStorageConfig();
+    if (gcsStorage) {
+      const objectName = `${gcsStorage.prefix}/employee-leave/${safeEmployeeDocumentPart(existing.user_name)}/${safeEmployeeDocumentPart(requestNo)}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
+      const storageUrl = await saveToGoogleCloudStorage(gcsStorage, objectName, buffer, mimeType, fileName);
+      const metadata = JSON.stringify({ storageProvider: "gcs", bucket: gcsStorage.bucket.name, objectName, bytes: buffer.length, fileName });
+      const saved = await query("update leave_requests set attachment_url=$1,updated_at=now() where request_no=$2 returning request_no,attachment_url", [metadata,requestNo]);
+      return response.status(201).json({ok:true,row:saved.rows[0]});
+    }
     const cloudinary = cloudinaryConfig();
-    if (!cloudinary) return response.status(503).json({ok:false,error:"Cloudinary is not configured on the server."});
+    if (!cloudinary) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server."});
     const timestamp = Math.floor(Date.now()/1000);
     const folder = "apollo-freight/employee-leave";
     const publicId = safeEmployeeDocumentPart(requestNo);
@@ -3205,6 +3269,11 @@ app.get("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAut
     const admin=isHrAdminSession(request.appSession);
     if(!admin && String(existing.user_name).toLowerCase()!==String(request.appSession.userName).toLowerCase()) return response.status(403).json({ok:false,error:"You can only view your own leave document."});
     let metadata={}; try{metadata=JSON.parse(existing.attachment_url||"{}");}catch{}
+    if (metadata.storageProvider === "gcs" && metadata.objectName) {
+      const storage = googleCloudStorageConfig();
+      if (!storage) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server."});
+      return response.json({ok:true,url:await googleCloudStorageSignedUrl(storage.bucket, metadata.objectName)});
+    }
     const cloudinary=cloudinaryConfig(); if(!cloudinary||!metadata.cloudinaryPublicId) return response.status(404).json({ok:false,error:"Supporting document details are incomplete."});
     const url=cloudinaryPrivateDownloadUrl(cloudinary,{publicId:metadata.cloudinaryPublicId,fileName:metadata.fileName||"supporting-document.pdf",resourceType:metadata.resourceType||"raw"});
     if(!url) return response.status(404).json({ok:false,error:"Supporting document could not be opened."});
