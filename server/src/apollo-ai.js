@@ -380,9 +380,12 @@ async function callGemini({ apiKey, projectId, location, model, user, message, h
   const providerMessage = redactPromptForProvider(message, freeTierSafeMode);
   contents.push({ role: "user", parts: [{ text: `${providerMessage}${contextText}` }] });
 
-  const useVertex = Boolean(projectId);
+  // Prefer the explicitly configured Google AI Studio key. Cloud Run commonly has
+  // GOOGLE_CLOUD_PROJECT available even when the user intentionally wants the
+  // regular Gemini API, so project presence must not override GEMINI_API_KEY.
+  const useVertex = !apiKey && Boolean(projectId);
   if (!useVertex && !apiKey) {
-    const error = new Error("Vertex AI is not configured. Set GOOGLE_CLOUD_PROJECT on Cloud Run, or provide GEMINI_API_KEY as a fallback.");
+    const error = new Error("Gemini is not configured. Set GEMINI_API_KEY from Google AI Studio, or configure GOOGLE_CLOUD_PROJECT for Vertex AI.");
     error.status = 503;
     throw error;
   }
@@ -509,7 +512,7 @@ function createApolloAiRouter({ query, requireAppAuth }) {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   const projectId = cleanText(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "", 200);
   const location = cleanText(process.env.GOOGLE_CLOUD_LOCATION || process.env.GOOGLE_CLOUD_REGION || "us-central1", 80) || "us-central1";
-  const provider = projectId ? "Google Cloud Vertex AI" : "Google Gemini API";
+  const provider = apiKey ? "Google Gemini API" : projectId ? "Google Cloud Vertex AI" : "Google Gemini API";
   const freeTierSafeMode = boolEnv("APOLLO_AI_FREE_TIER_SAFE_MODE", true);
   const allowHrData = boolEnv("APOLLO_AI_ALLOW_HR_DATA", false);
   const maxRows = intEnv("APOLLO_AI_MAX_CONTEXT_ROWS", DEFAULT_MAX_CONTEXT_ROWS, 5, 50);
