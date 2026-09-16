@@ -92,7 +92,7 @@ Set:
 
 ```text
 GEMINI_API_KEY=<from Secret Manager>
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 APOLLO_AI_FREE_TIER_SAFE_MODE=true
 APOLLO_AI_ALLOW_HR_DATA=false
 APOLLO_AI_MAX_CONTEXT_ROWS=25
@@ -104,7 +104,7 @@ Example Cloud Run update pattern (adapt service/region to the live Apollo deploy
 gcloud run services update "$SERVICE" \
   --region="$REGION" \
   --update-secrets="GEMINI_API_KEY=apollo-gemini-api-key:latest" \
-  --update-env-vars="GEMINI_MODEL=gemini-2.5-flash,APOLLO_AI_FREE_TIER_SAFE_MODE=true,APOLLO_AI_ALLOW_HR_DATA=false,APOLLO_AI_MAX_CONTEXT_ROWS=25"
+  --update-env-vars="GEMINI_MODEL=gemini-3.8-flash,APOLLO_AI_FREE_TIER_SAFE_MODE=true,APOLLO_AI_ALLOW_HR_DATA=false,APOLLO_AI_MAX_CONTEXT_ROWS=25"
 ```
 
 If `--update-secrets` would replace other secret mappings in the team's deployment process, merge this entry with the existing secret configuration rather than removing existing secrets.

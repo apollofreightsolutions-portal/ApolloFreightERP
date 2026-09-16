@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const express = require("express");
 const { GoogleAuth } = require("google-auth-library");
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
 const DEFAULT_MAX_CONTEXT_ROWS = 25;
 const MAX_PROMPT_CHARS = 2500;
 const MAX_HISTORY_MESSAGES = 6;
@@ -13,11 +13,10 @@ let vertexAuthClient = null;
 
 function normalizeModelName(value) {
   const raw = cleanText(value, 120).replace(/^models\//i, "");
-  // gemini-2.5-flash is the stable text-generation model used by Apollo AI.
-  // Keep the fallback here so an old Cloud Run env var cannot select the
-  // unsupported flash-lite variant for this deployment or send a malformed
-  // models/models/... URL.
-  if (!raw || raw === "gemini-2.5-flash-lite") return DEFAULT_MODEL;
+  // gemini-3.8-flash is the current stable Flash text-generation model used by
+  // Apollo AI. Map older deployment values forward so a stale Cloud Run env var
+  // cannot select an unavailable model or send a malformed models/models/... URL.
+  if (!raw || ["gemini-2.5-flash", "gemini-2.5-flash-lite"].includes(raw)) return DEFAULT_MODEL;
   return raw;
 }
 
