@@ -388,6 +388,7 @@ async function callGemini({ apiKey, projectId, location, model, user, message, h
   const contextText = context ? `\n\nAUTHORIZED APOLLO CONNECTED CONTEXT (${domain.toUpperCase()}):\n${safeJson(context)}` : "";
   const providerMessage = redactPromptForProvider(message, freeTierSafeMode);
   contents.push({ role: "user", parts: [{ text: `${providerMessage}${contextText}` }] });
+  const systemText = systemInstruction({ user, domain, scopeLabel, freeTierSafeMode });
 
   // Prefer the explicitly configured Google AI Studio key. Cloud Run commonly has
   // GOOGLE_CLOUD_PROJECT available even when the user intentionally wants the
@@ -401,6 +402,7 @@ async function callGemini({ apiKey, projectId, location, model, user, message, h
 
   let endpoint;
   let headers = { "Content-Type": "application/json" };
+  const useInteractions = !useVertex && /^gemini-3(?:\.|$)/i.test(model);
   if (useVertex) {
     if (!vertexAuthClient) {
       const auth = new GoogleAuth({ scopes: [VERTEX_AI_SCOPE] });
@@ -408,10 +410,26 @@ async function callGemini({ apiKey, projectId, location, model, user, message, h
     }
     Object.assign(headers, await vertexAuthClient.getRequestHeaders());
     endpoint = `https://${encodeURIComponent(location)}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+  } else if (useInteractions) {
+    endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions";
+    headers["x-goog-api-key"] = apiKey;
   } else {
     endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     headers["x-goog-api-key"] = apiKey;
   }
+
+  const requestBody = useInteractions
+    ? {
+        model,
+        system_instruction: systemText,
+        input: contents.map((item) => `${item.role}: ${item.parts.map((part) => part.text).join(" ")}`).join("\n"),
+        generation_config: { temperature: 0.2, max_output_tokens: 900 }
+      }
+    : {
+        systemInstruction: { parts: [{ text: systemText }] },
+        contents,
+        generationConfig: { temperature: 0.2, maxOutputTokens: 900 }
+      };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -420,14 +438,7 @@ async function callGemini({ apiKey, projectId, location, model, user, message, h
     response = await fetch(endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemInstruction({ user, domain, scopeLabel, freeTierSafeMode }) }] },
-        contents,
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 900
-        }
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal
     });
   } catch (error) {
@@ -458,9 +469,13 @@ async function callGemini({ apiKey, projectId, location, model, user, message, h
     throw error;
   }
 
-  const answer = (payload?.candidates?.[0]?.content?.parts || [])
+  const interactionText = typeof payload?.output_text === "string" ? payload.output_text : (payload?.output || [])
+    .filter((item) => item?.type === "text" && typeof item?.text === "string")
+    .map((item) => item.text)
+    .join("\n");
+  const answer = (interactionText || (payload?.candidates?.[0]?.content?.parts || [])
     .map((part) => typeof part?.text === "string" ? part.text : "")
-    .join("\n")
+    .join("\n"))
     .trim();
   if (!answer) {
     const error = new Error("Gemini returned an empty response.");
