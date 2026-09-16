@@ -3206,6 +3206,14 @@ function render() {
     selectionStart: focusedFilter.selectionStart,
     selectionEnd: focusedFilter.selectionEnd
   } : null;
+  const focusedRecordSelector = document.activeElement?.closest?.("[data-load-select], [data-delete-select]");
+  const focusedRecordSelectorInfo = focusedRecordSelector ? {
+    loadType: focusedRecordSelector.dataset.loadSelect || "",
+    deleteType: focusedRecordSelector.dataset.deleteSelect || "",
+    value: focusedRecordSelector.value || "",
+    selectionStart: focusedRecordSelector.selectionStart,
+    selectionEnd: focusedRecordSelector.selectionEnd
+  } : null;
   const hrFormState = isHrSession() ? Array.from(moduleContent.querySelectorAll("form")).map((form) => ({
     key: form.dataset.hrForm || form.dataset.form || "",
     values: Array.from(form.querySelectorAll("input[name],select[name],textarea[name]")).map((field) => ({
@@ -3330,6 +3338,19 @@ function render() {
     if (restored) {
       restored.focus();
       try { restored.setSelectionRange(focusedFilterInfo.selectionStart, focusedFilterInfo.selectionEnd); } catch (error) { /* not a text-selectable input type - ignore */ }
+    }
+  }
+  if (focusedRecordSelectorInfo) {
+    const selector = focusedRecordSelectorInfo.loadType
+      ? moduleContent.querySelector(`[data-load-select="${cssAttrEscape(focusedRecordSelectorInfo.loadType)}"]`)
+      : moduleContent.querySelector(`[data-delete-select="${cssAttrEscape(focusedRecordSelectorInfo.deleteType)}"]`);
+    if (selector) {
+      // Restore the in-progress datalist search text as well as a completed selection. The
+      // selectedRecordSelectors state intentionally stores only valid record IDs, while this
+      // temporary value prevents a refresh from erasing what the user is currently typing.
+      selector.value = focusedRecordSelectorInfo.value;
+      selector.focus();
+      try { selector.setSelectionRange(focusedRecordSelectorInfo.selectionStart, focusedRecordSelectorInfo.selectionEnd); } catch (error) { /* ignore non-text controls */ }
     }
   }
 }
