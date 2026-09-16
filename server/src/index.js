@@ -2658,6 +2658,7 @@ app.post("/api/employee-profile-documents", requireEmployeePortalAuth, async (re
       return response.status(400).json({ ok: false, error: `File must be ${typeConfig.maxBytes / 1024 / 1024} MB or smaller.` });
     }
     const storage = googleCloudStorageConfig();
+    if (!storage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server. New uploads are disabled until GCS is available." });
     if (storage) {
       const objectName = `${storage.prefix}/${safeEmployeeDocumentPart(userName)}/${typeConfig.code.toLowerCase()}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
       const object = storage.bucket.file(objectName);
@@ -2779,9 +2780,6 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
   if (!userName || !jobNo || !fileName || !contentBase64 || !allowedTypes.has(mimeType)) {
     return response.status(400).json({ ok: false, error: "POD file must be a PDF, JPG, JPEG, or PNG file." });
   }
-  const cloudinary = cloudinaryConfig();
-  if (!cloudinary) return response.status(503).json({ ok: false, error: "Cloudinary is not configured on the server." });
-
   try {
     const shipment = await query("select job_no, airway_bill_no from shipments where lower(job_no) = lower($1) limit 1", [jobNo]);
     if (!shipment.rows[0]) return response.status(404).json({ ok: false, error: "Shipment not found." });
@@ -2790,6 +2788,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
       return response.status(400).json({ ok: false, error: "POD file must be 10 MB or smaller." });
     }
     const gcsStorage = googleCloudStorageConfig();
+    if (!gcsStorage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server. New uploads are disabled until GCS is available." });
     if (gcsStorage) {
       const objectName = `${gcsStorage.prefix}/pod/${safeEmployeeDocumentPart(jobNo)}/${Date.now()}-${safeEmployeeDocumentPart(splitNo || "1")}-${safeEmployeeDocumentPart(fileName)}`;
       const storageUrl = await saveToGoogleCloudStorage(gcsStorage, objectName, fileBuffer, mimeType, fileName);
@@ -3235,6 +3234,7 @@ app.post("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAu
     const buffer = Buffer.from(contentBase64, "base64");
     if (!buffer.length || buffer.length > 10 * 1024 * 1024) return response.status(400).json({ok:false,error:"Supporting document must be 10 MB or smaller."});
     const gcsStorage = googleCloudStorageConfig();
+    if (!gcsStorage) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server. New uploads are disabled until GCS is available."});
     if (gcsStorage) {
       const objectName = `${gcsStorage.prefix}/employee-leave/${safeEmployeeDocumentPart(existing.user_name)}/${safeEmployeeDocumentPart(requestNo)}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
       const storageUrl = await saveToGoogleCloudStorage(gcsStorage, objectName, buffer, mimeType, fileName);
