@@ -2482,6 +2482,11 @@ function canRefreshSharedShipmentData() {
   return Boolean(currentSession()?.token) && !isCustomerSession() && !isHrSession() && !isCrmSession() && !document.hidden && !recordDialog?.open;
 }
 
+function isRecordSelectorFocused() {
+  const active = document.activeElement;
+  return Boolean(active?.matches?.("[data-load-select], [data-delete-select]"));
+}
+
 async function refreshSharedShipmentData() {
   if (!canRefreshSharedShipmentData() || sharedShipmentRefreshInProgress) return;
   sharedShipmentRefreshInProgress = true;
@@ -2498,6 +2503,10 @@ async function refreshSharedShipmentData() {
     state.shipmentStatusHistory = (shipmentStatusHistory.rows || []).map(apiShipmentStatusHistory);
     liveShipmentDataReady = true;
     saveState();
+    // Do not redraw moduleContent while a user is typing in a searchable record selector. The
+    // redraw would replace the datalist input and make its text appear to disappear. The next
+    // refresh after blur, navigation, or action will render the newly fetched data normally.
+    if (isRecordSelectorFocused()) return;
     render();
   } catch {
     // A background refresh must never interrupt a person who is working. The next focus or timer refresh will retry.
