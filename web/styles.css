@@ -2044,9 +2044,20 @@ th {
   border-top: 1px solid var(--line);
 }
 
+/* Use the complete shipment window width for the TCN action toolbar. */
+.shipment-document-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.shipment-document-actions > .checkbox-field {
+  flex: 0 0 auto;
+}
+
 .shipment-document-actions .secondary-button,
 .shipment-document-actions .shipment-primary-action {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   min-width: 96px;
   min-height: 34px;
   padding: 6px 8px;

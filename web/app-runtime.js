@@ -1761,6 +1761,18 @@ async function boot() {
   moduleContent.addEventListener("click", handleModuleClick);
   moduleContent.addEventListener("click", handleModuleLinkClick);
   moduleContent.addEventListener("input", handleColumnFilterInput);
+  moduleContent.addEventListener("input", (event) => {
+    const recordSelector = event.target.closest("[data-load-select], [data-delete-select]");
+    if (!recordSelector) return;
+    const type = recordSelector.dataset.loadSelect || recordSelector.dataset.deleteSelect;
+    if (!type) return;
+    const value = String(recordSelector.value || "").trim();
+    if (!collectionFor(type).some((row) => String(rowId(type, row)) === value)) return;
+    state.ui.selectedRecordSelectors = state.ui.selectedRecordSelectors || {};
+    state.ui.selectedRecordSelectors[type] = value;
+    if (recordSelector.dataset.loadSelect === "shipment") state.ui.activeShipmentNo = value;
+    saveState();
+  });
   // Dashboard metric tables live inside the reusable record dialog rather than moduleContent.
   // Delegate the same filter handler there so their filter boxes work like register filters.
   recordDialog?.addEventListener("input", handleColumnFilterInput);
@@ -1772,11 +1784,15 @@ async function boot() {
   moduleContent.addEventListener("keydown", handleModuleKeydown);
   moduleContent.addEventListener("submit", handleModuleSubmit);
   moduleContent.addEventListener("change", (event) => {
-    const recordSelector = event.target.closest("[data-load-select]");
+    const recordSelector = event.target.closest("[data-load-select], [data-delete-select]");
     if (recordSelector) {
       state.ui.selectedRecordSelectors = state.ui.selectedRecordSelectors || {};
-      state.ui.selectedRecordSelectors[recordSelector.dataset.loadSelect] = String(recordSelector.value || "").trim();
-      if (recordSelector.dataset.loadSelect === "shipment") state.ui.activeShipmentNo = String(recordSelector.value || "").trim();
+      const type = recordSelector.dataset.loadSelect || recordSelector.dataset.deleteSelect;
+      const value = String(recordSelector.value || "").trim();
+      if (collectionFor(type).some((row) => String(rowId(type, row)) === value)) {
+        state.ui.selectedRecordSelectors[type] = value;
+        if (recordSelector.dataset.loadSelect === "shipment") state.ui.activeShipmentNo = value;
+      }
       saveState();
     }
     const activityFilter = event.target.closest("[data-customer-activity-filter]");
@@ -3199,6 +3215,21 @@ function render() {
       selected: field.tagName === "SELECT" ? Array.from(field.options).map((option) => option.selected) : null
     }))
   })) : [];
+  // Record selectors also live inside moduleContent. A background refresh replaces that DOM, so
+  // capture the current value before rendering. This is intentionally done for both load/action
+  // selectors and delete selectors: actions must continue to target exactly what the user picked,
+  // never the first/latest row returned by the refresh.
+  const liveRecordSelectors = {};
+  moduleContent.querySelectorAll("[data-load-select], [data-delete-select]").forEach((selector) => {
+    const type = selector.dataset.loadSelect || selector.dataset.deleteSelect;
+    if (type) liveRecordSelectors[type] = String(selector.value || "").trim();
+  });
+  if (Object.keys(liveRecordSelectors).length) {
+    state.ui.selectedRecordSelectors = {
+      ...(state.ui.selectedRecordSelectors || {}),
+      ...liveRecordSelectors
+    };
+  }
 
   if (!visibleModules().some(([name]) => name === activeModule)) {
     activeModule = isCustomerSession() ? "Customer Dashboard" : isHrSession() ? "HR Dashboard" : isCrmSession() ? "CRM Dashboard" : "Dashboard";
@@ -4742,9 +4773,13 @@ function deleteSelectorMarkup(type, label = "Record To Delete") {
     return searchableRecordSelectorMarkup(type, "data-delete-select", label, rows);
   }
 
+  const savedValue = state.ui.selectedRecordSelectors?.[type] || "";
   return `<label>${escapeHtml(label)}
     <select data-delete-select="${escapeHtml(type)}">
-      ${rows.map((row) => `<option value="${escapeHtml(rowId(type, row))}">${escapeHtml(loadOptionLabel(type, row))}</option>`).join("")}
+      ${rows.map((row) => {
+        const value = rowId(type, row);
+        return `<option value="${escapeHtml(value)}" ${value === savedValue ? "selected" : ""}>${escapeHtml(loadOptionLabel(type, row))}</option>`;
+      }).join("")}
     </select>
   </label>`;
 }
