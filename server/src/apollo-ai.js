@@ -11,6 +11,16 @@ const REQUEST_TIMEOUT_MS = 30000;
 const VERTEX_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 let vertexAuthClient = null;
 
+function normalizeModelName(value) {
+  const raw = cleanText(value, 120).replace(/^models\//i, "");
+  // gemini-2.5-flash is the stable text-generation model used by Apollo AI.
+  // Keep the fallback here so an old Cloud Run env var cannot select the
+  // unsupported flash-lite variant for this deployment or send a malformed
+  // models/models/... URL.
+  if (!raw || raw === "gemini-2.5-flash-lite") return DEFAULT_MODEL;
+  return raw;
+}
+
 function boolEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || String(raw).trim() === "") return fallback;
@@ -508,7 +518,7 @@ function createRateLimiter({ windowMs = 5 * 60 * 1000, max = 25 } = {}) {
 
 function createApolloAiRouter({ query, requireAppAuth }) {
   const router = express.Router();
-  const model = cleanText(process.env.GEMINI_MODEL || process.env.APOLLO_AI_MODEL || DEFAULT_MODEL, 120) || DEFAULT_MODEL;
+  const model = normalizeModelName(process.env.GEMINI_MODEL || process.env.APOLLO_AI_MODEL || DEFAULT_MODEL);
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   const projectId = cleanText(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "", 200);
   const location = cleanText(process.env.GOOGLE_CLOUD_LOCATION || process.env.GOOGLE_CLOUD_REGION || "us-central1", 80) || "us-central1";
