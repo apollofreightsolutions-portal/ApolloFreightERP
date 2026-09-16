@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const express = require("express");
+const { GoogleAuth } = require("google-auth-library");
 
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_MAX_CONTEXT_ROWS = 25;
@@ -7,6 +8,8 @@ const MAX_PROMPT_CHARS = 2500;
 const MAX_HISTORY_MESSAGES = 6;
 const MAX_HISTORY_CHARS = 1200;
 const REQUEST_TIMEOUT_MS = 30000;
+const VERTEX_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
+let vertexAuthClient = null;
 
 function boolEnv(name, fallback) {
   const raw = process.env[name];
@@ -370,29 +373,41 @@ function systemInstruction({ user, domain, scopeLabel, freeTierSafeMode }) {
   ].join("\n");
 }
 
-async function callGemini({ apiKey, model, user, message, history, domain, scopeLabel, context, freeTierSafeMode }) {
-  if (!apiKey) {
-    const error = new Error("Gemini API key is not configured. IT must set GEMINI_API_KEY in Google Secret Manager / Cloud Run.");
-    error.status = 503;
-    throw error;
-  }
-
+async function callGemini({ apiKey, projectId, location, model, user, message, history, domain, scopeLabel, context, freeTierSafeMode }) {
   const safeHistory = conversationFromBody(history, freeTierSafeMode);
   const contents = safeHistory.map((item) => ({ role: item.role, parts: [{ text: item.text }] }));
   const contextText = context ? `\n\nAUTHORIZED APOLLO CONNECTED CONTEXT (${domain.toUpperCase()}):\n${safeJson(context)}` : "";
   const providerMessage = redactPromptForProvider(message, freeTierSafeMode);
   contents.push({ role: "user", parts: [{ text: `${providerMessage}${contextText}` }] });
 
+  const useVertex = Boolean(projectId);
+  if (!useVertex && !apiKey) {
+    const error = new Error("Vertex AI is not configured. Set GOOGLE_CLOUD_PROJECT on Cloud Run, or provide GEMINI_API_KEY as a fallback.");
+    error.status = 503;
+    throw error;
+  }
+
+  let endpoint;
+  let headers = { "Content-Type": "application/json" };
+  if (useVertex) {
+    if (!vertexAuthClient) {
+      const auth = new GoogleAuth({ scopes: [VERTEX_AI_SCOPE] });
+      vertexAuthClient = await auth.getClient();
+    }
+    Object.assign(headers, await vertexAuthClient.getRequestHeaders());
+    endpoint = `https://${encodeURIComponent(location)}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+  } else {
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    headers["x-goog-api-key"] = apiKey;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response;
   try {
-    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey
-      },
+      headers,
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemInstruction({ user, domain, scopeLabel, freeTierSafeMode }) }] },
         contents,
@@ -417,9 +432,14 @@ async function callGemini({ apiKey, model, user, message, history, domain, scope
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const providerMessage = cleanText(payload?.error?.message || "Gemini request failed.", 500);
-    console.warn(`Apollo AI Gemini error (${response.status}): ${providerMessage}`);
+    console.warn(`Apollo AI ${useVertex ? "Vertex AI" : "Gemini"} error (${response.status}): ${providerMessage}`);
     let publicMessage = "Apollo AI could not complete the request. Please try again.";
-    if (response.status === 401 || response.status === 403) publicMessage = "Apollo AI provider authentication is not configured correctly. IT should verify the server-side Gemini API key.";
+    if (response.status === 401 || response.status === 403) publicMessage = useVertex
+      ? "Apollo AI could not authenticate with Vertex AI. Verify the Cloud Run service account has the Vertex AI User role and the Vertex AI API is enabled."
+      : "Apollo AI provider authentication is not configured correctly. IT should verify the server-side Gemini API key.";
+    else if (response.status === 404) publicMessage = useVertex
+      ? `Apollo AI model ${model} is not available in Vertex AI region ${location}. Verify the model and region settings.`
+      : "Apollo AI model was not found. Verify the configured Gemini model name.";
     else if (response.status === 429) publicMessage = "Apollo AI has reached the current Gemini usage limit. Please try again later.";
     const error = new Error(publicMessage);
     error.status = response.status >= 500 ? 502 : response.status === 429 ? 429 : 400;
@@ -487,6 +507,9 @@ function createApolloAiRouter({ query, requireAppAuth }) {
   const router = express.Router();
   const model = cleanText(process.env.GEMINI_MODEL || process.env.APOLLO_AI_MODEL || DEFAULT_MODEL, 120) || DEFAULT_MODEL;
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  const projectId = cleanText(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "", 200);
+  const location = cleanText(process.env.GOOGLE_CLOUD_LOCATION || process.env.GOOGLE_CLOUD_REGION || "us-central1", 80) || "us-central1";
+  const provider = projectId ? "Google Cloud Vertex AI" : "Google Gemini API";
   const freeTierSafeMode = boolEnv("APOLLO_AI_FREE_TIER_SAFE_MODE", true);
   const allowHrData = boolEnv("APOLLO_AI_ALLOW_HR_DATA", false);
   const maxRows = intEnv("APOLLO_AI_MAX_CONTEXT_ROWS", DEFAULT_MAX_CONTEXT_ROWS, 5, 50);
@@ -508,7 +531,8 @@ function createApolloAiRouter({ query, requireAppAuth }) {
         ok: true,
         enabled: true,
         model,
-        provider: "Google Gemini",
+        provider,
+        location: projectId ? location : undefined,
         freeTierSafeMode,
         allowHrData,
         readOnly: true,
@@ -573,6 +597,8 @@ function createApolloAiRouter({ query, requireAppAuth }) {
 
       const answer = await callGemini({
         apiKey,
+        projectId,
+        location,
         model,
         user,
         message,
