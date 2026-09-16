@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const express = require("express");
 const { GoogleAuth } = require("google-auth-library");
 
-const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_MAX_CONTEXT_ROWS = 25;
 const MAX_PROMPT_CHARS = 2500;
 const MAX_HISTORY_MESSAGES = 6;
