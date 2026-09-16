@@ -2463,12 +2463,7 @@ function showApp() {
 }
 
 function canRefreshSharedShipmentData() {
-  // Also skip while the inline Shipment Status Register row is expanded (data-form="status"):
-  // that form's Status <select> is rendered straight from the saved record, so a background
-  // refresh landing mid-selection would silently snap it back to the saved value (e.g. "Booked")
-  // before the person clicks Save - same reason recordDialog.open is checked below.
-  const hasOpenStatusRow = Boolean(state.ui?.expandedStatusJob || state.ui?.expandedStatusAwb);
-  return Boolean(currentSession()?.token) && !isCustomerSession() && !isHrSession() && !isCrmSession() && !document.hidden && !recordDialog?.open && !hasOpenStatusRow;
+  return Boolean(currentSession()?.token) && !isCustomerSession() && !isHrSession() && !isCrmSession() && !document.hidden && !recordDialog?.open;
 }
 
 async function refreshSharedShipmentData() {
@@ -8773,36 +8768,34 @@ function bindShipmentCustomerAutofill() {
     customer?.mobile,
     customerContactValue(customer)
   ].map(normalizeCustomerSearch).filter(Boolean);
-  // Exact match only. Fuzzy/partial matching used to fire on any typed fragment that happened
-  // to be a unique substring of some customer's name/code/location/address/contact, which could
-  // silently pull in the wrong customer's details while someone was still typing. Requiring an
-  // exact match - the full saved value, as produced by picking a suggestion from the dropdown -
-  // guarantees the autofill can never mix fields from two different customers.
+  const customerPartialText = (customer) => [
+    customer?.name,
+    customer?.code,
+    customer?.locationOrLane,
+    customer?.fullAddress,
+    customerContactValue(customer)
+  ].map(normalizeCustomerSearch).filter((field) => field.length >= 3);
   const findCustomer = (value) => {
     const query = normalizeCustomerSearch(value);
     if (!query) return null;
     const exactMatches = state.customers.filter((row) => customerExactValues(row).includes(query));
-    return exactMatches.length === 1 ? exactMatches[0] : null;
-  };
-
-  // The shared setDialogValue() intentionally skips writing when the new value is blank - useful
-  // elsewhere, but wrong here: when a match is found, every field in the section should mirror
-  // that customer's saved record exactly, including any fields that are blank on that record.
-  // Otherwise a field could be left showing a stale value carried over from whatever was typed
-  // before, or from a previously-matched customer.
-  const setDialogValueExact = (name, value) => {
-    const field = dialogBody.querySelector(`[name='${CSS.escape(name)}']`);
-    if (field) field.value = value || "";
+    const exact = exactMatches.length === 1 ? exactMatches[0] : null;
+    if (exact) return exact;
+    // Partial lookup is intentionally restricted to text fields. Partial phone numbers,
+    // emails, and other numeric fragments can incorrectly identify another customer.
+    if (query.length < 3 || /[0-9@+]/.test(query)) return null;
+    const matches = state.customers.filter((row) => customerPartialText(row).some((field) => field.includes(query)));
+    return matches.length === 1 ? matches[0] : null;
   };
 
   const fillCustomerSection = (source, fields) => {
     const customer = findCustomer(source?.value);
     if (!customer) return;
-    setDialogValueExact(fields.name, customer.name);
-    setDialogValueExact(fields.address, customer.fullAddress || customer.locationOrLane);
-    setDialogValueExact(fields.contact, customerContactValue(customer));
-    setDialogValueExact(fields.mobile, customer.mobile);
-    if (fields.email) setDialogValueExact(fields.email, customer.email);
+    setDialogValue(fields.name, customer.name);
+    setDialogValue(fields.address, customer.fullAddress || customer.locationOrLane);
+    setDialogValue(fields.contact, customerContactValue(customer));
+    setDialogValue(fields.mobile, customer.mobile);
+    if (fields.email) setDialogValue(fields.email, customer.email);
   };
 
   // Tariff options are filtered to the selected customer only, matching the same behavior as the
@@ -8828,18 +8821,18 @@ function bindShipmentCustomerAutofill() {
       notifyDenied("Customer blocked", `${customer.name} (${customer.code}) is blocked for overdue account. This shipment cannot be saved until admin approves an unblock request.`);
     }
 
-    setDialogValueExact("customer", customer.name);
-    setDialogValueExact("customerCode", customer.code);
-    setDialogValueExact("customerEmail", customer.email);
-    setDialogValueExact("customerMobile", customer.mobile);
-    setDialogValueExact("customerContactPerson", customerContactValue(customer));
-    setDialogValueExact("customerAddress", customer.fullAddress || customer.locationOrLane);
-    setDialogValueExact("billTo1", customer.name);
-    setDialogValueExact("billingParty1Address", customer.fullAddress || customer.locationOrLane);
-    setDialogValueExact("billingParty1ContactPerson", customerContactValue(customer));
-    setDialogValueExact("billingParty1Mobile", customer.mobile);
-    setDialogValueExact("billingParty1Email", customer.email);
-    setDialogValueExact("billingParty1CreditTerms", customer.terms);
+    setDialogValue("customer", customer.name);
+    setDialogValue("customerCode", customer.code);
+    setDialogValue("customerEmail", customer.email);
+    setDialogValue("customerMobile", customer.mobile);
+    setDialogValue("customerContactPerson", customerContactValue(customer));
+    setDialogValue("customerAddress", customer.fullAddress || customer.locationOrLane);
+    setDialogValue("billTo1", customer.name);
+    setDialogValue("billingParty1Address", customer.fullAddress || customer.locationOrLane);
+    setDialogValue("billingParty1ContactPerson", customerContactValue(customer));
+    setDialogValue("billingParty1Mobile", customer.mobile);
+    setDialogValue("billingParty1Email", customer.email);
+    setDialogValue("billingParty1CreditTerms", customer.terms);
   };
 
   // Searching/typing directly into the Billing Party Name field is its own entry point - the
@@ -8851,12 +8844,12 @@ function bindShipmentCustomerAutofill() {
     const customer = findCustomer(value);
     if (!customer) return;
 
-    setDialogValueExact("billingParty1Address", customer.fullAddress || customer.locationOrLane);
-    setDialogValueExact("billTo1", customer.name);
-    setDialogValueExact("billingParty1ContactPerson", customerContactValue(customer));
-    setDialogValueExact("billingParty1Mobile", customer.mobile);
-    setDialogValueExact("billingParty1Email", customer.email);
-    setDialogValueExact("billingParty1CreditTerms", customer.terms);
+    setDialogValue("billingParty1Address", customer.fullAddress || customer.locationOrLane);
+    setDialogValue("billTo1", customer.name);
+    setDialogValue("billingParty1ContactPerson", customerContactValue(customer));
+    setDialogValue("billingParty1Mobile", customer.mobile);
+    setDialogValue("billingParty1Email", customer.email);
+    setDialogValue("billingParty1CreditTerms", customer.terms);
   };
 
   customerField?.addEventListener("input", () => fill(customerField));
@@ -8866,31 +8859,27 @@ function bindShipmentCustomerAutofill() {
   billToField?.addEventListener("input", () => fillBillingPartyOnly(billToField));
   billToField?.addEventListener("change", () => fillBillingPartyOnly(billToField));
 
-  // Each entry below is [drivingFieldName, fields]: the driving field is one of the section's own
-  // identifying values (Name, Address, Mobile, Email) - typing or pasting an exact match into any
-  // of these looks the customer up and fills the rest of the section. Contact Person isn't a
-  // driving field: names alone are too likely to collide, so it's filled from a match but doesn't
-  // trigger a search itself. Because findCustomer only accepts an exact match now, adding Mobile
-  // and Email as extra entry points carries the same no-mismatch guarantee as Name/Address.
   [
-    ["shipperName", { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
-    ["shipperAddress", { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
-    ["shipperMobile", { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
-    ["shipperEmail", { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
-    ["consigneeName", { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
-    ["consigneeAddress", { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
-    ["consigneeMobile", { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
-    ["consigneeEmail", { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
-    ["pickupLocation", { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
-    ["pickupAddress", { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
-    ["pickupMobile", { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
-    ["deliveryLocation", { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }],
-    ["deliveryAddress", { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }],
-    ["deliveryMobile", { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }]
-  ].forEach(([drivingFieldName, fields]) => {
-    const field = dialogBody.querySelector(`[name='${drivingFieldName}']`);
-    field?.addEventListener("input", () => fillCustomerSection(field, fields));
-    field?.addEventListener("change", () => fillCustomerSection(field, fields));
+    [["shipperName", "shipperAddress", "shipperContactPerson", "shipperMobile", "shipperEmail"], { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
+    [["shipperAddress", "shipperName", "shipperContactPerson", "shipperMobile", "shipperEmail"], { name: "shipperName", address: "shipperAddress", contact: "shipperContactPerson", mobile: "shipperMobile", email: "shipperEmail" }],
+    [["consigneeName", "consigneeAddress", "consigneeContactPerson", "consigneeMobile", "consigneeEmail"], { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
+    [["consigneeAddress", "consigneeName", "consigneeContactPerson", "consigneeMobile", "consigneeEmail"], { name: "consigneeName", address: "consigneeAddress", contact: "consigneeContactPerson", mobile: "consigneeMobile", email: "consigneeEmail" }],
+    [["pickupLocation", "pickupAddress", "pickupContactPerson", "pickupMobile"], { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
+    [["pickupAddress", "pickupLocation", "pickupContactPerson", "pickupMobile"], { name: "pickupLocation", address: "pickupAddress", contact: "pickupContactPerson", mobile: "pickupMobile" }],
+    [["deliveryLocation", "deliveryAddress", "deliveryContactPerson", "deliveryMobile"], { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }],
+    [["deliveryAddress", "deliveryLocation", "deliveryContactPerson", "deliveryMobile"], { name: "deliveryLocation", address: "deliveryAddress", contact: "deliveryContactPerson", mobile: "deliveryMobile" }],
+    [["billTo1", "billingParty1Address", "billingParty1ContactPerson", "billingParty1Mobile", "billingParty1Email", "billingParty1CreditTerms"], null]
+  ].forEach(([fieldNames, fields]) => {
+    fieldNames.forEach((fieldName) => {
+      const field = dialogBody.querySelector(`[name='${fieldName}']`);
+      if (fieldNames[0] === "billTo1") {
+        field?.addEventListener("input", () => fillBillingPartyOnly(field));
+        field?.addEventListener("change", () => fillBillingPartyOnly(field));
+        return;
+      }
+      field?.addEventListener("input", () => fillCustomerSection(field, fields));
+      field?.addEventListener("change", () => fillCustomerSection(field, fields));
+    });
   });
 }
 
@@ -11124,12 +11113,10 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-terms h2 { margin-top: 0; font-size: 14px; }
         .tcn-terms ol { margin: 6px 0 0 18px; padding: 0; }
         .tcn-terms p { font-weight: 700; margin-top: 8px; }
-        .tcn-terms-tracking-layout { position: relative; margin-top: 18px; }
+        .tcn-terms-tracking-layout { position: relative; margin-top: 18px; page-break-inside: avoid; }
         .tcn-terms-column { width: 100%; }
         .tcn-terms-column .tcn-terms { margin-top: 0; }
-        .tcn-terms-column .tcn-terms h2 { display: block; padding-right: 280px; break-after: avoid; page-break-after: avoid; }
-        .tcn-terms-column .tcn-terms ol { page-break-inside: auto; }
-        .tcn-terms-column .tcn-terms li { page-break-inside: avoid; break-inside: avoid; }
+        .tcn-terms-column .tcn-terms h2 { display: block; padding-right: 280px; }
         .tcn-tracking-notice { position: absolute; top: 0; right: 0; margin: 0; padding: 0; text-align: right; white-space: nowrap; }
         .tcn-tracking-notice strong, .tcn-tracking-notice a { display: inline; }
         .tcn-tracking-notice strong { color: #172033; font-size: 10px; font-weight: 700; }
