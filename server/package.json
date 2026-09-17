@@ -23,6 +23,7 @@
     "google-auth-library": "^9.15.1",
     "helmet": "^8.0.0",
     "morgan": "^1.10.0",
+    "nodemailer": "^7.0.13",
     "pg": "^8.13.1"
   }
 }

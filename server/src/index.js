@@ -5,6 +5,7 @@ const fs = require("fs");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const path = require("path");
+const nodemailer = require("nodemailer");
 const { Storage } = require("@google-cloud/storage");
 const { allowedOrigins, autoMigrate, configuredSecret, databaseHost, databaseUrl, databaseUrlSource, isCloudSqlSocket, isNeonDatabase, port } = require("./config");
 const { getPool, query, testConnection } = require("./db");
@@ -3114,10 +3115,14 @@ function emailHtml(value) {
 }
 
 async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
-  const apiKey = String(process.env.RESEND_API_KEY || "").trim();
-  const from = String(process.env.EMAIL_FROM || "").trim();
-  if (!apiKey || !from) {
-    console.warn("Leave email notification skipped: RESEND_API_KEY and EMAIL_FROM are not configured.");
+  const smtpHost = String(process.env.SMTP_HOST || "").trim();
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+  const smtpUser = String(process.env.SMTP_USER || "").trim();
+  const smtpPassword = String(process.env.SMTP_PASSWORD || "");
+  const from = String(process.env.SMTP_FROM || process.env.EMAIL_FROM || "").trim();
+  const smtpEnabled = String(process.env.SMTP_ENABLED || "false").toLowerCase() === "true";
+  if (!smtpEnabled || !smtpHost || !smtpUser || !smtpPassword || !from) {
+    console.warn("Leave email notification skipped: SMTP_ENABLED, SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM are required.");
     return false;
   }
   const recipients = (await query(
@@ -3145,15 +3150,14 @@ async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
       <tr><td><strong>Reason</strong></td><td>${emailHtml(row.reason)}</td></tr>
     </table>
     <p>Please open the HR portal to review and approve or reject this request.</p>`;
-  const mailResponse = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to: recipients, subject, html })
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
+    auth: { user: smtpUser, pass: smtpPassword },
+    requireTLS: smtpPort === 587
   });
-  if (!mailResponse.ok) {
-    const detail = await mailResponse.text().catch(() => "");
-    throw new Error(`Leave email provider returned ${mailResponse.status}: ${detail.slice(0, 300)}`);
-  }
+  await transporter.sendMail({ from, to: recipients, subject, html });
   return true;
 }
 
