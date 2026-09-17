@@ -1,0 +1,35 @@
+APOLLO AI V3 — EXACT FILE UPDATE LIST
+Base source: ai-3-ApolloFreightERP-main (3).zip (latest IT version supplied by management)
+
+EXISTING FILES MODIFIED
+1) /server/src/apollo-ai.js
+   - Preserves the latest IT Gemini/Vertex authentication/provider changes.
+   - Adds permission-scoped shipment visibility matching user entry rights.
+   - Expands work/operations/CRM question recognition.
+   - Adds permission-scoped workspace context for normal work questions.
+   - Stops rejecting an entire question only because financial fields are protected in Free-Tier Safe Mode.
+   - Keeps Apollo AI read-only and server-authorized.
+
+2) /web/app-runtime.js
+   - New internal users default to Apollo AI enabled.
+   - Existing users keep their saved ai_access value when edited.
+   - Admin can still disable Apollo AI for any user.
+
+NEW RUNTIME / DATABASE FILE
+3) /server/sql/039_apollo_ai_access_workspace_fix.sql
+   - Changes app_users.ai_access default to true.
+   - Enables Apollo AI for existing active internal portal users.
+   - Does NOT expand branch, CRM, ERP, or HR data permissions.
+
+NEW DOCUMENTATION FILES
+4) /APOLLO-AI-V3-DEPLOYMENT.md
+5) /APOLLO-AI-V3-CHANGED-FILES.txt
+6) /APOLLO-AI-V3-QA.md
+
+UPDATED DOCUMENTATION FILE
+7) /APOLLO-AI-README.md
+   - Updated from V1 instructions to the merged V3 deployment/security behavior.
+
+IMPORTANT
+No other files from the latest IT package were intentionally changed.
+The latest IT Google Cloud Storage, QR, portal, HR, CRM, tracking, provider-authentication, and other non-AI changes are preserved.

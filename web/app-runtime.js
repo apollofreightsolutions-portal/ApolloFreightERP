@@ -1043,7 +1043,7 @@ function user(
   crmArchiveAccess = false,
   crmViewTeamReports = false,
   crmAdminAccess = false,
-  aiAccess = false
+  aiAccess = true
 ) {
   return {
     userName,
@@ -8476,7 +8476,7 @@ function userDialogBody(record) {
       crmArchiveChecked: isChecked(fieldValue("crmArchiveAccess", false)),
       crmTeamReportsChecked: isChecked(fieldValue("crmViewTeamReports", false)),
       crmAdminChecked: isChecked(fieldValue("crmAdminAccess", false)),
-      aiChecked: isChecked(fieldValue("aiAccess", false))
+      aiChecked: loaded ? isChecked(fieldValue("aiAccess", false)) : true
     })}
     ${checkbox("canViewAllEntry", "User can view all entry", isChecked(fieldValue("canViewAllEntry", false)))}
     ${checkbox("canViewOnlySelfEntry", "User can view only self entry", loaded ? isChecked(fieldValue("canViewOnlySelfEntry", true)) : true)}
@@ -8496,7 +8496,7 @@ function changePasswordDialogBody() {
 }
 
 function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
-  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false, aiChecked = false } = options;
+  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false, aiChecked = true } = options;
   return `<fieldset class="section-access-grid">
     <legend>Menu Access Permissions</legend>
     ${modules.map(([name]) => {
