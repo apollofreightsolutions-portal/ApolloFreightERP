@@ -6332,6 +6332,11 @@ async function handleModuleClick(event) {
     return;
   }
 
+  if (action === "view-document") {
+    await viewStoredDocument(button.dataset.documentNo || "");
+    return;
+  }
+
   if (action === "delete-employee-document") {
     await deleteEmployeeProfileDocument(button.dataset.documentNo || "");
     return;
@@ -7196,7 +7201,7 @@ function detailFieldControl(type, key, value, record) {
     // everything else (including storageUrl) untouched on the existing record.
     const fileUrl = String(value || "").trim();
     return fileUrl
-      ? `<label>File<span class="action-row"><a class="secondary-button" href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener">Open / View File</a></span></label>`
+      ? `<label>File<span class="action-row"><button type="button" class="secondary-button" data-action="view-document" data-document-no="${escapeHtml(record.documentNo || "")}">Open / View File</button></span></label>`
       : `<label>File<span class="empty-state">No file uploaded yet.</span></label>`;
   }
   if (typeof value === "boolean") {
@@ -7910,7 +7915,28 @@ function findPodDocuments(jobNo) {
   return state.documents.filter((row) => row.type === "POD" && row.linkedNo === jobNo);
 }
 
-function viewPodFileForSelectedShipment(jobNo) {
+async function viewStoredDocument(documentNo) {
+  if (!documentNo) {
+    notifyDenied("File not opened", "The uploaded document reference is missing.");
+    return;
+  }
+  const viewer = window.open("", "_blank");
+  try {
+    const result = await fetchJson(`/api/documents/${encodeURIComponent(documentNo)}/view`);
+    if (!result?.url) throw new Error("The uploaded file could not be opened.");
+    if (viewer) {
+      viewer.opener = null;
+      viewer.location.href = result.url;
+    } else {
+      window.location.assign(result.url);
+    }
+  } catch (error) {
+    if (viewer) viewer.close();
+    notifyDenied("File not opened", error.message || "The uploaded file could not be opened.");
+  }
+}
+
+async function viewPodFileForSelectedShipment(jobNo) {
   const trimmedJobNo = String(jobNo || "").trim();
   if (!trimmedJobNo) {
     notifyDenied("POD not available", "Select a saved shipment first.");
@@ -7922,7 +7948,7 @@ function viewPodFileForSelectedShipment(jobNo) {
     return;
   }
   if (podDocuments.length === 1) {
-    window.open(podDocuments[0].storageUrl, "_blank", "noopener");
+    await viewStoredDocument(podDocuments[0].documentNo);
     return;
   }
   // More than one delivery has a signed POD - open the delivery dialog instead of guessing which
