@@ -18,3 +18,8 @@ import("./crm-portal.js").catch((error) => {
 import("./apollo-ai.js").catch((error) => {
   console.warn("Apollo AI is unavailable.", error);
 });
+
+
+import("./connected-chat.js").catch((error) => {
+  console.warn("Connected Chat is unavailable.", error);
+});

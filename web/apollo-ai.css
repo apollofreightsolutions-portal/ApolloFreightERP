@@ -1,5 +1,5 @@
 .apollo-ai-launcher{
-  position:fixed;right:22px;bottom:22px;z-index:1200;display:flex;align-items:center;gap:9px;
+  position:fixed;right:22px;bottom:82px;z-index:1200;display:flex;align-items:center;gap:9px;
   border:1px solid rgba(255,255,255,.16);background:#071827;color:#fff;padding:12px 16px;
   border-radius:999px;box-shadow:0 16px 38px rgba(7,24,39,.24);font-weight:800;letter-spacing:.01em;cursor:pointer
 }
@@ -48,3 +48,6 @@
   .apollo-ai-messages{padding:14px}
   .apollo-ai-suggestions{padding-left:14px;padding-right:14px}
 }
+
+.apollo-ai-result-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}.apollo-ai-result-action{border:1px solid #bdc7cf;background:#fff;color:#0b2234;border-radius:5px;padding:8px 10px;font-size:11px;font-weight:800;cursor:pointer}.apollo-ai-result-action:hover{border-color:#f05a22;color:#be3d0d}.apollo-ai-result-action:disabled{opacity:.55;cursor:wait}
+@media(max-width:600px){.apollo-ai-launcher{right:14px;bottom:76px}}

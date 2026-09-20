@@ -17,6 +17,7 @@ const { vehiclesRouter: maintenanceVehiclesRouter } = require("./maintenance/rou
 const { healthRouter: maintenanceHealthRouter } = require("./maintenance/routes/health");
 const { createCrmRouter } = require("./crm");
 const { createApolloAiRouter } = require("./apollo-ai");
+const { createConnectedChatRouter } = require("./connected-chat");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -79,6 +80,22 @@ async function saveToGoogleCloudStorage(storage, objectName, fileBuffer, mimeTyp
     metadata: { contentType: mimeType, contentDisposition: `inline; filename="${String(fileName || "file").replace(/["\\\r\n]/g, "_")}"` }
   });
   return `gs://${storage.bucket.name}/${objectName}`;
+}
+
+async function resolveStoredDocumentUrl(item) {
+  if (!item?.storage_url) return "";
+  let metadata = {};
+  try { metadata = JSON.parse(item.notes || "{}"); } catch { metadata = {}; }
+  if (metadata.storageProvider === "gcs" && metadata.objectName) {
+    const storage = googleCloudStorageConfig();
+    if (!storage) {
+      const error = new Error("Google Cloud Storage is not configured on the server.");
+      error.status = 503;
+      throw error;
+    }
+    return googleCloudStorageSignedUrl(storage.bucket, metadata.objectName);
+  }
+  return String(item.storage_url || "");
 }
 
 function employeeDocumentNo(userName, typeConfig) {
@@ -3161,6 +3178,55 @@ async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
   return true;
 }
 
+function smtpTransport() {
+  const host = String(process.env.SMTP_HOST || "").trim();
+  const port = Number(process.env.SMTP_PORT || 587);
+  const user = String(process.env.SMTP_USER || "").trim();
+  const password = String(process.env.SMTP_PASSWORD || "");
+  const from = String(process.env.SMTP_FROM || process.env.EMAIL_FROM || "").trim();
+  if (String(process.env.SMTP_ENABLED || "false").toLowerCase() !== "true" || !host || !user || !password || !from) {
+    const error = new Error("SMTP email is not configured.");
+    error.status = 503;
+    throw error;
+  }
+  return { from, transporter: nodemailer.createTransport({
+    host, port,
+    secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
+    auth: { user, pass: password },
+    requireTLS: port === 587
+  }) };
+}
+
+app.post("/api/shipments/:id/send-update", requireErpPortalAuth, async (request, response, next) => {
+  try {
+    const jobNo = decodeURIComponent(request.params.id);
+    const result = await query(`select s.*, coalesce(nullif(trim(s.customer_email), ''), nullif(trim(c.email), '')) as recipient_email
+      from shipments s left join customers c on lower(trim(c.name)) = lower(trim(s.customer_name))
+      where lower(trim(s.job_no)) = lower(trim($1)) limit 1`, [jobNo]);
+    const shipment = result.rows[0];
+    if (!shipment) return response.status(404).json({ ok: false, error: "Shipment not found." });
+    const recipient = String(shipment.recipient_email || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return response.status(400).json({ ok: false, error: "This customer does not have a valid email address." });
+    const message = String(request.body?.message || "").trim().slice(0, 4000);
+    const { transporter, from } = smtpTransport();
+    const sent = await transporter.sendMail({
+      from, to: recipient, subject: `Shipment update — ${shipment.job_no}`,
+      html: `<p>Dear ${emailHtml(shipment.customer_name || "Customer")},</p><p>Here is the latest update for your shipment:</p>
+        <table cellpadding="6" cellspacing="0" border="0">
+          <tr><td><strong>Shipment</strong></td><td>${emailHtml(shipment.job_no)}</td></tr>
+          <tr><td><strong>Status</strong></td><td>${emailHtml(shipment.status || "Pending")}</td></tr>
+          <tr><td><strong>Origin</strong></td><td>${emailHtml(shipment.origin || "")}</td></tr>
+          <tr><td><strong>Destination</strong></td><td>${emailHtml(shipment.destination || "")}</td></tr>
+          <tr><td><strong>AWB</strong></td><td>${emailHtml(shipment.airway_bill_no || "")}</td></tr>
+        </table>${message ? `<p><strong>Message from Apollo Freight:</strong><br>${emailHtml(message).replace(/\n/g, "<br>")}</p>` : ""}<p>Regards,<br>Apollo Freight Solutions</p>`
+    });
+    response.json({ ok: true, recipient, messageId: sent.messageId || "" });
+  } catch (error) {
+    if (error.status) return response.status(error.status).json({ ok: false, error: error.message });
+    return next(error);
+  }
+});
+
 app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, response, next) => {
   try {
     const data = request.body || {};
@@ -3851,7 +3917,8 @@ app.use("/api/maintenance/auth", maintenanceAuthRouter);
 app.use("/api/maintenance/expenses", maintenanceExpensesRouter);
 app.use("/api/maintenance/users", maintenanceUsersRouter);
 app.use("/api/maintenance/vehicles", maintenanceVehiclesRouter);
-app.use("/api/ai", createApolloAiRouter({ query, requireAppAuth }));
+app.use("/api/ai", createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl: resolveStoredDocumentUrl }));
+app.use("/api/chat", createConnectedChatRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth }));
 
 app.get("/api/:resource", requireErpPortalAuth, async (request, response, next) => {

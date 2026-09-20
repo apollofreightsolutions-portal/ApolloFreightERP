@@ -10506,6 +10506,29 @@ function generateRecordDocument(type, id, download = false) {
   openPrintableDocument(html);
 }
 
+
+window.ApolloConnectedDocuments = {
+  openTcn(jobNo, download = false) {
+    const key = String(jobNo || "").trim().toLowerCase();
+    const record = visibleRows(state.shipments).find((row) => String(row.jobNo || "").trim().toLowerCase() === key);
+    if (!record) {
+      notifyDenied("TCN not available", "This shipment is not available in your current Connected access scope.");
+      return;
+    }
+    const html = tcnDocumentHtml(record);
+    const fileName = `tcn-${record.airwayBillNo || record.tcnNumber || record.jobNo}.html`.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+    if (download) {
+      downloadHtml(fileName, html);
+      notifySuccess("TCN copy ready", `${record.airwayBillNo || record.tcnNumber || record.jobNo} was exported.`);
+      return;
+    }
+    openPrintableDocument(html);
+  },
+  openShipment(jobNo) {
+    openShipmentByNumber(jobNo);
+  }
+};
+
 function shipmentDocumentHtml(record) {
   return documentShell(
     `Shipment ${record.jobNo}`,
@@ -13455,37 +13478,30 @@ async function updateLoadStatus(data) {
   return true;
 }
 
-function sendShipmentStatusEmail(jobNo) {
+async function sendShipmentStatusEmail(jobNo) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
-    window.alert("Select a shipment first.");
+    notifyDenied("Email not sent", "Select a shipment first.");
     return;
   }
 
   const customer = state.customers.find((row) => row.name === shipmentItem.customer);
   if (!customer?.email) {
-    window.alert("No customer email is stored for this shipment.");
+    notifyDenied("Email not sent", "No customer email is stored for this shipment.");
     return;
   }
-
-  const subject = encodeURIComponent(`Shipment Update ${shipmentItem.jobNo}`);
-  const body = encodeURIComponent(
-    [
-      `Dear ${shipmentItem.customer},`,
-      "",
-      `Shipment No: ${shipmentItem.jobNo}`,
-      `Origin: ${shipmentItem.origin}`,
-      `Destination: ${shipmentItem.destination}`,
-      `Status: ${shipmentItem.status}`,
-      `POD Status: ${shipmentItem.podStatus}`,
-      `Invoice Status: ${shipmentItem.invoiceStatus}`,
-      "",
-      "Regards,",
-      "Apollo Freight Solutions"
-    ].join("\n")
-  );
-
-  window.location.href = `mailto:${encodeURIComponent(customer.email)}?subject=${subject}&body=${body}`;
+  const message = window.prompt("Optional message to include with this shipment update:", "");
+  if (message === null) return;
+  try {
+    const result = await fetchJson(`/api/shipments/${encodeURIComponent(shipmentItem.jobNo)}/send-update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message })
+    });
+    notifySuccess("Shipment update sent", `Email sent to ${result.recipient || customer.email}.`);
+  } catch (error) {
+    notifyDenied("Email not sent", error?.message || "The shipment update could not be sent.");
+  }
 }
 
 boot();
