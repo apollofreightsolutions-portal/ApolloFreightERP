@@ -7541,6 +7541,8 @@ function openPodDialog(jobNo = "") {
 function podShipmentFields(shipmentItem = {}) {
   const totalPieces = Number(shipmentItem.pieces || 0);
   const splits = parsePodSplits(shipmentItem.podSplitsJson);
+  const latestSplit = splits[splits.length - 1] || {};
+  const savedPodValue = (key, fallback = "") => latestSplit[key] ?? shipmentItem[key] ?? fallback;
   const deliveredPieces = podSplitsDeliveredPieces(splits);
   const remainingPieces = totalPieces ? Math.max(0, totalPieces - deliveredPieces) : 0;
   const isFullyDelivered = totalPieces > 0 && remainingPieces === 0;
@@ -7556,19 +7558,19 @@ function podShipmentFields(shipmentItem = {}) {
     ${input("deliveryNoteNo", "Delivery Note No", nextDeliveryNoteNumber())}
     ${input("ginNo", "GIN Number", "")}
     ${input("customerReference", "Customer Reference", shipmentItem.customerReference || "")}
-    ${input("deliveryLocation", "Delivery Location", shipmentItem.destination || shipmentItem.deliveryLocation || "")}
-    ${input("deliveryAddress", "Delivery Address", shipmentItem.consigneeAddress || shipmentItem.deliveryAddress || "")}
+    ${input("deliveryLocation", "Delivery Location", savedPodValue("deliveryLocation", shipmentItem.destination || ""))}
+    ${input("deliveryAddress", "Delivery Address", savedPodValue("deliveryAddress", shipmentItem.consigneeAddress || ""))}
     <p class="empty-state">Location/Address are pre-filled from the shipment's booking details - edit them if this particular delivery is going somewhere else.</p>
-    ${textarea("deliveryRemarks", "Delivery Remarks / Coordinates", "", false, 3)}
-    ${input("pocName", "POC Name", shipmentItem.pocName || shipmentItem.deliveryContactPerson || "")}
-    ${input("pocMobile", "POC Mobile Number", shipmentItem.pocMobile || shipmentItem.deliveryMobile || "")}
-    ${input("additionalContact", "Additional Contact Person", "")}
-    ${input("preparedBy", "Prepared By", currentUserName())}
-    ${input("deliveredBy", "Delivered By", shipmentItem.driverName || "")}
-    ${input("receivedBy", "Goods Received By", "")}
-    ${input("receiverPhone", "Receiver Telephone Number", "")}
-    ${input("receiverSignature", "Receiver Signature", "")}
-    ${input("deliveryDatetime", "Delivery Date & Time", localDateTimeInput(), false, "datetime-local")}
+    ${textarea("deliveryRemarks", "Delivery Remarks / Coordinates", savedPodValue("deliveryRemarks"), false, 3)}
+    ${input("pocName", "POC Name", savedPodValue("pocName", shipmentItem.deliveryContactPerson || ""))}
+    ${input("pocMobile", "POC Mobile Number", savedPodValue("pocMobile", shipmentItem.deliveryMobile || ""))}
+    ${input("additionalContact", "Additional Contact Person", savedPodValue("additionalContact"))}
+    ${input("preparedBy", "Prepared By", savedPodValue("preparedBy", currentUserName()))}
+    ${input("deliveredBy", "Delivered By", savedPodValue("deliveredBy", shipmentItem.driverName || ""))}
+    ${input("receivedBy", "Goods Received By", savedPodValue("receivedBy"))}
+    ${input("receiverPhone", "Receiver Telephone Number", savedPodValue("receiverPhone"))}
+    ${input("receiverSignature", "Receiver Signature", savedPodValue("receiverSignature"))}
+    ${input("deliveryDatetime", "Delivery Date & Time", savedPodValue("deliveryDatetime", localDateTimeInput()), false, "datetime-local")}
     <label>Signed POD File (upload after delivery)<input name="podFileUpload" type="file" accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf" /></label>
     <p class="empty-state">${totalPieces ? "Saving records this delivery as a split. The shipment becomes Delivered automatically once every piece is accounted for across all deliveries." : "Saving marks this shipment as Delivered."} The signed file is stored in Documents as its own POD attachment.</p>
     <div class="action-row">
@@ -8172,11 +8174,11 @@ function shipmentDialogBody(mode = "shipment", record = null) {
       ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber()), loaded)}
       ${input("bookingDate", "Booking Date", fieldValue("bookingDate", today()), false, "date")}
       ${input("shipmentDate", "Shipment Date", fieldValue("shipmentDate", today()), false, "date")}
-      ${strictSelect("status", "Status", statusOptions(), fieldValue("status", ""))}
+      ${strictSelect("status", "Status", statusOptions(), fieldValue("status", "Booked"))}
       ${strictSelect("loadType", "Load Type", ["LTL", "FTL", "AIR", "SEA"], fieldValue("loadType", "LTL"))}
-      ${strictSelect("shipmentVia", "Shipment Via", ["Air", "Sea", "Land", "Warehouse"], fieldValue("shipmentVia", shipmentViaValue(record) || ""))}
-      ${strictSelect("shipmentDirection", "Shipment Type", shipmentDirectionOptions(), fieldValue("shipmentDirection", ""))}
-      ${strictSelect("shipmentService", "Service Type", shipmentServiceOptions(fieldValue("shipmentDirection", "")), fieldValue("shipmentService", ""))}
+      ${strictSelect("shipmentVia", "Shipment Via", ["Air", "Sea", "Land", "Warehouse"], fieldValue("shipmentVia", shipmentViaValue(record) || "Land"))}
+      ${strictSelect("shipmentDirection", "Shipment Type", shipmentDirectionOptions(), fieldValue("shipmentDirection", "Export"))}
+      ${strictSelect("shipmentService", "Service Type", shipmentServiceOptions(fieldValue("shipmentDirection", "Export")), fieldValue("shipmentService", "LE"))}
       ${selectEditable("origin", "Origin", "origin", ["Kuwait City"], fieldValue("origin"))}
       ${selectEditable("destination", "Destination", "destination", ["Riyadh"], fieldValue("destination"))}
       ${input("customerReference", "Customer Reference", fieldValue("customerReference"))}
@@ -9137,6 +9139,7 @@ function bindPalletDimensionBuilder() {
   const piecesField = dialogBody.querySelector("input[name='pieces']");
   const actualWeightField = dialogBody.querySelector("input[name='actualKg']");
   const manualChargeableField = dialogBody.querySelector("input[name='manualChargeableKg']");
+  const shipmentRemarksField = dialogBody.querySelector("[name='shipmentRemarks']");
   const deliveryNoteField = dialogBody.querySelector("input[name='deliveryNoteNo']");
   const tcnField = dialogBody.querySelector("input[name='tcnNumber']");
   const airwayBillField = dialogBody.querySelector("input[name='airwayBillNo']");
@@ -9155,6 +9158,7 @@ function bindPalletDimensionBuilder() {
   const list = builder.querySelector("[data-pallet-lines-list]");
   const liveSummary = builder.querySelector("[data-cargo-live-summary]");
   const lines = parsePalletDimensions(hiddenField.value || "[]");
+  let autoGeneratedShipmentRemark = "";
   let manualGrossTouched = false;
   let editingLineIndex = -1;
 
@@ -9255,6 +9259,19 @@ function bindPalletDimensionBuilder() {
     const chargeableWeight = Math.max(actualWeight, volumeWeight);
     if (chargeableField && !chargeableField.dataset.manualChargeable) chargeableField.value = String(roundUpToWholeKg(chargeableWeight));
     if (manualChargeableField && !chargeableField?.dataset.manualChargeable) manualChargeableField.value = String(roundUpToWholeKg(chargeableWeight));
+    const cargoRemark = lines
+      .map((line) => ({
+        packageType: String(line.packageType || "Package").trim() || "Package",
+        quantity: Number(line.count || line.quantity || 0)
+      }))
+      .filter((line) => line.quantity > 0)
+      .map((line) => `${line.quantity} ${line.packageType}`)
+      .join(" ");
+    const cargoRemarkWithTotal = cargoRemark ? `${cargoRemark} Total ${totalPieces}` : "";
+    if (shipmentRemarksField && (!shipmentRemarksField.value.trim() || shipmentRemarksField.value === autoGeneratedShipmentRemark)) {
+      shipmentRemarksField.value = cargoRemarkWithTotal;
+      autoGeneratedShipmentRemark = cargoRemarkWithTotal;
+    }
     list.innerHTML = palletDimensionTable(lines, total, roundedTotal, volumeCategory);
   };
 
