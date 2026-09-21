@@ -276,7 +276,8 @@ function seedState() {
       additionalChargeNumberFormat: "CHG-YY###",
       supplierNumberFormat: "TRN-###",
       quotationNumberFormat: "QUO-YY###",
-      awbNumberFormat: "AWB-YY###",
+      awbNumberFormat: "AFS######",
+      awbSerialStart: "262035",
       columnLayoutJson: "{}",
       defaulttricDivisor: "5000",
       requirePodBeforeInvoice: "Yes",
@@ -1363,7 +1364,7 @@ function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function configuredNumber(format, collection, field, fallbackPrefix) {
+function configuredNumber(format, collection, field, fallbackPrefix, serialStart = 1) {
   const normalizedFormat = String(format || "").trim();
   if (!normalizedFormat || !normalizedFormat.includes("#")) {
     return nextNumber(fallbackPrefix, collection, field);
@@ -1380,13 +1381,14 @@ function configuredNumber(format, collection, field, fallbackPrefix) {
   const prefix = resolvedFormat.slice(0, hashPattern.index);
   const suffix = resolvedFormat.slice(hashPattern.index + digits);
   const numberPattern = new RegExp(`^${escapeRegex(prefix)}(\\d{${digits},})${escapeRegex(suffix)}$`, "i");
+  const startingNumber = Math.max(1, Number(serialStart) || 1);
   const max = collection
     .map((item) => String(item[field] || ""))
     .map((value) => {
       const match = value.match(numberPattern);
       return match ? Number(match[1]) || 0 : 0;
     })
-    .reduce((highest, value) => Math.max(highest, value), 0);
+    .reduce((highest, value) => Math.max(highest, value), startingNumber - 1);
 
   return resolvedFormat
     .replace(/#+/, String(max + 1).padStart(digits, "0"));
@@ -1441,7 +1443,7 @@ function nextQuotationNumber() {
 }
 
 function nextAirwayBillNumber() {
-  return configuredNumber(state.settings.awbNumberFormat, state.shipments, "airwayBillNo", "AWB");
+  return configuredNumber(state.settings.awbNumberFormat, state.shipments, "airwayBillNo", "AWB", state.settings.awbSerialStart || 262035);
 }
 
 function nextConsolidationNumber() {
@@ -3156,6 +3158,7 @@ function apiSettings(row) {
     supplierNumberFormat: row.supplier_number_format || state.settings.supplierNumberFormat,
     quotationNumberFormat: row.quotation_number_format || state.settings.quotationNumberFormat,
     awbNumberFormat: row.awb_number_format || state.settings.awbNumberFormat,
+    awbSerialStart: row.awb_serial_start || state.settings.awbSerialStart || "262035",
     defaultVolumetricDivisor: row.default_volumetric_divisor || state.settings.defaultVolumetricDivisor,
     requirePodBeforeInvoice: row.require_pod_before_invoice || state.settings.requirePodBeforeInvoice,
     allowGlobalShipmentQuickSearch: row.allow_global_shipment_quick_search || state.settings.allowGlobalShipmentQuickSearch || "No",
@@ -4671,6 +4674,7 @@ function renderSettings() {
           ${input("supplierNumberFormat", "Supplier / Transporter Number Format", state.settings.supplierNumberFormat)}
           ${input("quotationNumberFormat", "Quotation Number Format", state.settings.quotationNumberFormat)}
           ${input("awbNumberFormat", "Airway Bill Number Format", state.settings.awbNumberFormat)}
+          ${input("awbSerialStart", "Airway Bill Starting Number", state.settings.awbSerialStart || "262035", false, "number")}
           ${input("defaultVolumetricDivisor", "Default Volumetric Divisor", state.settings.defaultVolumetricDivisor)}
           ${select("requirePodBeforeInvoice", "Require POD Before Invoice", ["Yes", "No"], state.settings.requirePodBeforeInvoice)}
           ${strictSelect("branches", "Branches", branchOptions(), normalizeBranchName(state.settings.branches || branchOptions()[0]))}

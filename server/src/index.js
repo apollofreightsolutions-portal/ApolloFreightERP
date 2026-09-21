@@ -1603,11 +1603,10 @@ async function insertRow(config, body) {
   }
 
   // Two people can open "New Shipment" at nearly the same moment and both get shown the same
-  // next job number. Rather than reject the second person's whole submission and make them
-  // re-enter everything, automatically bump the number and retry a few times - this is the only
-  // table where that's currently a reported problem.
-  const autoRenumberColumn = config.table === "shipments" ? "job_no" : null;
-  const maxAttempts = autoRenumberColumn ? 6 : 1;
+  // job/AWB number. Database uniqueness is the authority; retry the collided sequence value
+  // rather than making the second user re-enter the whole shipment.
+  const isShipment = config.table === "shipments";
+  const maxAttempts = isShipment ? 12 : 1;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const placeholders = values.map((_, index) => `$${index + 1}`);
@@ -1620,15 +1619,20 @@ async function insertRow(config, body) {
       );
       return result.rows[0];
     } catch (error) {
-      if (error.code === "23505" && autoRenumberColumn && attempt < maxAttempts) {
-        const colIndex = columns.indexOf(autoRenumberColumn);
-        if (colIndex !== -1) {
-          const oldValue = values[colIndex];
+      if (error.code === "23505" && isShipment && attempt < maxAttempts) {
+        const awbIndex = columns.indexOf("airway_bill_no");
+        const jobIndex = columns.indexOf("job_no");
+        const isAwbCollision = error.constraint === "shipments_branch_airway_bill_no_unique";
+        const renumberIndex = isAwbCollision ? awbIndex : jobIndex;
+        if (renumberIndex !== -1) {
+          const oldValue = values[renumberIndex];
           const newValue = bumpTrailingNumber(oldValue);
-          values[colIndex] = newValue;
+          values[renumberIndex] = newValue;
           // Airway-entry shipments use the same value for job_no and airway_bill_no - keep them matched.
-          const awbIndex = columns.indexOf("airway_bill_no");
-          if (awbIndex !== -1 && values[awbIndex] === oldValue) {
+          if (isAwbCollision && jobIndex !== -1 && values[jobIndex] === oldValue) {
+            values[jobIndex] = newValue;
+          }
+          if (!isAwbCollision && awbIndex !== -1 && values[awbIndex] === oldValue) {
             values[awbIndex] = newValue;
           }
           continue;
