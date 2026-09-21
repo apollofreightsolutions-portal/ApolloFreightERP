@@ -11242,7 +11242,7 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-terms h2 { margin-top: 0; font-size: 14px; }
         .tcn-terms ol { margin: 6px 0 0 18px; padding: 0; }
         .tcn-terms p { font-weight: 700; margin-top: 8px; }
-        .tcn-terms-tracking-layout { position: relative; margin-top: 18px; page-break-inside: avoid; }
+        .tcn-terms-tracking-layout { position: relative; margin-top: 18px; page-break-inside: auto; break-inside: auto; page-break-before: auto; break-before: auto; }
         .tcn-terms-column { width: 100%; }
         .tcn-terms-column .tcn-terms { margin-top: 0; }
         .tcn-terms-column .tcn-terms h2 { display: block; padding-right: 280px; }
