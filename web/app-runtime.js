@@ -2519,7 +2519,7 @@ function startSharedShipmentRefresh() {
   if (sharedShipmentRefreshTimer) window.clearInterval(sharedShipmentRefreshTimer);
   // Keep dashboard KPIs and shipment status close to live without interrupting
   // an active record edit (refreshSharedShipmentData skips open dialogs).
-  sharedShipmentRefreshTimer = window.setInterval(refreshSharedShipmentData, 30000);
+  sharedShipmentRefreshTimer = window.setInterval(refreshSharedShipmentData, 10000);
   if (sharedShipmentRefreshEventsBound) return;
   sharedShipmentRefreshEventsBound = true;
   window.addEventListener("focus", refreshSharedShipmentData);
@@ -12678,20 +12678,12 @@ async function postRecord(type, record) {
     const result = await fetchJson(`/api/${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(record),
-      // Saving a shipment also synchronizes its Airway Bill group, which can take longer than the
-      // 15 second default when the system is busy.
-      timeoutMs: type === "shipment" ? 60000 : undefined
+      body: JSON.stringify(record)
     });
     if (result.mode === "demo") throw new Error("Database tables are not ready yet.");
     if (type === "shipment") mergeSynchronizedShipmentRows(result.relatedRows);
     return result.row || true;
   } catch (error) {
-    if (type === "shipment" && /timed out/i.test(error?.message || "")) {
-      // The server may still finish saving after the browser stops waiting. Retrying blindly
-      // would create a second shipment with the next job number.
-      window.alert("The server took too long to respond.\n\nThe shipment may still have been saved. Open the Shipment Register and check for this job before saving again, to avoid a duplicate.");
-    }
     if (/already exists/i.test(error?.message || "")) {
       notifyDenied("Already used", error.message);
       window.alert(`Already used\n${error.message}`);
@@ -12710,8 +12702,7 @@ async function persistRecord(type, record) {
     const result = await fetchJson(`/api/${endpoint}/${encodeURIComponent(id)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(record),
-      timeoutMs: type === "shipment" ? 60000 : undefined
+      body: JSON.stringify(record)
     });
     if (result.mode === "demo") throw new Error("Database tables are not ready yet.");
     if (type === "shipment") mergeSynchronizedShipmentRows(result.relatedRows);
@@ -13487,30 +13478,37 @@ async function updateLoadStatus(data) {
   return true;
 }
 
-async function sendShipmentStatusEmail(jobNo) {
+function sendShipmentStatusEmail(jobNo) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
-    notifyDenied("Email not sent", "Select a shipment first.");
+    window.alert("Select a shipment first.");
     return;
   }
 
   const customer = state.customers.find((row) => row.name === shipmentItem.customer);
   if (!customer?.email) {
-    notifyDenied("Email not sent", "No customer email is stored for this shipment.");
+    window.alert("No customer email is stored for this shipment.");
     return;
   }
-  const message = window.prompt("Optional message to include with this shipment update:", "");
-  if (message === null) return;
-  try {
-    const result = await fetchJson(`/api/shipments/${encodeURIComponent(shipmentItem.jobNo)}/send-update`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message })
-    });
-    notifySuccess("Shipment update sent", `Email sent to ${result.recipient || customer.email}.`);
-  } catch (error) {
-    notifyDenied("Email not sent", error?.message || "The shipment update could not be sent.");
-  }
+
+  const subject = encodeURIComponent(`Shipment Update ${shipmentItem.jobNo}`);
+  const body = encodeURIComponent(
+    [
+      `Dear ${shipmentItem.customer},`,
+      "",
+      `Shipment No: ${shipmentItem.jobNo}`,
+      `Origin: ${shipmentItem.origin}`,
+      `Destination: ${shipmentItem.destination}`,
+      `Status: ${shipmentItem.status}`,
+      `POD Status: ${shipmentItem.podStatus}`,
+      `Invoice Status: ${shipmentItem.invoiceStatus}`,
+      "",
+      "Regards,",
+      "Apollo Freight Solutions"
+    ].join("\n")
+  );
+
+  window.location.href = `mailto:${encodeURIComponent(customer.email)}?subject=${subject}&body=${body}`;
 }
 
 boot();

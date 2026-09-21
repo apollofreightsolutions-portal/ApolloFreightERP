@@ -18,7 +18,6 @@ const { healthRouter: maintenanceHealthRouter } = require("./maintenance/routes/
 const { createCrmRouter } = require("./crm");
 const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
-const { ensureChatAiSchema, ensureShipmentIndexes } = require("./schema-guard");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -3179,55 +3178,6 @@ async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
   return true;
 }
 
-function smtpTransport() {
-  const host = String(process.env.SMTP_HOST || "").trim();
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = String(process.env.SMTP_USER || "").trim();
-  const password = String(process.env.SMTP_PASSWORD || "");
-  const from = String(process.env.SMTP_FROM || process.env.EMAIL_FROM || "").trim();
-  if (String(process.env.SMTP_ENABLED || "false").toLowerCase() !== "true" || !host || !user || !password || !from) {
-    const error = new Error("SMTP email is not configured.");
-    error.status = 503;
-    throw error;
-  }
-  return { from, transporter: nodemailer.createTransport({
-    host, port,
-    secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
-    auth: { user, pass: password },
-    requireTLS: port === 587
-  }) };
-}
-
-app.post("/api/shipments/:id/send-update", requireErpPortalAuth, async (request, response, next) => {
-  try {
-    const jobNo = decodeURIComponent(request.params.id);
-    const result = await query(`select s.*, coalesce(nullif(trim(s.customer_email), ''), nullif(trim(c.email), '')) as recipient_email
-      from shipments s left join customers c on lower(trim(c.name)) = lower(trim(s.customer_name))
-      where lower(trim(s.job_no)) = lower(trim($1)) limit 1`, [jobNo]);
-    const shipment = result.rows[0];
-    if (!shipment) return response.status(404).json({ ok: false, error: "Shipment not found." });
-    const recipient = String(shipment.recipient_email || "").trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return response.status(400).json({ ok: false, error: "This customer does not have a valid email address." });
-    const message = String(request.body?.message || "").trim().slice(0, 4000);
-    const { transporter, from } = smtpTransport();
-    const sent = await transporter.sendMail({
-      from, to: recipient, subject: `Shipment update — ${shipment.job_no}`,
-      html: `<p>Dear ${emailHtml(shipment.customer_name || "Customer")},</p><p>Here is the latest update for your shipment:</p>
-        <table cellpadding="6" cellspacing="0" border="0">
-          <tr><td><strong>Shipment</strong></td><td>${emailHtml(shipment.job_no)}</td></tr>
-          <tr><td><strong>Status</strong></td><td>${emailHtml(shipment.status || "Pending")}</td></tr>
-          <tr><td><strong>Origin</strong></td><td>${emailHtml(shipment.origin || "")}</td></tr>
-          <tr><td><strong>Destination</strong></td><td>${emailHtml(shipment.destination || "")}</td></tr>
-          <tr><td><strong>AWB</strong></td><td>${emailHtml(shipment.airway_bill_no || "")}</td></tr>
-        </table>${message ? `<p><strong>Message from Apollo Freight:</strong><br>${emailHtml(message).replace(/\n/g, "<br>")}</p>` : ""}<p>Regards,<br>Apollo Freight Solutions</p>`
-    });
-    response.json({ ok: true, recipient, messageId: sent.messageId || "" });
-  } catch (error) {
-    if (error.status) return response.status(error.status).json({ ok: false, error: error.message });
-    return next(error);
-  }
-});
-
 app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, response, next) => {
   try {
     const data = request.body || {};
@@ -3885,40 +3835,24 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
   }
 });
 app.post("/api/shipments", requireErpPortalAuth, async (request, response, next) => {
-  // Stage timings are logged only when a save is slow, so Cloud Run logs show exactly which step
-  // (blocked-customer check, insert, or AWB group sync) is responsible.
-  const startedAt = Date.now();
-  const stages = {};
-  const mark = (name, since) => { stages[name] = Date.now() - since; };
   try {
     const customerName = request.body?.customer || request.body?.customerName || "";
-    let stageStart = Date.now();
     const blocked = await findBlockedCustomer(customerName, requestBlockCheckBranch(request));
-    mark("blockedCheckMs", stageStart);
     if (blocked) {
       const error = new Error(`${blocked.name} (${blocked.code}) is blocked for overdue account. Ask admin to approve an unblock request before creating shipments.`);
       error.status = 409;
       throw error;
     }
 
-    stageStart = Date.now();
     const row = await insertRow(resources.shipments, request.body || {});
-    mark("insertMs", stageStart);
-    stageStart = Date.now();
     const relatedRows = await synchronizeShipmentAirwayBill(row, {
       joinExistingGroup: true,
       updatedBy: request.appSession?.userName || "system",
       notes: `AWB group synchronization after shipment creation for ${row.airway_bill_no || ""}`
     });
-    mark("awbSyncMs", stageStart);
-    const totalMs = Date.now() - startedAt;
-    if (totalMs > 3000) {
-      console.warn(`[slow-shipment-create] ${row.job_no} total=${totalMs}ms ${JSON.stringify(stages)}`);
-    }
     const savedRow = relatedRows.find((item) => String(item.job_no) === String(row.job_no)) || row;
     response.status(201).json({ ok: true, row: savedRow, relatedRows });
   } catch (error) {
-    console.error(`[shipment-create-failed] after ${Date.now() - startedAt}ms ${JSON.stringify(stages)}: ${error.code || ""} ${error.message}`);
     if (isDatabaseSetupError(error)) {
       return response.status(201).json({ ok: true, mode: "demo", row: request.body || {} });
     }
@@ -4176,10 +4110,6 @@ function start() {
         console.warn(`Database migration skipped: ${error.message}`);
       }
     }
-    // Background, non-blocking catch-up for tables/indexes added after the database was first
-    // set up (production never replays all migrations). Failures are logged, never fatal.
-    ensureChatAiSchema(query).catch((error) => console.warn(`Chat/AI schema catch-up skipped: ${error.message}`));
-    ensureShipmentIndexes(query).catch((error) => console.warn(`Shipment index catch-up skipped: ${error.message}`));
     // Resolve the stable shared secret after migrations. Login requests wait for this promise,
     // preventing token signing races while still allowing Render to detect the open port.
     await ensurePortalSecret();

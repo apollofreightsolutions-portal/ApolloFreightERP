@@ -1,0 +1,51 @@
+Apollo Connected V5 — changed/new files versus KHD-ApolloFreightERP-main (5).zip
+
+MODIFIED
+server/src/apollo-ai.js
+  - deterministic operational retrieval
+  - date/branch/service/status filters
+  - booking-by-user/type summaries
+  - TCN/POD actions
+  - provider timeout + factual fallback
+  - stricter exact-context instructions
+
+server/src/index.js
+  - mounts Connected Chat router
+  - passes secure document URL resolver to Apollo AI for POD viewing
+
+web/apollo-ai.js
+  - action buttons for TCN/POD/shipment
+  - request timeout/recovery
+  - exact-query/source metadata
+  - AI/Chat panel coordination
+
+web/apollo-ai.css
+  - AI launcher moved above Chat
+  - document/action button styles
+
+web/app-runtime.js
+  - exposes permission-scoped existing TCN renderer to Apollo AI
+  - exposes existing shipment opener to Apollo AI
+
+web/app.js
+  - loads Connected Chat module
+
+web/index.html
+  - loads Connected Chat stylesheet
+
+NEW
+server/src/connected-chat.js
+  - authenticated internal one-to-one messaging API
+
+server/sql/040_connected_chat.sql
+  - chat messages table and indexes
+
+web/connected-chat.js
+  - floating messenger UI, unread polling, read receipts, current-screen sharing
+
+web/connected-chat.css
+  - Connected Chat panel/launcher/mobile styling
+
+APOLLO-V5-DEPLOYMENT.md
+APOLLO-V5-QA.md
+APOLLO-V5-CHANGED-FILES.txt

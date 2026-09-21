@@ -1,5 +1,4 @@
 const express = require("express");
-const { ensureChatAiSchema } = require("./schema-guard");
 
 const MAX_MESSAGE_CHARS = 2000;
 const MAX_CONTEXT_CHARS = 1200;
@@ -56,19 +55,6 @@ function publicMessage(row, currentUser) {
 function createConnectedChatRouter({ query, requireAppAuth }) {
   const router = express.Router();
   router.use(requireAppAuth);
-
-  router.use(async (_request, response, next) => {
-    try {
-      await ensureChatAiSchema(query);
-      return next();
-    } catch (error) {
-      console.error("Connected Chat schema setup failed:", error.message);
-      return response.status(503).json({
-        ok: false,
-        error: "Connected Chat is not set up on the database yet. Please ask IT to run server/sql/041_ensure_chat_ai_schema.sql."
-      });
-    }
-  });
 
   router.use(async (request, response, next) => {
     try {
