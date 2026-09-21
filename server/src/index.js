@@ -3135,6 +3135,26 @@ function emailHtml(value) {
   return String(value ?? "").replace(/[&<>\"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;", "'":"&#39;"}[character]));
 }
 
+function smtpTransporter() {
+  const smtpHost = String(process.env.SMTP_HOST || "").trim();
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+  const smtpUser = String(process.env.SMTP_USER || "").trim();
+  const smtpPassword = String(process.env.SMTP_PASSWORD || "");
+  const from = String(process.env.SMTP_FROM || process.env.EMAIL_FROM || "").trim();
+  const enabled = String(process.env.SMTP_ENABLED || "false").toLowerCase() === "true";
+  if (!enabled || !smtpHost || !smtpUser || !smtpPassword || !from) return null;
+  return {
+    from,
+    transporter: nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
+      auth: { user: smtpUser, pass: smtpPassword },
+      requireTLS: smtpPort === 587
+    })
+  };
+}
+
 async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
   const smtpHost = String(process.env.SMTP_HOST || "").trim();
   const smtpPort = Number(process.env.SMTP_PORT || 587);
@@ -3798,6 +3818,52 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
     });
   });
 }
+
+app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, response, next) => {
+  try {
+    const jobNo = String(request.body?.jobNo || request.body?.job_no || "").trim();
+    if (!jobNo) return response.status(400).json({ ok: false, error: "A shipment number is required." });
+    const shipmentResult = await query("select * from shipments where lower(trim(job_no)) = lower(trim($1)) limit 1", [jobNo]);
+    const shipment = shipmentResult.rows[0];
+    if (!shipment) return response.status(404).json({ ok: false, error: "Shipment was not found." });
+
+    let customerCode = "";
+    try { customerCode = JSON.parse(shipment.notes || "{}").customerCode || ""; } catch {}
+    const customerResult = await query(
+      `select name, email
+         from customers
+        where lower(trim(name)) = lower(trim($1))
+           or ($2 <> '' and lower(trim(code)) = lower(trim($2)))
+        order by case when lower(trim(name)) = lower(trim($1)) then 0 else 1 end
+        limit 1`,
+      [shipment.customer_name || "", customerCode]
+    );
+    const customer = customerResult.rows[0];
+    const recipient = String(customer?.email || "").trim();
+    if (!recipient) return response.status(422).json({ ok: false, error: "No email address is saved for the related customer." });
+
+    const smtp = smtpTransporter();
+    if (!smtp) return response.status(503).json({ ok: false, error: "SMTP is not configured. Set SMTP_ENABLED, SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM on the server." });
+    const subject = `Shipment Update ${shipment.job_no}`;
+    const html = `<h2>Shipment Update</h2>
+      <p>Dear ${emailHtml(customer.name || shipment.customer_name || "Customer")},</p>
+      <p>Your shipment status has been updated.</p>
+      <table cellpadding="6" cellspacing="0" border="0">
+        <tr><td><strong>Shipment No.</strong></td><td>${emailHtml(shipment.job_no)}</td></tr>
+        <tr><td><strong>Airway Bill</strong></td><td>${emailHtml(shipment.airway_bill_no || "")}</td></tr>
+        <tr><td><strong>Origin</strong></td><td>${emailHtml(shipment.origin || "")}</td></tr>
+        <tr><td><strong>Destination</strong></td><td>${emailHtml(shipment.destination || "")}</td></tr>
+        <tr><td><strong>Status</strong></td><td>${emailHtml(shipment.status || "")}</td></tr>
+        <tr><td><strong>POD Status</strong></td><td>${emailHtml(shipment.pod_status || "")}</td></tr>
+        <tr><td><strong>Invoice Status</strong></td><td>${emailHtml(shipment.invoice_status || "")}</td></tr>
+      </table>
+      <p>Regards,<br />Apollo Freight Solutions</p>`;
+    await smtp.transporter.sendMail({ from: smtp.from, to: recipient, subject, html });
+    response.json({ ok: true, recipient, jobNo: shipment.job_no });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, response, next) => {
   try {

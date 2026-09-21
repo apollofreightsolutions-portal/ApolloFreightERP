@@ -8858,32 +8858,19 @@ function bindShipmentCustomerAutofill() {
 
   const normalizeCustomerSearch = (value) => String(value || "").trim().toLowerCase();
   const customerContactValue = (customer) => customer?.contactPerson || customer?.contact_person || customer?.contact || "";
-  const customerExactValues = (customer) => [
-    customer?.name,
-    customer?.code,
-    customer?.locationOrLane,
-    customer?.fullAddress,
-    customer?.email,
-    customer?.mobile,
-    customerContactValue(customer)
-  ].map(normalizeCustomerSearch).filter(Boolean);
-  const customerPartialText = (customer) => [
-    customer?.name,
-    customer?.code,
-    customer?.locationOrLane,
-    customer?.fullAddress,
-    customerContactValue(customer)
-  ].map(normalizeCustomerSearch).filter((field) => field.length >= 3);
-  const findCustomer = (value) => {
+  const customerIdentityValues = (customer) => [customer?.name, customer?.code]
+    .map(normalizeCustomerSearch)
+    .filter(Boolean);
+  const findCustomer = (value, allowPartial = false) => {
     const query = normalizeCustomerSearch(value);
     if (!query) return null;
-    const exactMatches = state.customers.filter((row) => customerExactValues(row).includes(query));
+    const exactMatches = state.customers.filter((row) => customerIdentityValues(row).includes(query));
     const exact = exactMatches.length === 1 ? exactMatches[0] : null;
     if (exact) return exact;
-    // Partial lookup is intentionally restricted to text fields. Partial phone numbers,
-    // emails, and other numeric fragments can incorrectly identify another customer.
-    if (query.length < 3 || /[0-9@+]/.test(query)) return null;
-    const matches = state.customers.filter((row) => customerPartialText(row).some((field) => field.includes(query)));
+    // Partial lookup is used only after the user leaves a field, and only against name/code.
+    // Searching address, phone, email, or contact text can select the wrong account.
+    if (!allowPartial || query.length < 3 || /[0-9@+]/.test(query)) return null;
+    const matches = state.customers.filter((row) => customerIdentityValues(row).some((field) => field.includes(query)));
     return matches.length === 1 ? matches[0] : null;
   };
 
@@ -8909,11 +8896,11 @@ function bindShipmentCustomerAutofill() {
     if (tariffField?.value && !options.some((option) => option.value === tariffField.value)) tariffField.value = "";
   };
 
-  const fill = (source) => {
+  const fill = (source, allowPartial = false) => {
     const value = String(source?.value || "").trim().toLowerCase();
     refreshTariffOptions();
     if (!value) return;
-    const customer = findCustomer(value);
+    const customer = findCustomer(value, allowPartial);
     if (!customer) return;
 
     if (String(customer.status || "").trim().toLowerCase() === "blocked") {
@@ -8952,9 +8939,9 @@ function bindShipmentCustomerAutofill() {
   };
 
   customerField?.addEventListener("input", () => fill(customerField));
-  customerField?.addEventListener("change", () => fill(customerField));
+  customerField?.addEventListener("change", () => fill(customerField, true));
   codeField?.addEventListener("input", () => fill(codeField));
-  codeField?.addEventListener("change", () => fill(codeField));
+  codeField?.addEventListener("change", () => fill(codeField, true));
   billToField?.addEventListener("input", () => fillBillingPartyOnly(billToField));
   billToField?.addEventListener("change", () => fillBillingPartyOnly(billToField));
 
@@ -8976,8 +8963,9 @@ function bindShipmentCustomerAutofill() {
         field?.addEventListener("change", () => fillBillingPartyOnly(field));
         return;
       }
+      if (fieldName !== fieldNames[0]) return;
       field?.addEventListener("input", () => fillCustomerSection(field, fields));
-      field?.addEventListener("change", () => fillCustomerSection(field, fields));
+      field?.addEventListener("change", () => fillCustomerSection(field, fields, true));
     });
   });
 }
@@ -13499,37 +13487,22 @@ async function updateLoadStatus(data) {
   return true;
 }
 
-function sendShipmentStatusEmail(jobNo) {
+async function sendShipmentStatusEmail(jobNo) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
     window.alert("Select a shipment first.");
     return;
   }
-
-  const customer = state.customers.find((row) => row.name === shipmentItem.customer);
-  if (!customer?.email) {
-    window.alert("No customer email is stored for this shipment.");
-    return;
+  try {
+    const result = await fetchJson("/api/shipments/status-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobNo: shipmentItem.jobNo })
+    });
+    notifySuccess("Status update sent", `The shipment update was emailed to ${result.recipient}.`);
+  } catch (error) {
+    notifyDenied("Status update not sent", error.message || "The customer status email could not be sent.");
   }
-
-  const subject = encodeURIComponent(`Shipment Update ${shipmentItem.jobNo}`);
-  const body = encodeURIComponent(
-    [
-      `Dear ${shipmentItem.customer},`,
-      "",
-      `Shipment No: ${shipmentItem.jobNo}`,
-      `Origin: ${shipmentItem.origin}`,
-      `Destination: ${shipmentItem.destination}`,
-      `Status: ${shipmentItem.status}`,
-      `POD Status: ${shipmentItem.podStatus}`,
-      `Invoice Status: ${shipmentItem.invoiceStatus}`,
-      "",
-      "Regards,",
-      "Apollo Freight Solutions"
-    ].join("\n")
-  );
-
-  window.location.href = `mailto:${encodeURIComponent(customer.email)}?subject=${subject}&body=${body}`;
 }
 
 boot();
