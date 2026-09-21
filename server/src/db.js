@@ -22,8 +22,18 @@ function getPool() {
 
   const useSsl = nodeEnv === "production" && !isCloudSqlSocketUrl(databaseUrl);
 
+  // The default pool size (10) with no wait limit meant that when several users' screens were
+  // refreshing at once, a save (e.g. New Shipment) could sit in the queue waiting for a free
+  // connection until the browser gave up. A bigger pool plus a bounded wait makes that either
+  // succeed or fail fast with a clear error. Both are tunable through Cloud Run env vars.
+  const poolMax = Math.max(5, Number.parseInt(process.env.PG_POOL_MAX || "20", 10) || 20);
+  const connectionTimeoutMillis = Math.max(2000, Number.parseInt(process.env.PG_CONNECTION_TIMEOUT_MS || "10000", 10) || 10000);
+
   pool = new Pool({
     connectionString: databaseUrl,
+    max: poolMax,
+    connectionTimeoutMillis,
+    idleTimeoutMillis: 30000,
     ssl: useSsl
       ? {
           rejectUnauthorized: false

@@ -18,6 +18,7 @@ const { healthRouter: maintenanceHealthRouter } = require("./maintenance/routes/
 const { createCrmRouter } = require("./crm");
 const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
+const { ensureChatAiSchema, ensureShipmentIndexes } = require("./schema-guard");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -3884,24 +3885,40 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
   }
 });
 app.post("/api/shipments", requireErpPortalAuth, async (request, response, next) => {
+  // Stage timings are logged only when a save is slow, so Cloud Run logs show exactly which step
+  // (blocked-customer check, insert, or AWB group sync) is responsible.
+  const startedAt = Date.now();
+  const stages = {};
+  const mark = (name, since) => { stages[name] = Date.now() - since; };
   try {
     const customerName = request.body?.customer || request.body?.customerName || "";
+    let stageStart = Date.now();
     const blocked = await findBlockedCustomer(customerName, requestBlockCheckBranch(request));
+    mark("blockedCheckMs", stageStart);
     if (blocked) {
       const error = new Error(`${blocked.name} (${blocked.code}) is blocked for overdue account. Ask admin to approve an unblock request before creating shipments.`);
       error.status = 409;
       throw error;
     }
 
+    stageStart = Date.now();
     const row = await insertRow(resources.shipments, request.body || {});
+    mark("insertMs", stageStart);
+    stageStart = Date.now();
     const relatedRows = await synchronizeShipmentAirwayBill(row, {
       joinExistingGroup: true,
       updatedBy: request.appSession?.userName || "system",
       notes: `AWB group synchronization after shipment creation for ${row.airway_bill_no || ""}`
     });
+    mark("awbSyncMs", stageStart);
+    const totalMs = Date.now() - startedAt;
+    if (totalMs > 3000) {
+      console.warn(`[slow-shipment-create] ${row.job_no} total=${totalMs}ms ${JSON.stringify(stages)}`);
+    }
     const savedRow = relatedRows.find((item) => String(item.job_no) === String(row.job_no)) || row;
     response.status(201).json({ ok: true, row: savedRow, relatedRows });
   } catch (error) {
+    console.error(`[shipment-create-failed] after ${Date.now() - startedAt}ms ${JSON.stringify(stages)}: ${error.code || ""} ${error.message}`);
     if (isDatabaseSetupError(error)) {
       return response.status(201).json({ ok: true, mode: "demo", row: request.body || {} });
     }
@@ -4159,6 +4176,10 @@ function start() {
         console.warn(`Database migration skipped: ${error.message}`);
       }
     }
+    // Background, non-blocking catch-up for tables/indexes added after the database was first
+    // set up (production never replays all migrations). Failures are logged, never fatal.
+    ensureChatAiSchema(query).catch((error) => console.warn(`Chat/AI schema catch-up skipped: ${error.message}`));
+    ensureShipmentIndexes(query).catch((error) => console.warn(`Shipment index catch-up skipped: ${error.message}`));
     // Resolve the stable shared secret after migrations. Login requests wait for this promise,
     // preventing token signing races while still allowing Render to detect the open port.
     await ensurePortalSecret();

@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const express = require("express");
 const { GoogleAuth } = require("google-auth-library");
+const { ensureChatAiSchema } = require("./schema-guard");
 
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const DEFAULT_MAX_CONTEXT_ROWS = 30;
@@ -611,6 +612,18 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
   const businessTimezone = cleanText(process.env.APOLLO_BUSINESS_TIMEZONE || "Asia/Dubai", 80) || "Asia/Dubai";
   const limiter = createRateLimiter();
   router.use(requireAppAuth);
+  router.use(async (_request, response, next) => {
+    try {
+      await ensureChatAiSchema(query);
+      return next();
+    } catch (error) {
+      console.error("Apollo AI schema setup failed:", error.message);
+      return response.status(503).json({
+        ok: false,
+        error: "Apollo AI is not set up on the database yet. Please ask IT to run server/sql/041_ensure_chat_ai_schema.sql."
+      });
+    }
+  });
 
   router.get("/me", async (request, response, next) => {
     try {
