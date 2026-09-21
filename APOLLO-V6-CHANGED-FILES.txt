@@ -1,0 +1,11 @@
+Apollo Connected V6 - changed files vs V5
+
+MODIFIED
+server/src/apollo-ai.js
+
+ADDED DOCUMENTATION
+APOLLO-V6-AI-HOTFIX.md
+APOLLO-V6-CHANGED-FILES.txt
+
+No other application source files were changed from V5.
+No new database migration is required for the AI hotfix.
