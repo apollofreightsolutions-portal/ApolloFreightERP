@@ -1409,9 +1409,14 @@ function shipmentSerialStartForBranch(branch) {
   return Math.max(1, Number(raw) || 1);
 }
 
+function shipmentServiceCode(service) {
+  const normalized = String(service || "").trim().toUpperCase();
+  return normalized === "CONSOLIDATION" || normalized === "CONSOLADATION" ? "CO" : normalized;
+}
+
 function nextShipmentNumber(branch = defaultUserBranch(), service = "") {
   const normalizedBranch = normalizeBranchName(branch);
-  const serviceCode = String(service || "").trim().toUpperCase();
+  const serviceCode = shipmentServiceCode(service);
   const format = shipmentNumberFormatForBranch(normalizedBranch);
   const fullYear = new Date().getFullYear().toString();
   const year = fullYear.slice(-2);
@@ -8176,7 +8181,8 @@ function partyDialogConfig(key, label) {
 function shipmentDialogBody(mode = "shipment", record = null) {
   const actualMode = record?.entryMode || mode || "shipment";
   const isAirway = actualMode === "airway";
-  const loaded = Boolean(record);
+  const isNewFromAirway = Boolean(record?.isNewFromAirway);
+  const loaded = Boolean(record) && !isNewFromAirway;
   const tcnAvailable = Boolean(record && state.shipments.some((shipmentItem) => shipmentItem.jobNo === record.jobNo));
   const sectionOpen = loaded;
   const defaultCustomer = record?.customer || "";
@@ -8807,6 +8813,7 @@ function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", ser
   // The source is only used as a template.  The saved record must be a new shipment,
   // while retaining the fetched AWB/Bill of Lading as its reference.
   prefillRecord.entryMode = "shipment";
+  prefillRecord.isNewFromAirway = true;
   prefillRecord.airwayBillNo = typedValue;
   prefillRecord.bookingDate = today();
   prefillRecord.shipmentDate = today();
