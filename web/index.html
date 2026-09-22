@@ -158,22 +158,25 @@
             <p id="dialogType" class="eyebrow">Record</p>
             <h2 id="dialogTitle">Record details</h2>
           </div>
-          <div class="dialog-window-controls" aria-label="Window controls">
-            <button id="recordDialogMinimize" type="button" class="window-control-button" aria-label="Minimize dialog" title="Minimize">
-              <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M3 8h10" />
-              </svg>
-            </button>
-            <button id="recordDialogMaximize" type="button" class="window-control-button" aria-label="Maximize dialog" title="Maximize">
-              <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <rect x="3.5" y="3.5" width="9" height="9" rx="1.2" />
-              </svg>
-            </button>
-            <button id="recordDialogClose" type="button" class="window-control-button window-control-close" aria-label="Close dialog" title="Close">
-              <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                <path d="M4 4l8 8M12 4l-8 8" />
-              </svg>
-            </button>
+          <div class="dialog-window-stack">
+            <div class="dialog-window-controls" aria-label="Window controls">
+              <button id="recordDialogMinimize" type="button" class="window-control-button" aria-label="Minimize dialog" title="Minimize">
+                <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M3 8h10" />
+                </svg>
+              </button>
+              <button id="recordDialogMaximize" type="button" class="window-control-button" aria-label="Maximize dialog" title="Maximize">
+                <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <rect x="3.5" y="3.5" width="9" height="9" rx="1.2" />
+                </svg>
+              </button>
+              <button id="recordDialogClose" type="button" class="window-control-button window-control-close" aria-label="Close dialog" title="Close">
+                <svg class="window-control-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </div>
+            <button id="dialogHeaderSave" type="button" class="dialog-header-save">Save Changes</button>
           </div>
         </div>
         <div id="dialogBody" class="dialog-body"></div>

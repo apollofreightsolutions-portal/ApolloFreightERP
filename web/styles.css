@@ -2794,7 +2794,30 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
   flex: 0 0 auto;
   align-items: center;
 }
-
+.dialog-window-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.dialog-header-save {
+  min-height: 32px;
+  padding: 7px 11px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.dialog-header-save:hover {
+  filter: brightness(.95);
+}
+.dialog-header-save:disabled,
+.dialog-header-save.is-hidden {
+  display: none;
+}
 .window-control-button {
   width: 30px;
   height: 30px;

@@ -113,6 +113,7 @@ const dialogTitle = document.querySelector("#dialogTitle");
 const dialogBody = document.querySelector("#dialogBody");
 const dialogSecondary = document.querySelector("#dialogSecondary");
 const dialogSave = document.querySelector("#dialogSave");
+const dialogHeaderSave = document.querySelector("#dialogHeaderSave");
 const dialogMinimize = document.querySelector("#recordDialogMinimize");
 const dialogMaximize = document.querySelector("#recordDialogMaximize");
 const dialogClose = document.querySelector("#recordDialogClose");
@@ -1819,6 +1820,16 @@ async function boot() {
   dialogMaximize?.addEventListener("click", toggleDialogMaximized);
   dialogClose?.addEventListener("click", () => recordDialog.close());
   dialogSave.addEventListener("click", saveDialogRecord);
+  const syncDialogHeaderSave = () => {
+    if (!dialogHeaderSave) return;
+    dialogHeaderSave.textContent = dialogSave.textContent;
+    dialogHeaderSave.disabled = dialogSave.disabled;
+    const isShipmentDialog = /shipment/i.test(`${dialogType.textContent} ${dialogTitle.textContent}`);
+    dialogHeaderSave.classList.toggle("is-hidden", dialogSave.classList.contains("is-hidden") || !isShipmentDialog);
+  };
+  dialogHeaderSave?.addEventListener("click", saveDialogRecord);
+  syncDialogHeaderSave();
+  new MutationObserver(syncDialogHeaderSave).observe(dialogSave, { attributes: true, childList: true, characterData: true, subtree: true });
   recordDialog.addEventListener("close", () => {
     if (skipNextDialogCloseReset) {
       skipNextDialogCloseReset = false;
