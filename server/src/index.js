@@ -18,6 +18,8 @@ const { healthRouter: maintenanceHealthRouter } = require("./maintenance/routes/
 const { createCrmRouter } = require("./crm");
 const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
+const { graphMailStatus, sendMicrosoftGraphMail } = require("./microsoft-graph-mail");
+const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -714,8 +716,9 @@ async function evaluateShipmentRequestStatus(data, customerAccount) {
   const customerActive = isPortalActive(customerAccount?.status) && isPortalActive(customerAccount?.customer_status);
   const requiredFieldsComplete = Boolean(String(data.shipmentType || "").trim() && String(data.origin || "").trim() && String(data.destination || "").trim() && String(data.consignee || "").trim() && String(data.itemName || "").trim() && Number(data.quantity || 0) > 0 && Number(data.weight || 0) > 0);
   const hsCodeMatched = Boolean(String(data.hsCode || "").trim() && String(data.itemCode || "").trim());
+  const kuwaitComplianceReady = !isKuwaitDestination(data.destination) || Boolean(data.complianceReady);
 
-  if (!customerActive || !requiredFieldsComplete) {
+  if (!customerActive || !requiredFieldsComplete || !kuwaitComplianceReady) {
     return "PENDING_REVIEW";
   }
 
@@ -724,6 +727,22 @@ async function evaluateShipmentRequestStatus(data, customerAccount) {
   }
 
   return "PENDING_REVIEW";
+}
+
+async function customerComplianceForSubmission(customerSession, analysisId) {
+  const id = String(analysisId || "").trim();
+  if (!id) return null;
+  const row = (await query(
+    `select analysis_id,destination,status,result_json,created_at,expires_at
+     from customer_compliance_checks
+     where analysis_id=$1 and lower(customer_code)=lower($2) and expires_at>now()
+     limit 1`,
+    [id, String(customerSession?.customerCode || "").trim()]
+  )).rows[0];
+  if (!row) return null;
+  let result = {};
+  try { result = JSON.parse(row.result_json || "{}"); } catch { result = {}; }
+  return { ...row, result };
 }
 
 async function demoCustomerPortalSnapshot(identifier) {
@@ -2369,13 +2388,39 @@ app.post("/api/customer/shipment-requests", requireCustomerPortalAuth, async (re
       [String(data.itemName || data.item_code || data.itemCode || "").trim()]
     );
     const hsCode = hsCodeResult.rows[0] || null;
+    const compliance = await customerComplianceForSubmission(request.customerSession, data.complianceAnalysisId || data.compliance_analysis_id);
+    const compliancePrimaryCode = String(compliance?.result?.lines?.[0]?.effectiveHsCode || compliance?.result?.lines?.[0]?.submittedHsCode || "").trim();
+    const submittedPrimaryCode = String(data.hsCode || hsCode?.hs_code || "").trim();
+    const compliancePrimaryMatchesForm = !compliancePrimaryCode || compliancePrimaryCode.replace(/\D/g, "") === submittedPrimaryCode.replace(/\D/g, "");
+    const complianceReady = Boolean(compliance && String(compliance.status || "").toUpperCase() === "READY_TO_BOOK" && compliancePrimaryMatchesForm);
     const status = await evaluateShipmentRequestStatus({
       ...data,
-      hsCode: data.hsCode || hsCode?.hs_code || "",
-      itemCode: data.itemCode || hsCode?.item_code || ""
+      hsCode: submittedPrimaryCode,
+      itemCode: data.itemCode || hsCode?.item_code || "",
+      complianceReady
     }, account);
     const requestNo = await nextShipmentRequestNo();
     const attachments = Array.isArray(data.attachments) ? data.attachments : Array.isArray(data.attachmentsJson) ? data.attachmentsJson : [];
+    const requestDetails = { ...(data.requestDetails || data.request_details || {}) };
+    if (compliance) {
+      requestDetails.complianceAnalysisId = compliance.analysis_id;
+      requestDetails.compliance = {
+        destination: compliance.destination,
+        status: compliance.status,
+        checkedAt: compliance.created_at,
+        readyToBook: complianceReady,
+        lines: Array.isArray(compliance.result?.lines) ? compliance.result.lines.map((line) => ({
+          lineIndex: line.lineIndex,
+          description: line.description,
+          submittedHsCode: line.submittedHsCode,
+          effectiveHsCode: line.effectiveHsCode,
+          confidence: line.confidence,
+          status: line.status,
+          acceptedSuggestion: Boolean(line.acceptedSuggestion),
+          matchedMaster: line.matchedMaster ? { hsCode: line.matchedMaster.hsCode, description: line.matchedMaster.description, importRestriction: line.matchedMaster.importRestriction || "", importProhibition: line.matchedMaster.importProhibition || "" } : null
+        })) : []
+      };
+    }
     const row = {
       request_no: requestNo,
       customer_code: account.customer_code,
@@ -2392,7 +2437,7 @@ app.post("/api/customer/shipment-requests", requireCustomerPortalAuth, async (re
       invoice_value: Number(data.invoiceValue || data.invoice_value || 0),
       remarks: String(data.remarks || "").trim(),
       attachments_json: JSON.stringify(attachments),
-      request_details_json: JSON.stringify(data.requestDetails || data.request_details || {}),
+      request_details_json: JSON.stringify(requestDetails),
       status,
       approval_notes: status === "AUTO_APPROVED" ? "Auto approved by portal rules." : "",
       auto_approved: status === "AUTO_APPROVED",
@@ -2446,6 +2491,38 @@ app.post("/api/customer/shipment-requests", requireCustomerPortalAuth, async (re
   }
 });
 
+app.post("/api/customer/shipment-requests/:requestNo/documents", requireCustomerPortalAuth, async (request, response, next) => {
+  try {
+    const requestNo = String(request.params.requestNo || "").trim();
+    const fileName = String(request.body?.fileName || "").trim();
+    const mimeType = String(request.body?.mimeType || "").toLowerCase().trim();
+    const contentBase64 = String(request.body?.contentBase64 || "").replace(/^data:[^,]+,/, "").trim();
+    const allowedTypes = new Set([
+      "application/pdf", "image/jpeg", "image/png", "image/webp",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ]);
+    if (!requestNo || !fileName || !contentBase64 || !allowedTypes.has(mimeType)) return response.status(400).json({ ok: false, error: "Shipment document must be PDF, JPG, PNG, WebP, DOCX, or XLSX." });
+    const shipmentRequest = (await query(`select request_no,customer_code,attachments_json from shipment_requests where request_no=$1 and lower(customer_code)=lower($2) limit 1`, [requestNo, String(request.customerSession.customerCode || "")])).rows[0];
+    if (!shipmentRequest) return response.status(404).json({ ok: false, error: "Shipment request not found." });
+    const fileBuffer = Buffer.from(contentBase64, "base64");
+    if (!fileBuffer.length || fileBuffer.length > 10 * 1024 * 1024) return response.status(400).json({ ok: false, error: "Shipment document must be 10 MB or smaller." });
+    const storage = googleCloudStorageConfig();
+    if (!storage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server." });
+    const documentNo = `CUST-${safeEmployeeDocumentPart(requestNo).toUpperCase()}-${Date.now()}`;
+    const objectName = `${storage.prefix}/customer-shipments/${safeEmployeeDocumentPart(requestNo)}/${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
+    const storageUrl = await saveToGoogleCloudStorage(storage, objectName, fileBuffer, mimeType, fileName);
+    const notes = JSON.stringify({ storageProvider: "gcs", bucket: storage.bucket.name, objectName, bytes: fileBuffer.length, customerDocument: true });
+    const saved = (await query(`insert into documents (document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_by) values ($1,$2,'Customer Shipment Document','Uploaded',current_date,$3,$4,$5,$6,$3) returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`, [documentNo, requestNo, String(request.customerSession.userName || ""), fileName, storageUrl, notes])).rows[0];
+    let attachments = [];
+    try { attachments = JSON.parse(shipmentRequest.attachments_json || "[]"); } catch { attachments = []; }
+    if (!Array.isArray(attachments)) attachments = [];
+    attachments.push({ documentNo, fileName, mimeType, type: "Customer Shipment Document" });
+    await query(`update shipment_requests set attachments_json=$1,updated_at=now() where request_no=$2`, [JSON.stringify(attachments), requestNo]);
+    return response.status(201).json({ ok: true, row: saved });
+  } catch (error) { return next(error); }
+});
+
 app.put("/api/customer/shipment-requests/:requestNo", requireCustomerPortalAuth, async (request, response, next) => {
   const data = request.body || {};
   const requestNo = String(request.params.requestNo || "").trim();
@@ -2460,7 +2537,23 @@ app.put("/api/customer/shipment-requests/:requestNo", requireCustomerPortalAuth,
     if (String(current.status || "").toUpperCase() !== "SENT_BACK") {
       return response.status(409).json({ ok: false, error: "Only a sent-back request can be edited and resubmitted." });
     }
-    const details = JSON.stringify(data.requestDetails || data.request_details || {});
+    const detailObject = { ...(data.requestDetails || data.request_details || {}) };
+    const compliance = await customerComplianceForSubmission(request.customerSession, data.complianceAnalysisId || detailObject.complianceAnalysisId || data.compliance_analysis_id);
+    if (compliance) {
+      detailObject.complianceAnalysisId = compliance.analysis_id;
+      detailObject.compliance = {
+        destination: compliance.destination,
+        status: compliance.status,
+        checkedAt: compliance.created_at,
+        readyToBook: String(compliance.status || "").toUpperCase() === "READY_TO_BOOK",
+        lines: Array.isArray(compliance.result?.lines) ? compliance.result.lines.map((line) => ({
+          lineIndex: line.lineIndex, description: line.description, submittedHsCode: line.submittedHsCode,
+          effectiveHsCode: line.effectiveHsCode, confidence: line.confidence, status: line.status,
+          acceptedSuggestion: Boolean(line.acceptedSuggestion), matchedMaster: line.matchedMaster ? { hsCode: line.matchedMaster.hsCode, description: line.matchedMaster.description, importRestriction: line.matchedMaster.importRestriction || "", importProhibition: line.matchedMaster.importProhibition || "" } : null
+        })) : []
+      };
+    }
+    const details = JSON.stringify(detailObject);
     const result = await query(
       `update shipment_requests set shipment_type=$1, origin=$2, destination=$3, consignee=$4, item_name=$5,
         hs_code=$6, item_code=$7, quantity=$8, weight=$9, invoice_value=$10, remarks=$11,
@@ -3135,26 +3228,6 @@ function emailHtml(value) {
   return String(value ?? "").replace(/[&<>\"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;", "'":"&#39;"}[character]));
 }
 
-function smtpTransporter() {
-  const smtpHost = String(process.env.SMTP_HOST || "").trim();
-  const smtpPort = Number(process.env.SMTP_PORT || 587);
-  const smtpUser = String(process.env.SMTP_USER || "").trim();
-  const smtpPassword = String(process.env.SMTP_PASSWORD || "");
-  const from = String(process.env.SMTP_FROM || process.env.EMAIL_FROM || "").trim();
-  const enabled = String(process.env.SMTP_ENABLED || "false").toLowerCase() === "true";
-  if (!enabled || !smtpHost || !smtpUser || !smtpPassword || !from) return null;
-  return {
-    from,
-    transporter: nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
-      auth: { user: smtpUser, pass: smtpPassword },
-      requireTLS: smtpPort === 587
-    })
-  };
-}
-
 async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
   const smtpHost = String(process.env.SMTP_HOST || "").trim();
   const smtpPort = Number(process.env.SMTP_PORT || 587);
@@ -3819,48 +3892,159 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
   });
 }
 
+function mailHtmlEscape(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[character]));
+}
+
+function normalizedBranchTokens(value) {
+  return String(value || "")
+    .split(/[,;|]/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function userCanAccessShipmentBranch(user, shipmentBranch) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  const branchScope = String(user?.branch_view_scope || "").trim().toLowerCase();
+  const branchAccess = String(user?.branch_access || "").trim();
+  const target = String(shipmentBranch || "").trim().toLowerCase();
+  if (role === "admin" || branchScope.includes("all branch")) return true;
+  if (!target) return false;
+  const raw = branchAccess.toLowerCase();
+  if (raw === "both" || raw === "all" || raw.includes("all branch")) return true;
+  return normalizedBranchTokens(branchAccess).some((item) => item === target || item.includes(target) || target.includes(item));
+}
+
+function shipmentUpdateEmailHtml({ shipment, latestHistory }) {
+  const status = String(shipment.status || "Updated").trim();
+  const updatedAt = latestHistory?.updated_at || shipment.updated_at || new Date().toISOString();
+  const updatedDate = new Date(updatedAt);
+  const updatedText = Number.isNaN(updatedDate.getTime())
+    ? String(updatedAt || "")
+    : updatedDate.toLocaleString("en-GB", { timeZone: "Asia/Dubai" });
+  const trackingReference = String(shipment.airway_bill_no || "").trim();
+  const note = String(latestHistory?.notes || "").trim();
+  return `<!doctype html>
+  <html><body style="margin:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#172033;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6f8;padding:24px 12px;"><tr><td align="center">
+      <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+        <tr><td style="background:#101827;color:#ffffff;padding:22px 26px;">
+          <div style="font-size:19px;font-weight:700;letter-spacing:.2px;">Apollo Connected</div>
+          <div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Shipment status update</div>
+        </td></tr>
+        <tr><td style="padding:26px;">
+          <p style="margin:0 0 18px;">Dear ${mailHtmlEscape(shipment.customer_name || "Customer")},</p>
+          <p style="margin:0 0 20px;">Your shipment status has been updated.</p>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="7" style="border-collapse:collapse;font-size:14px;">
+            <tr><td style="font-weight:700;width:175px;border-bottom:1px solid #eef0f2;">Shipment No.</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.job_no)}</td></tr>
+            ${trackingReference ? `<tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Tracking / AWB</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(trackingReference)}</td></tr>` : ""}
+            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Origin</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.origin)}</td></tr>
+            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Destination</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.destination)}</td></tr>
+            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Current Status</td><td style="border-bottom:1px solid #eef0f2;font-weight:700;">${mailHtmlEscape(status)}</td></tr>
+            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">POD Status</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.pod_status || "")}</td></tr>
+            <tr><td style="font-weight:700;">Updated</td><td>${mailHtmlEscape(updatedText)}</td></tr>
+          </table>
+          ${note ? `<div style="margin-top:20px;padding:14px 16px;background:#f8fafc;border-left:3px solid #f59e0b;font-size:13px;"><strong>Update note:</strong><br>${mailHtmlEscape(note)}</div>` : ""}
+          <p style="margin:24px 0 0;">Regards,<br><strong>Apollo Freight Solutions</strong></p>
+        </td></tr>
+        <tr><td style="padding:16px 26px;background:#f8fafc;color:#6b7280;font-size:11px;line-height:1.5;">
+          This message was sent automatically by Apollo Connected. This mailbox is not monitored. Please contact your Apollo representative if you need assistance.
+        </td></tr>
+      </table>
+    </td></tr></table>
+  </body></html>`;
+}
+
+app.get("/api/mail/status", requireErpPortalAuth, (request, response) => {
+  return response.json({ ok: true, mail: graphMailStatus() });
+});
+
 app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, response, next) => {
   try {
     const jobNo = String(request.body?.jobNo || request.body?.job_no || "").trim();
-    if (!jobNo) return response.status(400).json({ ok: false, error: "A shipment number is required." });
-    const shipmentResult = await query("select * from shipments where lower(trim(job_no)) = lower(trim($1)) limit 1", [jobNo]);
-    const shipment = shipmentResult.rows[0];
-    if (!shipment) return response.status(404).json({ ok: false, error: "Shipment was not found." });
+    if (!jobNo || jobNo.length > 100) return response.status(400).json({ ok: false, error: "A valid shipment number is required." });
+
+    const shipment = (await query(
+      `select job_no, branch, customer_name, origin, destination, status, pod_status, invoice_status, airway_bill_no, notes, updated_at
+         from shipments
+        where lower(trim(job_no)) = lower(trim($1))
+        limit 1`,
+      [jobNo]
+    )).rows[0];
+    if (!shipment) return response.status(404).json({ ok: false, error: "Shipment not found." });
+
+    const user = (await query(
+      `select user_name, role, account_status, branch_access, branch_view_scope, erp_portal_access
+         from app_users
+        where lower(user_name) = lower($1)
+        limit 1`,
+      [String(request.appSession?.userName || "")]
+    )).rows[0];
+    if (!user || String(user.account_status || "Active").toLowerCase() !== "active" || user.erp_portal_access === false) {
+      return response.status(403).json({ ok: false, error: "Your Apollo Connected account is not authorized to send shipment updates." });
+    }
+    if (!userCanAccessShipmentBranch(user, shipment.branch)) {
+      return response.status(403).json({ ok: false, error: "You do not have access to send updates for this shipment branch." });
+    }
 
     let customerCode = "";
     try { customerCode = JSON.parse(shipment.notes || "{}").customerCode || ""; } catch {}
-    const customerResult = await query(
+    const customer = (await query(
       `select name, email
          from customers
         where lower(trim(name)) = lower(trim($1))
            or ($2 <> '' and lower(trim(code)) = lower(trim($2)))
-        order by case when lower(trim(name)) = lower(trim($1)) then 0 else 1 end
+        order by case when lower(trim(branch)) = lower(trim($3)) then 0 else 1 end,
+                 case when lower(trim(name)) = lower(trim($1)) then 0 else 1 end,
+                 id desc
         limit 1`,
-      [shipment.customer_name || "", customerCode]
-    );
-    const customer = customerResult.rows[0];
+      [shipment.customer_name || "", customerCode, shipment.branch || ""]
+    )).rows[0];
     const recipient = String(customer?.email || "").trim();
     if (!recipient) return response.status(422).json({ ok: false, error: "No email address is saved for the related customer." });
 
-    const smtp = smtpTransporter();
-    if (!smtp) return response.status(503).json({ ok: false, error: "SMTP is not configured. Set SMTP_ENABLED, SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM on the server." });
-    const subject = `Shipment Update ${shipment.job_no}`;
-    const html = `<h2>Shipment Update</h2>
-      <p>Dear ${emailHtml(customer.name || shipment.customer_name || "Customer")},</p>
-      <p>Your shipment status has been updated.</p>
-      <table cellpadding="6" cellspacing="0" border="0">
-        <tr><td><strong>Shipment No.</strong></td><td>${emailHtml(shipment.job_no)}</td></tr>
-        <tr><td><strong>Airway Bill</strong></td><td>${emailHtml(shipment.airway_bill_no || "")}</td></tr>
-        <tr><td><strong>Origin</strong></td><td>${emailHtml(shipment.origin || "")}</td></tr>
-        <tr><td><strong>Destination</strong></td><td>${emailHtml(shipment.destination || "")}</td></tr>
-        <tr><td><strong>Status</strong></td><td>${emailHtml(shipment.status || "")}</td></tr>
-        <tr><td><strong>POD Status</strong></td><td>${emailHtml(shipment.pod_status || "")}</td></tr>
-        <tr><td><strong>Invoice Status</strong></td><td>${emailHtml(shipment.invoice_status || "")}</td></tr>
-      </table>
-      <p>Regards,<br />Apollo Freight Solutions</p>`;
-    await smtp.transporter.sendMail({ from: smtp.from, to: recipient, subject, html });
-    response.json({ ok: true, recipient, jobNo: shipment.job_no });
+    const latestHistory = (await query(
+      `select notes, updated_at
+         from shipment_status_history
+        where lower(trim(job_no)) = lower(trim($1))
+        order by updated_at desc, id desc
+        limit 1`,
+      [shipment.job_no]
+    )).rows[0] || null;
+
+    const mail = await sendMicrosoftGraphMail({
+      to: recipient,
+      subject: `Apollo Connected | Shipment Update | ${shipment.job_no} | ${shipment.status}`,
+      html: shipmentUpdateEmailHtml({ shipment, latestHistory })
+    });
+
+    try {
+      await query(
+        `insert into audit_log (date_time, user_name, action, reference, details)
+         values (now(), $1, $2, $3, $4)`,
+        [
+          String(user.user_name || request.appSession?.userName || "system"),
+          "Sent shipment status email",
+          shipment.job_no,
+          JSON.stringify({ from: mail.from, to: mail.to, status: shipment.status, branch: shipment.branch })
+        ]
+      );
+    } catch (auditError) {
+      console.warn("Shipment update email sent but audit logging failed:", auditError?.message || auditError);
+    }
+
+    return response.json({
+      ok: true,
+      recipient,
+      jobNo: shipment.job_no,
+      status: shipment.status,
+      from: mail.from,
+      to: mail.to
+    });
   } catch (error) {
+    console.error("Shipment status email failed:", error?.message || error);
     return next(error);
   }
 });
@@ -3939,6 +4123,7 @@ app.use("/api/maintenance/expenses", maintenanceExpensesRouter);
 app.use("/api/maintenance/users", maintenanceUsersRouter);
 app.use("/api/maintenance/vehicles", maintenanceVehiclesRouter);
 app.use("/api/ai", createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl: resolveStoredDocumentUrl }));
+app.use("/api/customer/compliance", createCustomerComplianceRouter({ query, requireCustomerPortalAuth }));
 app.use("/api/chat", createConnectedChatRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth }));
 
