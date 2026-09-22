@@ -3454,7 +3454,7 @@ function renderCustomerNewShipment() {
         </div>
       </section>
       <section class="customer-booking-step" data-customer-cargo><span class="customer-step-number">4</span><div><h3>Cargo Dimensions & Chargeable Weight</h3><p>Add every pallet, carton, or package. CBM and chargeable weight calculate automatically.</p></div>
-        <input type="hidden" name="requestNo" value="${escapeHtml(requestNo)}" /><input type="hidden" name="cargoItemsJson" value="${escapeHtml(value("cargoItemsJson", "[]"))}" />
+        <input type="hidden" name="requestNo" value="${escapeHtml(requestNo)}" /><input type="hidden" name="complianceAnalysisId" value="${escapeHtml(value("complianceAnalysisId", ""))}" /><input type="hidden" name="cargoItemsJson" value="${escapeHtml(value("cargoItemsJson", "[]"))}" />
         <div class="tariff-charge-entry cargo-entry">
           ${strictSelect("cargoPackageType", "Package Type", ["Pallet", "Carton", "Crate", "Box", "Package", "Drum"], "Pallet")}
           ${input("cargoQuantity", "Quantity", "1", false, "number")}
@@ -8305,6 +8305,18 @@ function formSection(title, body, collapsible = false, open = false) {
   return `<details class="form-section collapsible-section" ${open ? "open" : ""}><summary>${escapeHtml(title)}</summary>${sectionBody}</details>`;
 }
 
+function shipmentRequestComplianceMarkup(requestDetails) {
+  const compliance = requestDetails?.compliance;
+  if (!compliance || !compliance.status) return "";
+  const lines = Array.isArray(compliance.lines) ? compliance.lines : [];
+  const attention = lines.filter((line) => String(line.status || "").toUpperCase() !== "PASS");
+  const status = String(compliance.status || "").toUpperCase();
+  const ready = status === "READY_TO_BOOK";
+  const statusText = ready ? "Apollo Shield — Ready to Book" : status.replace(/_/g, " ");
+  const rows = lines.map((line) => `<tr><td>${escapeHtml(line.description || "-")}</td><td>${escapeHtml(line.submittedHsCode || "-")}</td><td>${escapeHtml(line.effectiveHsCode || "-")}</td><td>${escapeHtml(String(line.confidence ?? 0))}%</td><td>${escapeHtml(line.status || "-")}</td></tr>`).join("");
+  return `<div class="form-section"><h3>Kuwait HS Compliance</h3><div class="alert ${ready ? "success" : "warning"}"><strong>${escapeHtml(statusText)}</strong>${attention.length ? ` · ${attention.length} line item(s) need attention` : " · All checked line items passed"}</div>${rows ? `<div class="table-wrap"><table><thead><tr><th>Description</th><th>Submitted HS</th><th>Effective HS</th><th>Confidence</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}<p class="empty-state">Analysis ID: ${escapeHtml(requestDetails.complianceAnalysisId || "-")}</p></div>`;
+}
+
 function shipmentRequestDialogBody(record) {
   const fieldValue = (key, fallback = "") => record?.[key] ?? fallback;
   const requestDetails = parseJsonMeta(record?.requestDetailsJson || "{}");
@@ -8355,6 +8367,7 @@ function shipmentRequestDialogBody(record) {
       const fileUrl = String(file.url || file.storageUrl || "").trim();
       return fileUrl ? `<p><a href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener">Open ${fileName}</a></p>` : `<p>${fileName}</p>`;
     }).join("")}</div>` : ""}
+    ${shipmentRequestComplianceMarkup(requestDetails)}
     ${textarea("approvalNotes", "Approval / Send Back Notes", fieldValue("approvalNotes"), false, 3)}
     ${["SUBMITTED", "PENDING_REVIEW"].includes(String(fieldValue("status")).toUpperCase()) ? `<div class="action-row"><button type="button" class="secondary-button" data-dialog-action="send-back-request">Send Back to Customer</button></div>` : ""}
     <input type="hidden" name="convertedJobNo" value="${escapeHtml(fieldValue("convertedJobNo"))}" />
@@ -11484,7 +11497,11 @@ function convertShipmentRequestToShipment(id) {
     chargeableKg: Number(requestDetails.chargeableKg || 0),
     volumeCategory: requestDetails.volumeCategory || "1 CBM = 250 KG",
     chargeableDivisor: Number(requestDetails.chargeableDivisor || 250),
-    natureOfGoods: [record.itemName, record.hsCode ? `HS Code: ${record.hsCode}` : ""].filter(Boolean).join(" - "),
+    natureOfGoods: (() => {
+      const complianceLines = Array.isArray(requestDetails?.compliance?.lines) ? requestDetails.compliance.lines : [];
+      if (complianceLines.length) return complianceLines.map((line) => [line.description, (line.effectiveHsCode || line.submittedHsCode) ? `HS Code: ${line.effectiveHsCode || line.submittedHsCode}` : ""].filter(Boolean).join(" - ")).join(" | ");
+      return [record.itemName, record.hsCode ? `HS Code: ${record.hsCode}` : ""].filter(Boolean).join(" - ");
+    })(),
     customerReference: requestDetails.customerReference || record.itemCode || "",
     shipmentRemarks: record.remarks || "",
     branch: defaultUserBranch()
@@ -13051,6 +13068,7 @@ async function submitCustomerShipmentRequest(data, form) {
     consigneeContactPerson: data.consigneeContactPerson || "", consigneeMobile: data.consigneeMobile || "",
     deliveryLocation: data.deliveryLocation || "", deliveryAddress: data.deliveryAddress || "", customerReference: data.customerReference || "",
     cargoItemsJson: data.cargoItemsJson || "[]", pieces: Number(data.pieces || 0), cbm: Number(data.cbm || 0),
+    complianceAnalysisId: data.complianceAnalysisId || "",
     actualKg: Number(data.actualKg || 0), chargeableKg: Number(data.chargeableKg || 0),
     volumeCategory: data.volumeCategory || "1 CBM = 250 KG", chargeableDivisor: Number(data.chargeableDivisor || 0)
   };
@@ -13124,6 +13142,11 @@ function bindCustomerShipmentRequestForm() {
     if (fields.chargeableDivisor) fields.chargeableDivisor.value = isSameAsGrossWeightCategory(category) ? "" : String(divisor);
     if (list) list.innerHTML = lines.length ? `<div class="table-wrap"><table class="tariff-charges-table"><thead><tr><th>Package</th><th>Qty</th><th>Dimensions</th><th>Gross KG</th><th>CBM</th><th></th></tr></thead><tbody>${lines.map((line, index) => `<tr><td>${escapeHtml(line.packageType)}</td><td>${line.count}</td><td>${line.length} × ${line.width} × ${line.height} ${escapeHtml(line.dimensionUnit)}</td><td>${money(line.weightKg)}</td><td>${money(line.total)}</td><td><button type="button" class="ghost-button" data-customer-remove-cargo="${index}">Remove</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="empty-state">No cargo added yet.</p>`;
   };
+  cargoRoot.addEventListener("apollo:replace-cargo", (event) => {
+    const replacement = Array.isArray(event.detail?.lines) ? event.detail.lines : [];
+    lines.splice(0, lines.length, ...replacement);
+    syncCargo();
+  });
   cargoRoot.addEventListener("click", (event) => {
     const add = event.target.closest("[data-customer-add-cargo]");
     if (add) {
