@@ -8913,6 +8913,10 @@ function bindShipmentCustomerAutofill() {
     setDialogValue("customerMobile", customer.mobile);
     setDialogValue("customerContactPerson", customerContactValue(customer));
     setDialogValue("customerAddress", customer.fullAddress || customer.locationOrLane);
+    setDialogValue("deliveryLocation", customer.locationOrLane || customer.fullAddress);
+    setDialogValue("deliveryAddress", customer.fullAddress || customer.locationOrLane);
+    setDialogValue("deliveryContactPerson", customerContactValue(customer));
+    setDialogValue("deliveryMobile", customer.mobile);
     setDialogValue("billTo1", customer.name);
     setDialogValue("billingParty1Address", customer.fullAddress || customer.locationOrLane);
     setDialogValue("billingParty1ContactPerson", customerContactValue(customer));
@@ -9193,7 +9197,7 @@ function bindPalletDimensionBuilder() {
       pocName: data.pocName || data.deliveryContactPerson || "",
       pocMobile: data.pocMobile || data.deliveryMobile || "",
       preparedBy: data.preparedBy || currentUserName(),
-      deliveredBy: data.deliveredBy || data.driverName || "",
+      deliveredBy: podDeliveredByValue(data),
       receivedBy: data.receivedBy || ""
     }));
   };
@@ -10682,7 +10686,7 @@ function podSplitDocumentHtml(record, split) {
       </section>
       <section class="delivery-signatures">
         <div><span>Prepared By</span><strong>${escapeHtml(split.preparedBy || currentUserName())}</strong><small>Date & Time</small><em>${escapeHtml(split.deliveryDatetime ? formatDateDisplay(split.deliveryDatetime) : formatDateTimeNow())}</em></div>
-        <div><span>Delivered By</span><strong>${escapeHtml(split.deliveredBy || record.driverName || "")}</strong></div>
+        <div><span>Delivered By</span><strong>${escapeHtml(split.deliveredBy || podDeliveredByValue(record))}</strong></div>
         <div><span>Goods Received By</span><strong>${escapeHtml(split.receivedBy || "")}</strong><small>Telephone Number</small><em>${escapeHtml(split.receiverPhone || "")}</em><small>Signature</small><b>${escapeHtml(split.receiverSignature || " ")}</b><small>Date</small><b class="remark-line"></b></div>
       </section>
       <p class="acknowledgement">This is to confirm that goods have been received in good order and condition. Any discrepancy must be notified within 24 hours from the time of receipt.</p>
@@ -10712,7 +10716,7 @@ function podDocumentHtml(record) {
     pocMobile: record.pocMobile,
     additionalContact: record.additionalContact,
     preparedBy: record.preparedBy,
-    deliveredBy: record.deliveredBy,
+    deliveredBy: podDeliveredByValue(record),
     receivedBy: record.receivedBy,
     receiverPhone: record.receiverPhone,
     receiverSignature: record.receiverSignature,
@@ -11119,6 +11123,18 @@ function parsePodSplits(value) {
     return [];
   }
 }
+function podDeliveredByValue(record = {}) {
+  const existing = String(record.deliveredBy || "").trim();
+  if (existing) return existing;
+  return [
+    ["Name", record.driverName],
+    ["Number", record.driverNumber || record.driverMobile],
+    ["Vehicle", record.vehicleNo]
+  ]
+    .filter(([, value]) => String(value || "").trim())
+    .map(([label, value]) => `${label}: ${String(value).trim()}`)
+    .join(" / ");
+}
 function podSplitsDeliveredPieces(splits) {
   return splits.reduce((sum, split) => sum + Number(split.pieces || 0), 0);
 }
@@ -11231,11 +11247,12 @@ function documentShell(title, documentLabel, documentNo, documentDate, body, opt
         .tcn-grid div, .tcn-two-col div { min-height: 62px; padding: 9px; border-right: 1px solid #d96f16; overflow-wrap: anywhere; }
         .tcn-grid div:last-child, .tcn-two-col div:last-child { border-right: 0; }
         .tcn-grid span, .tcn-two-col span, .tcn-signatures span { display: block; color: #172033; font-size: 10px; font-weight: 800; text-transform: uppercase; margin-bottom: 6px; }
-        .tcn-grid strong, .tcn-two-col strong { display: block; font-size: 13px; color: #172033; }
+        .tcn-grid strong, .tcn-two-col strong { display: block; font-size: 14px; color: #172033; }
         .tcn-two-col { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #d96f16; margin-bottom: 10px; }
-        .tcn-two-col p { margin: 5px 0 0; font-size: 12px; line-height: 1.35; }
+        .tcn-two-col p { margin: 5px 0 0; font-size: 13px; line-height: 1.35; }
         .tcn-cargo-head { grid-template-columns: 1fr 1fr; }
         .tcn-cargo-table th, .tcn-cargo-table td { text-align: center; }
+        .tcn-cargo-table td { font-size: 11px; }
         .tcn-signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; margin-top: 44px; }
         .tcn-signatures div { min-height: 92px; border-top: 1px solid #d96f16; padding-top: 8px; }
         .tcn-terms { margin-top: 18px; font-size: 10px; line-height: 1.35; }
@@ -13766,14 +13783,14 @@ function duplicateTcnDocumentHtml(record) {
   const description = record.natureOfGoods || record.goodsDescription || "";
   const logo = String(record.documentCompanyLogoUrl || "/assets/alt-express-logo.png").trim();
   const company = String(record.documentCompanyName || "ALT EXPRESS CARGO AND CLEARING LLC").trim();
-  const bookingParty = String(record.bookingParty || record.billTo1 || record.customer || "APOLLO FREIGHT SOLUTIONS FZCO").trim();
+  const bookingParty = "Apollo Freight Solutions";
   const date = record.bookingDate || today();
   const remark = record.shipmentRemarks || record.remarks || "";
   const secondLogo = "/assets/second-tcn-logo.bmp";
   const displayDate = date ? new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }).replace(/ /g, "-") : "";
   const cell = (label, value, extra = "") => `<div class="dw-cell"><b>${escapeHtml(label)}</b><span>${escapeHtml(value || "")}</span>${extra}</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.tcnNumber || record.jobNo || "Duplicate TCN")}</title><style>
-    @page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font-family:"Courier New",monospace;font-size:10px}.waybill{width:190mm;margin:10mm auto 0;border:1px solid #111}.top{padding:5px 7px;border-bottom:1px solid #111;font-weight:700}.top span{float:right;font-size:20px;letter-spacing:.04em}.top small{font-size:8px}.grid{display:grid;grid-template-columns:1fr 1fr}.dw-cell{min-height:28mm;padding:5px 7px;border-bottom:1px solid #111}.grid>.dw-cell:nth-child(odd){border-right:1px solid #111}.dw-cell b{display:block;text-decoration:underline;margin-bottom:8px}.dw-cell span{display:block;white-space:pre-line;font-size:12px;line-height:1.35}.logo-cell{text-align:center}.logo-cell img{display:block;width:48mm;height:22mm;object-fit:contain;margin:2px auto}.small{min-height:12mm}.cargo{border-bottom:1px solid #111}.cargo-title{text-align:center;font-weight:700;padding:4px;border-bottom:1px solid #111}.cargo-head,.cargo-row{display:grid;grid-template-columns:1.1fr 1.1fr 2fr;border-bottom:1px solid #111}.cargo-head b,.cargo-row span{padding:4px 7px;border-right:1px solid #111}.cargo-head b:last-child,.cargo-row span:last-child{border-right:0}.total{padding:5px 7px;border-bottom:1px solid #111}.total-split{display:grid;grid-template-columns:1fr 1fr;padding:0}.total-split span{padding:5px 7px}.total-split span+span{border-left:1px solid #111}.notes{min-height:42mm;padding:6px 7px;border-bottom:1px solid #111}.charges{display:grid;grid-template-columns:1fr 1fr;min-height:25mm;border-bottom:1px solid #111}.charges>div{padding:5px 7px}.charges>div:first-child{border-right:1px solid #111}.alt-ref-cell{display:flex;align-items:center;justify-content:space-between;gap:8px}.alt-ref-cell img{width:30mm;height:16mm;object-fit:contain}.footer{text-align:center;padding:4px}.print{position:fixed;right:12px;top:12px;padding:7px 12px;border:1px solid #555;background:#eee;font-family:Arial,sans-serif}@media print{.print{display:none}.waybill{width:190mm;margin:10mm auto 0}}
+    @page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font-family:Arial,sans-serif;font-size:10px}.waybill{width:190mm;margin:10mm auto 0;border:1px solid #111}.top{padding:5px 7px;border-bottom:1px solid #111;font-weight:700}.top span{float:right;font-size:20px;letter-spacing:.04em}.top small{font-size:8px}.grid{display:grid;grid-template-columns:1fr 1fr}.dw-cell{min-height:28mm;padding:5px 7px;border-bottom:1px solid #111}.grid>.dw-cell:nth-child(odd){border-right:1px solid #111}.dw-cell b{display:block;text-decoration:underline;margin-bottom:8px}.dw-cell span{display:block;white-space:pre-line;font-size:14px;line-height:1.35}.logo-cell{text-align:center}.logo-cell img{display:block;width:48mm;height:22mm;object-fit:contain;margin:2px auto}.small{min-height:12mm}.cargo{border-bottom:1px solid #111}.cargo-title{text-align:center;font-weight:700;padding:4px;border-bottom:1px solid #111}.cargo-head,.cargo-row{display:grid;grid-template-columns:1.1fr 1.1fr 2fr;border-bottom:1px solid #111}.cargo-head b,.cargo-row span{padding:4px 7px;border-right:1px solid #111}.cargo-head b:last-child,.cargo-row span:last-child{border-right:0}.total{padding:5px 7px;border-bottom:1px solid #111}.total-split{display:grid;grid-template-columns:1fr 1fr;padding:0}.total-split span{padding:5px 7px}.total-split span+span{border-left:1px solid #111}.notes{min-height:42mm;padding:6px 7px;border-bottom:1px solid #111}.charges{display:grid;grid-template-columns:1fr 1fr;min-height:25mm;border-bottom:1px solid #111}.charges>div{padding:5px 7px}.charges>div:first-child{border-right:1px solid #111}.alt-ref-cell{display:flex;align-items:center;justify-content:space-between;gap:8px}.alt-ref-cell img{width:30mm;height:16mm;object-fit:contain}.footer{text-align:center;padding:4px}.print{position:fixed;right:12px;top:12px;padding:7px 12px;border:1px solid #555;background:#eee;font-family:Arial,sans-serif}@media print{.print{display:none}.waybill{width:190mm;margin:10mm auto 0}}
   </style></head><body><button class="print" id="tcnPrintButton" type="button">Print</button><main class="waybill">
     <div class="top">TRUCK WAY BILL NUMBER <span>: ${escapeHtml(record.tcnNumber || record.jobNo || "")}</span><small><br>To be used for Single Consignment, Full Truck Load and Less Truck Load</small></div>
     <div class="grid">${cell("Shipper's Name and Address:", [record.shipperName || record.customer || "", record.shipperAddress || "", record.shipperCountry || ""].filter(Boolean).join("\n"))}${cell("TRUCK WAY BILL NUMBER", record.tcnNumber || record.airwayBillNo || record.jobNo || "")}${cell("Consignee Name and Address:", [record.consigneeName || record.customer || "", record.consigneeAddress || "", record.consigneeCountry || ""].filter(Boolean).join("\n"))}${cell("Truck AWB Issued By", "", '<div class="logo-cell"><img src="' + escapeHtml(logo) + '" alt="' + escapeHtml(company) + '"><span>' + escapeHtml(company) + '</span></div>')}${cell("Delivery Agent", bookingParty)}${cell("Booking Party", bookingParty)}${cell("Origin", [record.origin || record.pickupLocation || "", record.originCity || ""].filter(Boolean).join("     "))}${cell("Destination", [record.destination || record.deliveryLocation || "", record.destinationCity || ""].filter(Boolean).join("     "))}</div>
