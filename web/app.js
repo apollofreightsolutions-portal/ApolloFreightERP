@@ -23,6 +23,3 @@ import("./apollo-ai.js").catch((error) => {
 import("./connected-chat.js").catch((error) => {
   console.warn("Connected Chat is unavailable.", error);
 });
-import("./customer-compliance.js").catch((error) => {
-  console.warn("Customer Compliance is unavailable.", error);
-});

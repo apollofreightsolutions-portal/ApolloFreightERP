@@ -35,11 +35,6 @@ function normalizeModelName(value) {
   return raw;
 }
 function isAdmin(user) { return lower(user?.role) === "admin"; }
-function isSalesCrmUser(user) {
-  // Apollo policy: CRM is a sales-only module. Any non-admin account with CRM access
-  // is treated as Sales/CRM for AI isolation and cannot use AI to browse Operations.
-  return !isAdmin(user) && Boolean(user?.crm_portal_access);
-}
 function normalizeSectionAccess(value) {
   const raw = cleanText(value, 4000);
   if (!raw) return [];
@@ -53,20 +48,14 @@ function hasSection(user, names) {
   return names.some((name) => sections.includes(String(name).toLowerCase()));
 }
 function hasDetailedOperations(user) {
-  if (isAdmin(user)) return true;
-  // CRM/Sales users must not gain shipment visibility merely because Dashboard/Reports
-  // or broad ERP sections are enabled on their account.
-  if (isSalesCrmUser(user)) return false;
   return hasSection(user, ["Shipment / Airway", "Shipment Status", "POD / Delivery", "Manifest"]);
 }
 function hasOperationsSummary(user) {
-  // Dashboard/Reports alone are intentionally NOT sufficient for Apollo AI operations access.
-  return hasDetailedOperations(user);
+  return hasDetailedOperations(user) || hasSection(user, ["Dashboard", "Reports"]);
 }
 
 function branchScope(user, values, alias = "s") {
-  // Only Admin may use AI across every branch. For all other users, AI honors branch_access.
-  if (isAdmin(user)) return { sql: "1=1", label: "All branches" };
+  if (isAdmin(user) || lower(user?.branch_view_scope) === "all branches") return { sql: "1=1", label: "All branches" };
   const raw = cleanText(user?.branch_access, 300);
   const parts = raw.split(/[,;|]/).map((item) => item.trim()).filter(Boolean);
   const expanded = new Set();
@@ -84,10 +73,7 @@ function branchScope(user, values, alias = "s") {
 
 function shipmentVisibilityScope(user, values, alias = "s") {
   const branch = branchScope(user, values, alias);
-  // AI security boundary: only Admin may see other users' shipment rows.
-  // Non-admin AI requests are always limited to shipments created by that same user,
-  // regardless of can_view_all_entry or branch_view_scope settings used elsewhere in ERP.
-  if (isAdmin(user)) return branch;
+  if (isAdmin(user) || lower(user?.branch_view_scope) === "all branches" || Boolean(user?.can_view_all_entry)) return branch;
   values.push(cleanText(user?.user_name, 200));
   return {
     sql: `(${branch.sql}) and lower(coalesce(${alias}.created_by,''))=lower($${values.length})`,
@@ -96,10 +82,7 @@ function shipmentVisibilityScope(user, values, alias = "s") {
 }
 
 function crmScope(user, values, alias = "a") {
-  // AI security boundary: only Admin may query every CRM account.
-  // Non-admin users are always restricted to accounts explicitly assigned to them,
-  // even if crm_view_all_accounts is enabled for another CRM screen/report.
-  if (isAdmin(user)) return { sql: "1=1", label: "All CRM accounts" };
+  if (isAdmin(user) || Boolean(user?.crm_view_all_accounts)) return { sql: "1=1", label: "All CRM accounts" };
   values.push(cleanText(user?.user_name, 200));
   return { sql: `lower(${alias}.assigned_to)=lower($${values.length})`, label: "Assigned CRM accounts only" };
 }
