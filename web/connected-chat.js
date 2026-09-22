@@ -7,6 +7,7 @@ const chatState = {
 };
 
 function chatSession() { try { return JSON.parse(sessionStorage.getItem(CHAT_SESSION_KEY) || "null"); } catch { return null; } }
+function isCustomerChatSession() { return String(chatSession()?.portal || "").toLowerCase() === "customer"; }
 function chatToken() { return String(chatSession()?.token || "").trim(); }
 function chatEsc(value) { return String(value || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 function formatChatTime(value) {
@@ -187,7 +188,7 @@ async function pollActiveConversation() {
 
 async function refreshChat(force = false) {
   if (chatState.polling) return; const currentToken = chatToken(); const shell = document.querySelector("#appShell"); const loggedIn = Boolean(currentToken && shell && !shell.classList.contains("is-hidden")); const launcher = document.querySelector("#connectedChatLauncher");
-  if (!loggedIn) { chatState.token = ""; chatState.loaded = false; if (launcher) launcher.hidden = true; setChatOpen(false, false); return; }
+  if (!loggedIn || isCustomerChatSession()) { chatState.token = ""; chatState.loaded = false; if (launcher) launcher.hidden = true; setChatOpen(false, false); return; }
   if (!force && chatState.token === currentToken && chatState.loaded && !chatState.open) {
     try { const unread = await chatApi("/api/chat/unread", {}, 7000); chatState.unread = Number(unread.count || 0); updateBadge(); } catch {}
     return;

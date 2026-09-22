@@ -1842,7 +1842,7 @@ app.get("/", (_request, response) => {
   return response.json({
     ok: true,
     service: "apollofreighterp-server",
-    web: "https://apollo-freighterp.vercel.app",
+    web: "https://connected.apollo-freight.com",
     health: "/api/health"
   });
 });

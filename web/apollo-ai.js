@@ -4,6 +4,7 @@ const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(
 let aiState = { token: "", enabled: false, open: false, busy: false, meta: null, messages: [] };
 
 function session() { try { return JSON.parse(sessionStorage.getItem(AI_SESSION_KEY) || "null"); } catch { return null; } }
+function isCustomerSession() { return String(session()?.portal || "").toLowerCase() === "customer"; }
 function token() { return String(session()?.token || "").trim(); }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]); }
 function escapeAttribute(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }
@@ -132,7 +133,7 @@ async function handleAction(button) {
 
 async function refreshAccess(force = false) {
   ensureUi(); const currentToken = token(); const appShell = document.querySelector("#appShell"); const loggedIn = Boolean(currentToken && appShell && !appShell.classList.contains("is-hidden")); const launcher = document.querySelector("#apolloAiLauncher");
-  if (!loggedIn) { aiState.enabled = false; aiState.token = ""; aiState.meta = null; if (launcher) launcher.hidden = true; setOpen(false, false); return; }
+  if (!loggedIn || isCustomerSession()) { aiState.enabled = false; aiState.token = ""; aiState.meta = null; if (launcher) launcher.hidden = true; setOpen(false, false); return; }
   if (!force && currentToken === aiState.token && aiState.meta) return;
   aiState.token = currentToken;
   try {

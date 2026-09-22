@@ -39,7 +39,7 @@ const allowedOrigins = (process.env.ALLOWED_ORIGIN || "*")
 const configuredSecret = process.env.CUSTOMER_PORTAL_SECRET || process.env.SESSION_SECRET || process.env.API_SECRET || "";
 const isProduction = (process.env.NODE_ENV || "development").toLowerCase() === "production";
 // NOTE: this used to fall back to crypto.randomBytes(32) here, generating a brand new secret every
-// time the process started. On a serverless/multi-instance host (Vercel, Cloud Run, etc.) that meant
+// time the process started. On a serverless/multi-instance host such as Cloud Run, that meant
 // every cold start invalidated every token issued by every other instance - users got kicked out with
 // "Login required" mid-session, repeatedly, even though they never logged out. The fallback is now
 // resolved once at startup (see ensurePortalSecret in index.js), persisted to the database, and reused
