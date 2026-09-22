@@ -8804,27 +8804,21 @@ function fetchAwbAndRefillForm() {
     return;
   }
 
-  openShipmentFromAirwayBill(match, typedValue, dialogValue("branch"), dialogValue("shipmentService"));
+  openShipmentFromAirwayBill(match, typedValue, dialogValue("branch"));
   notifySuccess("Data fetched", `Form filled from Airway Bill ${typedValue}.`);
 }
 
-function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "") {
+function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "") {
   const typedValue = String(airwayBillNo || sourceRecord.airwayBillNo || sourceRecord.jobNo || "").trim();
   const prefillRecord = { ...sourceRecord };
   // The source is only used as a template.  The saved record must be a new shipment,
   // while retaining the fetched AWB/Bill of Lading as its reference.
   prefillRecord.entryMode = "shipment";
+  prefillRecord.jobNo = nextShipmentNumber();
   prefillRecord.airwayBillNo = typedValue;
   prefillRecord.bookingDate = today();
   prefillRecord.shipmentDate = today();
   prefillRecord.branch = normalizeBranchName(branch || defaultUserBranch());
-  const availableServices = shipmentServiceOptions(prefillRecord.shipmentDirection || "Export");
-  const requestedService = String(service || prefillRecord.shipmentService || "").trim();
-  const selectedService = availableServices.includes(requestedService)
-    ? requestedService
-    : (availableServices.includes("LE") ? "LE" : availableServices[0] || "");
-  prefillRecord.shipmentService = selectedService;
-  prefillRecord.jobNo = nextShipmentNumber(prefillRecord.branch, selectedService);
 
   editing = null;
   dialogState = null;
