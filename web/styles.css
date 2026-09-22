@@ -2814,6 +2814,16 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
 .dialog-header-save:hover {
   filter: brightness(.95);
 }
+.dialog-header-verified {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.dialog-header-verified.is-hidden {
+  display: none;
+}
 .dialog-header-save:disabled,
 .dialog-header-save.is-hidden {
   display: none;

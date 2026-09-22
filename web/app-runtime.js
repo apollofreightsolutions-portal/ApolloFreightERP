@@ -114,6 +114,7 @@ const dialogBody = document.querySelector("#dialogBody");
 const dialogSecondary = document.querySelector("#dialogSecondary");
 const dialogSave = document.querySelector("#dialogSave");
 const dialogHeaderSave = document.querySelector("#dialogHeaderSave");
+const dialogHeaderVerified = document.querySelector("#dialogHeaderVerified");
 const dialogMinimize = document.querySelector("#recordDialogMinimize");
 const dialogMaximize = document.querySelector("#recordDialogMaximize");
 const dialogClose = document.querySelector("#recordDialogClose");
@@ -1826,6 +1827,7 @@ async function boot() {
     dialogHeaderSave.disabled = dialogSave.disabled;
     const isShipmentDialog = /shipment/i.test(`${dialogType.textContent} ${dialogTitle.textContent}`);
     dialogHeaderSave.classList.toggle("is-hidden", dialogSave.classList.contains("is-hidden") || !isShipmentDialog);
+    dialogHeaderVerified?.classList.toggle("is-hidden", !isShipmentDialog);
   };
   dialogHeaderSave?.addEventListener("click", saveDialogRecord);
   syncDialogHeaderSave();
