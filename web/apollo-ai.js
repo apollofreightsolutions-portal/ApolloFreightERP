@@ -4,7 +4,7 @@ const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(
 let aiState = { token: "", enabled: false, open: false, busy: false, meta: null, messages: [] };
 
 function session() { try { return JSON.parse(sessionStorage.getItem(AI_SESSION_KEY) || "null"); } catch { return null; } }
-function isCustomerSession() { return String(session()?.portal || "").toLowerCase() === "customer"; }
+function isCustomerSession() { return String(session()?.portal || document.body.dataset.apolloPortal || "").toLowerCase() === "customer"; }
 function token() { return String(session()?.token || "").trim(); }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]); }
 function escapeAttribute(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }

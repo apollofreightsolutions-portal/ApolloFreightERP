@@ -7,7 +7,7 @@ const chatState = {
 };
 
 function chatSession() { try { return JSON.parse(sessionStorage.getItem(CHAT_SESSION_KEY) || "null"); } catch { return null; } }
-function isCustomerChatSession() { return String(chatSession()?.portal || "").toLowerCase() === "customer"; }
+function isCustomerChatSession() { return String(chatSession()?.portal || document.body.dataset.apolloPortal || "").toLowerCase() === "customer"; }
 function chatToken() { return String(chatSession()?.token || "").trim(); }
 function chatEsc(value) { return String(value || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 function formatChatTime(value) {

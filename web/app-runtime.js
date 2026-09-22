@@ -2469,6 +2469,7 @@ function showLogin() {
   customerPortalData = null;
   loginScreen.classList.remove("is-hidden");
   appShell.classList.add("is-hidden");
+  delete document.body.dataset.apolloPortal;
   resetMessage.textContent = "";
 }
 
@@ -2477,6 +2478,7 @@ function showApp() {
   liveShipmentDataReady = false;
   loginScreen.classList.add("is-hidden");
   appShell.classList.remove("is-hidden");
+  document.body.dataset.apolloPortal = isCustomerSession() ? "customer" : isHrSession() ? "employee" : isCrmSession() ? "crm" : "company";
   appShell.classList.toggle("hr-portal-theme", isHrSession());
   appShell.classList.toggle("crm-portal-theme", isCrmSession());
   renderModuleNav();
