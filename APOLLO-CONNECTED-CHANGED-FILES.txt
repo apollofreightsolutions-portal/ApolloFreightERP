@@ -1,0 +1,22 @@
+Changed / added versus IT live source 10-ApolloFreightERP-main (10).zip
+
+UPDATED
+- Dockerfile
+- server/src/apollo-ai.js
+- server/src/index.js
+- web/app-runtime.js
+- web/app.js
+
+ADDED
+- server/src/microsoft-graph-mail.js
+- server/src/customer-compliance.js
+- server/data/kuwait-hs-master-2025.json
+- server/sql/042_customer_compliance.sql
+- web/customer-compliance.js
+- APOLLO-CONNECTED-FINAL-MERGE-REPORT.txt
+- APOLLO-CONNECTED-CHANGED-FILES.txt
+
+PRESERVED FROM IT LIVE SOURCE
+- server/sql/041_awb_branch_sequence.sql
+- Connected Chat + server/sql/040_connected_chat.sql
+- CRM, HR, Maintenance, Billing, tracking, AWB and all other existing live modules/files.
