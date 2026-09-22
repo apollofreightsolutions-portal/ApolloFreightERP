@@ -8791,11 +8791,17 @@ function fetchAwbAndRefillForm() {
     return;
   }
 
-  openShipmentFromAirwayBill(match, typedValue, dialogValue("branch"), dialogValue("shipmentService"));
+  openShipmentFromAirwayBill(
+    match,
+    typedValue,
+    dialogValue("branch"),
+    dialogValue("shipmentService"),
+    dialogValue("shipmentDirection")
+  );
   notifySuccess("Data fetched", `Form filled from Airway Bill ${typedValue}.`);
 }
 
-function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "") {
+function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "", direction = "") {
   const typedValue = String(airwayBillNo || sourceRecord.airwayBillNo || sourceRecord.jobNo || "").trim();
   const prefillRecord = { ...sourceRecord };
   // The source is only used as a template.  The saved record must be a new shipment,
@@ -8805,6 +8811,9 @@ function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", ser
   prefillRecord.bookingDate = today();
   prefillRecord.shipmentDate = today();
   prefillRecord.branch = normalizeBranchName(branch || defaultUserBranch());
+  const availableDirections = shipmentDirectionOptions();
+  const requestedDirection = String(direction || prefillRecord.shipmentDirection || "Export").trim();
+  prefillRecord.shipmentDirection = availableDirections.includes(requestedDirection) ? requestedDirection : "Export";
   const availableServices = shipmentServiceOptions(prefillRecord.shipmentDirection || "Export");
   const requestedService = String(service || prefillRecord.shipmentService || "").trim();
   const selectedService = availableServices.includes(requestedService)
