@@ -43,32 +43,26 @@ function displayCode(value) { return cleanText(value, 40); }
 function tokenize(value) {
   return [...new Set(normalizeText(value).split(" ").filter((token) => token.length > 1 && !STOP_WORDS.has(token)))];
 }
-function ngrams(value, size = 3) {
-  const text = normalizeText(value).replace(/\s+/g, " ");
-  if (text.length < size) return text ? new Set([text]) : new Set();
-  const set = new Set();
-  for (let i = 0; i <= text.length - size; i += 1) set.add(text.slice(i, i + size));
-  return set;
-}
-function dice(a, b) {
-  if (!a.size || !b.size) return 0;
-  let intersect = 0;
-  for (const value of a) if (b.has(value)) intersect += 1;
-  return (2 * intersect) / (a.size + b.size);
-}
 function descriptionSimilarity(queryText, candidate) {
   const queryTokens = tokenize(queryText);
   if (!queryTokens.length) return 0;
-  const candidateTokens = candidate._tokens;
-  let common = 0;
-  for (const token of queryTokens) if (candidateTokens.has(token)) common += 1;
-  const recall = common / queryTokens.length;
-  const precision = common / Math.max(1, Math.min(candidateTokens.size, queryTokens.length + 5));
-  const tokenScore = (0.78 * recall) + (0.22 * precision);
   const queryNorm = normalizeText(queryText);
-  const phraseBoost = queryNorm.length >= 5 && candidate._norm.includes(queryNorm) ? 0.16 : 0;
-  const trigram = dice(ngrams(queryNorm), candidate._grams);
-  return Math.max(0, Math.min(1, Math.max(tokenScore + phraseBoost, trigram * 0.82)));
+  const candidateNorm = String(candidate?._norm || "");
+  if (!candidateNorm) return 0;
+
+  // Memory-safe matching: do not build a Set of tokens/trigrams for every one of the
+  // 13k+ Kuwait HS rows. That previously consumed hundreds of MB at process start.
+  const paddedCandidate = ` ${candidateNorm} `;
+  let common = 0;
+  for (const token of queryTokens) {
+    if (paddedCandidate.includes(` ${token} `)) common += 1;
+  }
+  const recall = common / queryTokens.length;
+  const candidateTokenCount = candidateNorm ? (candidateNorm.match(/ /g)?.length || 0) + 1 : 0;
+  const precision = common / Math.max(1, Math.min(candidateTokenCount, queryTokens.length + 5));
+  const tokenScore = (0.80 * recall) + (0.20 * precision);
+  const phraseBoost = queryNorm.length >= 5 && candidateNorm.includes(queryNorm) ? 0.16 : 0;
+  return Math.max(0, Math.min(1, tokenScore + phraseBoost));
 }
 function commonPrefixRatio(a, b) {
   const aa = normalizeCode(a); const bb = normalizeCode(b);
@@ -91,9 +85,7 @@ function loadMaster() {
     return {
       ...row,
       _code: normalizeCode(row.hsCode),
-      _norm: normalizeText(searchable),
-      _tokens: new Set(tokenize(searchable)),
-      _grams: ngrams(searchable)
+      _norm: normalizeText(searchable)
     };
   });
   cachedIndex = new Map(cachedMaster.map((row) => [row._code, row]));
@@ -374,7 +366,8 @@ async function loadAnalysis(query, session, analysisId) {
 }
 
 function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
-  loadMaster();
+  // Keep the large Kuwait HS master lazy-loaded. The service can start without paying
+  // the memory/CPU cost; the master is loaded only when the compliance endpoint is used.
   const router = express.Router();
   router.use(requireCustomerPortalAuth);
 
