@@ -8250,7 +8250,7 @@ function shipmentDialogBody(mode = "shipment", record = null) {
       ${input("pickupTime", "Pickup Time", fieldValue("pickupTime"), false, "time")}
     `, true, sectionOpen)}
     ${formSection("Delivery Information", `
-      ${input("deliveryLocation", "Delivery Location", fieldValue("deliveryLocation"))}
+      ${selectFrom("deliveryLocation", "Delivery Location / Customer", state.customers.map((row) => row.name), fieldValue("deliveryLocation"))}
       ${textarea("deliveryAddress", "Delivery Address", fieldValue("deliveryAddress"), false, 3)}
       ${input("deliveryContactPerson", "Delivery Contact Person", fieldValue("deliveryContactPerson"))}
       ${input("deliveryMobile", "Delivery Mobile", fieldValue("deliveryMobile"))}
@@ -8963,10 +8963,6 @@ function bindShipmentCustomerAutofill() {
     setDialogValue("customerMobile", customer.mobile);
     setDialogValue("customerContactPerson", customerContactValue(customer));
     setDialogValue("customerAddress", customer.fullAddress || customer.locationOrLane);
-    setDialogValue("deliveryLocation", customer.locationOrLane || customer.fullAddress);
-    setDialogValue("deliveryAddress", customer.fullAddress || customer.locationOrLane);
-    setDialogValue("deliveryContactPerson", customerContactValue(customer));
-    setDialogValue("deliveryMobile", customer.mobile);
     setDialogValue("billTo1", customer.name);
     setDialogValue("billingParty1Address", customer.fullAddress || customer.locationOrLane);
     setDialogValue("billingParty1ContactPerson", customerContactValue(customer));
