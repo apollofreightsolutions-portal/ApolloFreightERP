@@ -823,6 +823,7 @@ const resources = {
   },
   "shipment-status-history": {
     table: "shipment_status_history",
+    key: "id",
     order: "updated_at desc",
     metaFields: [],
     fields: [
@@ -1280,7 +1281,11 @@ const resources = {
 function field(column, names = [column], required = false) {
   return { column, names, required };
 }
-
+function normalizeStatusHistoryTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00.000Z` : raw;
+}
 function partyResource(table) {
   return {
     table,
@@ -1461,7 +1466,11 @@ function crmSessionFlags(row) {
 
 async function prepareRecordForConfig(config, body) {
   const prepared = { ...(body || {}) };
-
+  if (config.table === "shipment_status_history") {
+    const selectedDate = prepared.updatedAt ?? prepared.updated_at ?? prepared.date;
+    const normalizedDate = normalizeStatusHistoryTimestamp(selectedDate);
+    if (normalizedDate) prepared.updated_at = normalizedDate;
+  }
   if (config.table === "customers") {
     // Status is the authoritative account state. Older records can retain stale
     // blocked_branches after an unblock because empty strings were previously omitted
@@ -2913,7 +2922,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
       const airwayBillNo = String(shipment.rows[0]?.airway_bill_no || requestedAirwayBillNo || "").trim();
       let relatedRows = shipment.rows;
       if (airwayBillNo) {
-        const updated = await query("update shipments set status='Delivered',pod_status='Uploaded',updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
+        const updated = await query("update shipments set status=case when lower(trim(status))='delivered' then 'Delivered' else status end, pod_status=case when lower(trim(status))='delivered' then 'Uploaded' else pod_status end, updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
         relatedRows = updated.rows;
       }
       return response.status(201).json({ ok: true, row: saved.rows[0], airwayBillNo, relatedRows, relatedDocuments: [saved.rows[0]] });
@@ -2951,7 +2960,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
     if (airwayBillNo) {
       const grouped = await withDatabaseTransaction(async (client) => {
         const updated = await client.query(
-          "update shipments set status = 'Delivered', pod_status = 'Uploaded', updated_at = now() where lower(trim(airway_bill_no)) = lower(trim($1)) returning *",
+          "update shipments set status = case when lower(trim(status)) = 'delivered' then 'Delivered' else status end, pod_status = case when lower(trim(status)) = 'delivered' then 'Uploaded' else pod_status end, updated_at = now() where lower(trim(airway_bill_no)) = lower(trim($1)) returning *",
           [airwayBillNo]
         );
         for (const related of updated.rows) {
@@ -4054,7 +4063,7 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
     const airwayBillNo = String(request.body?.airwayBillNo ?? request.body?.airway_bill_no ?? "").trim();
     const newStatus = String(request.body?.status || "").trim();
     const updatedBy = String(request.body?.updatedBy || request.appSession?.userName || "system").trim();
-    const updatedAt = String(request.body?.updatedAt || new Date().toISOString()).trim();
+    const updatedAt = normalizeStatusHistoryTimestamp(request.body?.updatedAt) || new Date().toISOString();
     const notes = String(request.body?.notes || "").trim();
     if (!airwayBillNo) return response.status(400).json({ ok: false, error: "An Airway Bill number is required." });
     if (!newStatus) return response.status(400).json({ ok: false, error: "A shipment status is required." });

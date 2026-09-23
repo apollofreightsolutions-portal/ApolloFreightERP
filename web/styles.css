@@ -2887,7 +2887,70 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
 .dialog-body.single-column {
   grid-template-columns: 1fr;
 }
-
+.record-dialog:has(.pod-shipment-fields) {
+  width: min(1500px, calc(100vw - 16px));
+}
+.dialog-body:has(.pod-shipment-fields) {
+  display: block;
+  max-height: calc(100vh - 170px);
+  overflow: auto;
+}
+.pod-shipment-selector {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbff;
+}
+.pod-shipment-selector label {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(180px, 420px);
+  align-items: center;
+  gap: 10px;
+  max-width: 680px;
+}
+.pod-shipment-selector select {
+  min-height: 34px;
+  height: 34px;
+  max-height: 34px;
+}
+.pod-shipment-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.pod-shipment-fields > .pod-cargo-summary,
+.pod-shipment-fields > .pod-split-history,
+.pod-shipment-fields > .empty-state,
+.pod-shipment-fields > .action-row {
+  grid-column: 1 / -1;
+}
+.pod-shipment-fields > label,
+.pod-shipment-fields > [data-pod-piece-field] {
+  min-width: 0;
+}
+.pod-shipment-fields > [data-pod-piece-field] > label {
+  display: grid;
+}
+.pod-shipment-fields > [data-pod-piece-field][hidden] {
+  display: none;
+}
+.pod-shipment-fields > .action-row {
+  justify-content: flex-start;
+  padding-top: 6px;
+}
+@media (max-width: 900px) {
+  .pod-shipment-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .pod-shipment-selector label,
+  .pod-shipment-fields {
+    grid-template-columns: 1fr;
+  }
+}
 /* Keep the User Management access controls together and easy to scan. */
 .user-account-access-grid {
   grid-column: 1 / -1;

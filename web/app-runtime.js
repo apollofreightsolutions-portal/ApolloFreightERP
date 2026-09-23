@@ -7560,8 +7560,8 @@ function openPodDialog(jobNo = "") {
     title: jobNo ? `POD / Delivery - ${jobNo}` : "Delivery Update",
     typeLabel: "POD",
     body: `
-      ${selectFrom("jobNo", "Shipment No", shipmentOptions(), shipmentItem.jobNo || "")}
-      <div data-pod-shipment-fields>${podShipmentFields(shipmentItem)}</div>
+      <div class="pod-shipment-selector">${selectFrom("jobNo", "Shipment No", shipmentOptions(), shipmentItem.jobNo || "")}</div>
+      <div class="pod-shipment-fields" data-pod-shipment-fields>${podShipmentFields(shipmentItem)}</div>
     `,
     saveLabel: "Save Delivery",
     async onSave() {
@@ -7572,7 +7572,8 @@ function openPodDialog(jobNo = "") {
       recordDialog.close();
       render();
     },
-    afterOpen: bindPodShipmentDialog
+    afterOpen: bindPodShipmentDialog,
+    singleColumn: true
   });
 }
 
@@ -7587,12 +7588,13 @@ function podShipmentFields(shipmentItem = {}) {
   return `
     ${podCargoSummary(shipmentItem)}
     ${podSplitHistoryMarkup(shipmentItem, splits, totalPieces)}
+    ${strictSelect("deliveryStatus", "Delivery Status", ["Partially Delivered", "Delivered"], isFullyDelivered ? "Delivered" : "Partially Delivered")}
     ${isFullyDelivered
       ? `<p class="empty-state">All ${totalPieces} piece(s) have been delivered across ${splits.length} delivery${splits.length === 1 ? "" : "ies"}. To correct a mistake, edit the delivery details directly in the list above (via your database/admin tools) - this form can no longer add pieces since none remain.</p>`
       : totalPieces
         ? `<p class="empty-state">Recording delivery ${splits.length + 1}. ${remainingPieces} of ${totalPieces} piece(s) still need to be delivered.</p>`
         : `<p class="empty-state">No total piece count is set on this shipment, so this delivery will be treated as the complete delivery.</p>`}
-    ${totalPieces && !isFullyDelivered ? input("splitPieces", `Pieces Delivered In This Trip (max ${remainingPieces})`, remainingPieces, false, "number") : ""}
+    ${totalPieces && !isFullyDelivered ? `<div data-pod-piece-field>${input("splitPieces", `Pieces Delivered In This Trip (max ${remainingPieces})`, remainingPieces, false, "number")}</div>` : ""}
     ${input("deliveryNoteNo", "Delivery Note No", nextDeliveryNoteNumber())}
     ${input("ginNo", "GIN Number", "")}
     ${input("customerReference", "Customer Reference", shipmentItem.customerReference || "")}
@@ -7609,10 +7611,11 @@ function podShipmentFields(shipmentItem = {}) {
     ${input("receiverPhone", "Receiver Telephone Number", savedPodValue("receiverPhone"))}
     ${input("receiverSignature", "Receiver Signature", savedPodValue("receiverSignature"))}
     ${input("deliveryDatetime", "Delivery Date & Time", savedPodValue("deliveryDatetime", localDateTimeInput()), false, "datetime-local")}
-    <label>Signed POD File (upload after delivery)<input name="podFileUpload" type="file" accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf" /></label>
-    <p class="empty-state">${totalPieces ? "Saving records this delivery as a split. The shipment becomes Delivered automatically once every piece is accounted for across all deliveries." : "Saving marks this shipment as Delivered."} The signed file is stored in Documents as its own POD attachment.</p>
+    <label>Signed POD File (required for final close)<input name="podFileUpload" type="file" accept=".pdf,.jpg,.jpeg,.png,image/*,application/pdf" /></label>
+    <p class="empty-state">Save the delivery first. When the signed POD is ready, use the final button to upload it and close this shipment as POD Uploaded.</p>
     <div class="action-row">
       <button type="button" class="secondary-button" data-dialog-action="save-and-generate-pod">Save &amp; Generate POD</button>
+      <button type="button" class="primary-button" data-dialog-action="finalize-signed-pod">Mark Signed POD Uploaded &amp; Close</button>
     </div>
   `;
 }
@@ -7665,14 +7668,26 @@ function bindPodShipmentDialog() {
   const shipmentField = dialogBody.querySelector("[name='jobNo']");
   const details = dialogBody.querySelector("[data-pod-shipment-fields]");
   if (!shipmentField || !details) return;
+  const bindDeliveryStatus = () => {
+    const statusField = details.querySelector("[name='deliveryStatus']");
+    const pieceField = details.querySelector("[data-pod-piece-field]");
+    if (!statusField || !pieceField) return;
+    const syncPieceField = () => {
+      pieceField.hidden = String(statusField.value || "").toLowerCase() !== "partially delivered";
+    };
+    statusField.addEventListener("change", syncPieceField);
+    syncPieceField();
+  };
   const refreshShipmentDetails = () => {
     const shipmentItem = state.shipments.find((row) => row.jobNo === String(shipmentField.value || "").trim());
     if (!shipmentItem) return;
     details.innerHTML = podShipmentFields(shipmentItem);
     dialogTitle.textContent = `POD / Delivery - ${shipmentItem.jobNo}`;
+    bindDeliveryStatus();
   };
   shipmentField.addEventListener("change", refreshShipmentDetails);
   shipmentField.addEventListener("input", refreshShipmentDetails);
+  bindDeliveryStatus();
   // Delegated (not bound to the button directly) since podShipmentFields() - and the button inside
   // it - gets fully replaced by refreshShipmentDetails() above whenever the shipment selection
   // changes. Saves whatever is currently typed in the form first, then generates the POD from
@@ -7723,14 +7738,50 @@ function bindPodShipmentDialog() {
       return;
     }
     const trigger = event.target.closest("[data-dialog-action='save-and-generate-pod']");
-    if (!trigger) return;
+    const finalizeTrigger = event.target.closest("[data-dialog-action='finalize-signed-pod']");
+    if (!trigger && !finalizeTrigger) return;
     const data = collectFormValues(dialogBody.closest("form"));
-    const savedSplit = await savePodDelivery(data);
+    if (finalizeTrigger) {
+      const file = data.podFileUpload;
+      if (String(data.deliveryStatus || "").toLowerCase() !== "delivered") {
+        notifyDenied("Complete delivery first", "Select Delivered before closing the shipment as POD Uploaded.");
+        return;
+      }
+      if (!file || typeof file !== "object" || !file.name) {
+        notifyDenied("Signed POD required", "Choose the signed POD file before closing this shipment as POD Uploaded.");
+        return;
+      }
+    }
+    const savedSplit = await savePodDelivery(data, { finalize: Boolean(finalizeTrigger) });
     if (!savedSplit) return;
+    if (finalizeTrigger) {
+      const file = data.podFileUpload;
+      try {
+        const documentItem = await uploadPodDocument(String(data.jobNo || "").trim(), file, savedSplit.splitNo);
+        const shipmentItem = state.shipments.find((row) => row.jobNo === String(data.jobNo || "").trim());
+        if (shipmentItem) {
+          const splits = parsePodSplits(shipmentItem.podSplitsJson);
+          const split = splits.find((item) => Number(item.splitNo) === Number(savedSplit.splitNo));
+          if (split) {
+            split.documentNo = documentItem.documentNo;
+            split.fileName = documentItem.fileName;
+          }
+          shipmentItem.podSplitsJson = JSON.stringify(splits);
+          shipmentItem.podStatus = "Uploaded";
+          shipmentItem.status = "Delivered";
+          shipmentItem.notes = shipmentMetaNotes(shipmentItem);
+          await persistRecord("shipment", shipmentItem);
+        }
+      } catch (error) {
+        notifyDenied("POD not uploaded", error.message || "The signed POD could not be uploaded.");
+        return;
+      }
+      notifySuccess("POD uploaded", `${data.jobNo} is now closed as POD Uploaded.`);
+    }
     saveState();
     const jobNo = String(data.jobNo || "").trim();
     const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
-    openPrintableDocument(podSplitDocumentHtml(shipmentItem, savedSplit));
+    if (trigger) openPrintableDocument(podSplitDocumentHtml(shipmentItem, savedSplit));
     recordDialog.close();
     render();
   });
@@ -7770,7 +7821,7 @@ async function uploadPodDocument(jobNo, file, splitNo = "") {
   return documentItem;
 }
 
-async function savePodDelivery(data) {
+async function savePodDelivery(data, options = {}) {
   const jobNo = String(data.jobNo || "").trim();
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
@@ -7784,10 +7835,11 @@ async function savePodDelivery(data) {
   const remainingPieces = totalPieces ? Math.max(0, totalPieces - deliveredSoFar) : 0;
   // If the shipment has no piece count recorded, treat this as one single, complete delivery
   // (the pre-split behavior) rather than forcing a piece count the user has no way to know.
-  const splitPieces = totalPieces ? Number(data.splitPieces || 0) : (deliveredSoFar ? 0 : 1);
+  const isMarkedDelivered = String(data.deliveryStatus || "Partially Delivered").trim().toLowerCase() === "delivered";
+  const splitPieces = totalPieces ? (isMarkedDelivered ? remainingPieces : Number(data.splitPieces || 0)) : (deliveredSoFar ? 0 : 1);
 
   if (totalPieces) {
-    if (!splitPieces || splitPieces <= 0) {
+    if (!isMarkedDelivered && (!splitPieces || splitPieces <= 0)) {
       notifyDenied("Enter pieces delivered", "Enter how many pieces were delivered in this trip.");
       return false;
     }
@@ -7797,8 +7849,9 @@ async function savePodDelivery(data) {
     }
   }
 
-  const uploadedFile = data.podFileUpload;
-  const hasPodFile = uploadedFile && typeof uploadedFile === "object" && uploadedFile.name;
+  // The selected file is uploaded only after the delivery save succeeds and the final-close action
+  // completes. Do not mark POD Uploaded merely because a file was selected in the form.
+  const hasPodFile = false;
   const splitNo = existingSplits.length + 1;
   const newSplit = {
     splitNo,
@@ -7823,7 +7876,7 @@ async function savePodDelivery(data) {
   };
 
   const newDeliveredTotal = deliveredSoFar + newSplit.pieces;
-  const isFullyDelivered = !totalPieces || newDeliveredTotal >= totalPieces;
+  const isFullyDelivered = isMarkedDelivered || !totalPieces || newDeliveredTotal >= totalPieces;
   const updatedSplits = [...existingSplits, newSplit];
   const previousPodStatus = shipmentItem.podStatus || "Pending";
   const updatedShipment = {
@@ -7868,18 +7921,7 @@ async function savePodDelivery(data) {
   const podChangeSummary = summarizeChanges(shipmentItem, updatedShipment);
   Object.assign(shipmentItem, updatedShipment);
 
-  if (hasPodFile) {
-    try {
-      const documentItem = await uploadPodDocument(jobNo, uploadedFile, totalPieces ? splitNo : "");
-      newSplit.documentNo = documentItem.documentNo;
-      newSplit.fileName = documentItem.fileName;
-      shipmentItem.podSplitsJson = JSON.stringify(updatedSplits);
-      await persistRecord("shipment", shipmentItem);
-    } catch (error) {
-      notifyDenied("Delivery saved", `Delivery ${splitNo} for ${jobNo} was saved, but the POD file was not uploaded: ${error.message}`);
-      return newSplit;
-    }
-  }
+  // Signed POD upload is intentionally handled only by the explicit final-close action.
   addHistory(
     isFullyDelivered ? "Saved POD / Delivery (complete)" : "Saved POD / Delivery (partial)",
     jobNo,
