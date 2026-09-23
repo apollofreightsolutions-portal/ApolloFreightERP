@@ -5629,14 +5629,15 @@ function dropdownOptions(key, defaults = []) {
     });
 }
 
-function selectEditable(name, label, optionKey, defaults = [], selected = "") {
-  return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" list="${escapeHtml(optionKey)}Options" value="${escapeHtml(optionValue(selected))}" data-dropdown-key="${escapeHtml(optionKey)}" data-dropdown-input /><datalist id="${escapeHtml(optionKey)}Options">${dropdownOptions(optionKey, defaults).map((option) => `<option value="${escapeHtml(optionValue(option))}" label="${escapeHtml(optionLabel(option))}"></option>`).join("")}</datalist></label>`;
+function selectEditable(name, label, optionKey, defaults = [], selected = "", includeRemembered = true) {
+  const options = includeRemembered ? dropdownOptions(optionKey, defaults) : defaults;
+  return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" list="${escapeHtml(optionKey)}Options" value="${escapeHtml(optionValue(selected))}" data-dropdown-key="${escapeHtml(optionKey)}" data-dropdown-input /><datalist id="${escapeHtml(optionKey)}Options">${options.map((option) => `<option value="${escapeHtml(optionValue(option))}" label="${escapeHtml(optionLabel(option))}"></option>`).join("")}</datalist></label>`;
 }
-
 function rememberDropdownOptions(data) {
   let changed = false;
   Object.entries(data).forEach(([name, value]) => {
     const optionKey = dropdownKeyForField(name);
+    if (["origin", "destination"].includes(optionKey)) return;
     const text = String(value || "").trim();
     if (!optionKey || !text) return;
     const current = dropdownOptions(optionKey);
@@ -8200,8 +8201,8 @@ function shipmentDialogBody(mode = "shipment", record = null) {
       ${strictSelect("shipmentVia", "Shipment Via", ["Air", "Sea", "Land", "Warehouse"], fieldValue("shipmentVia", shipmentViaValue(record) || "Land"))}
       ${strictSelect("shipmentDirection", "Shipment Type", shipmentDirectionOptions(), fieldValue("shipmentDirection", "Export"))}
       ${strictSelect("shipmentService", "Service Type", shipmentServiceOptions(fieldValue("shipmentDirection", "Export")), fieldValue("shipmentService", "LE"))}
-      ${selectEditable("origin", "Origin", "origin", ["Kuwait City"], fieldValue("origin"))}
-      ${selectEditable("destination", "Destination", "destination", ["Riyadh"], fieldValue("destination"))}
+      ${selectEditable("origin", "Origin", "origin", [], loaded ? fieldValue("origin") : "", false)}
+      ${selectEditable("destination", "Destination", "destination", [], loaded ? fieldValue("destination") : "", false)}
       ${input("customerReference", "Customer Reference", fieldValue("customerReference"))}
       ${textarea("shipmentRemarks", "Remarks", fieldValue("shipmentRemarks"), false, 2)}
       ${strictSelect("branch", "Branch", branchOptions(), normalizeBranchName(fieldValue("branch", defaultUserBranch())))}
