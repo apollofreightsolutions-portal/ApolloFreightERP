@@ -7336,20 +7336,6 @@ async function saveDialogRecordInner() {
     updatedRecord[key] = coerceValue(updatedRecord[key], data[key]);
   });
   if (editing.type === "shipment") {
-    const oldJobNo = String(editing.record.jobNo || "").trim();
-    const newJobNo = String(updatedRecord.jobNo || "").trim();
-    if (newJobNo.toLowerCase() !== oldJobNo.toLowerCase()) {
-      if (!editing.allowJobNumberChange || !isAdminSession()) {
-        notifyDenied("Job Number locked", "Click Change Job Number first. Only Admin can correct a Job Number.");
-        return;
-      }
-      if (!window.confirm(`Change Job Number from ${oldJobNo} to ${newJobNo}?\n\nAll linked shipment references will be updated.`)) return;
-      const reason = String(window.prompt("Reason for this correction (optional):", "") || "").trim();
-      const savedJob = await saveAdminJobNumberChange(oldJobNo, newJobNo, reason);
-      Object.assign(updatedRecord, savedJob);
-      editing.record = savedJob;
-      editing.id = newJobNo;
-    }
     if (!String(updatedRecord.billTo1 || "").trim() && !String(updatedRecord.billTo2 || "").trim()) {
       notifyDenied("Bill To required", "Enter at least one Bill To value.");
       return;
@@ -7927,12 +7913,14 @@ async function savePodDelivery(data, options = {}) {
     jobNo,
     totalPieces ? `Delivery ${splitNo}: ${newSplit.pieces} of ${totalPieces} pcs -> ${newSplit.deliveryLocation || "-"}. ${podChangeSummary}` : podChangeSummary
   );
-  notifySuccess(
-    isFullyDelivered ? "Delivery complete" : "Partial delivery saved",
-    totalPieces
-      ? `${jobNo}: ${newDeliveredTotal} of ${totalPieces} piece(s) delivered${hasPodFile ? " and the POD file was attached" : ""}.`
-      : `${jobNo} is marked Delivered${hasPodFile ? " and the POD file was attached" : ""}.`
-  );
+  if (!options.finalize) {
+    notifySuccess(
+      isFullyDelivered ? "Delivery complete" : "Partial delivery saved",
+      totalPieces
+        ? `${jobNo}: ${newDeliveredTotal} of ${totalPieces} piece(s) delivered${hasPodFile ? " and the POD file was attached" : ""}.`
+        : `${jobNo} is marked Delivered${hasPodFile ? " and the POD file was attached" : ""}.`
+    );
+  }
   return newSplit;
 }
 
@@ -8356,7 +8344,6 @@ function shipmentDialogBody(mode = "shipment", record = null) {
       <button type="button" class="secondary-button" data-dialog-action="view-tcn" ${tcnAvailable ? "" : "disabled title=\"Save the shipment before viewing a TCN\""}>View TCN</button>
       <button type="button" class="secondary-button" data-dialog-action="generate-pod">Delivery Note / POD</button>
       <button type="button" class="secondary-button" data-dialog-action="duplicate-tcn" ${tcnAvailable ? "" : "disabled title=\"Save the shipment before duplicating a TCN\""}>Duplicate TCN</button>
-      ${loaded && isAdminSession() ? `<button type="button" class="secondary-button" data-dialog-action="change-job-number">Change Job Number</button>` : ""}
       <span class="empty-state shipment-document-name" data-shipment-document-name></span>
     </div>
   `;
@@ -8853,49 +8840,6 @@ function bindShipmentCustomerTariffs() {
 function bindAwbFetchButton() {
   const fetchButton = dialogBody.querySelector("[data-dialog-action='fetch-awb-data']");
   fetchButton?.addEventListener("click", fetchAwbAndRefillForm);
-}
-function changeShipmentJobNumber(record) {
-  if (!isAdminSession()) {
-    notifyDenied("Change denied", "Only Admin can change a shipment Job Number.");
-    return;
-  }
-  const oldJobNo = String(record?.jobNo || "").trim();
-  if (!oldJobNo) return;
-  const field = dialogBody.querySelector("input[name='jobNo']");
-  const button = dialogBody.querySelector("[data-dialog-action='change-job-number']");
-  if (!field) return;
-  field.readOnly = false;
-  field.dataset.adminJobNumberEdit = "true";
-  editing.allowJobNumberChange = true;
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Job Number Unlocked";
-  }
-  field.focus();
-  field.select();
-  notifySuccess("Job Number unlocked", "Edit the Job Number, then click Save Changes.");
-}
-
-async function saveAdminJobNumberChange(oldJobNo, newJobNo, reason = "") {
-  const result = await fetchJson(`/api/shipments/${encodeURIComponent(oldJobNo)}/change-job-number`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ newJobNo, reason })
-  });
-  const updated = apiShipment(result.row || {});
-  state.shipments = state.shipments.map((row) => row.jobNo === oldJobNo ? updated : row);
-  state.shipmentStatusHistory = state.shipmentStatusHistory.map((row) => row.jobNo === oldJobNo ? { ...row, jobNo: newJobNo } : row);
-  state.documents = state.documents.map((row) => row.linkedNo === oldJobNo ? { ...row, linkedNo: newJobNo } : row);
-  state.invoices = state.invoices.map((row) => row.shipmentNo === oldJobNo ? { ...row, shipmentNo: newJobNo } : row);
-  state.additionalCharges = state.additionalCharges.map((row) => row.shipmentNo === oldJobNo ? { ...row, shipmentNo: newJobNo } : row);
-  state.shipmentRequests = state.shipmentRequests.map((row) => row.convertedJobNo === oldJobNo ? { ...row, convertedJobNo: newJobNo } : row);
-  state.quotations = state.quotations.map((row) => row.convertedJobNo === oldJobNo ? { ...row, convertedJobNo: newJobNo } : row);
-  state.loads = state.loads.map((row) => ({
-    ...row,
-    jobNumbers: String(row.jobNumbers || "").split(",").map((job) => job.trim().toLowerCase() === oldJobNo.toLowerCase() ? newJobNo : job.trim()).filter(Boolean).join(", ")
-  }));
-  state.ui.activeShipmentNo = newJobNo;
-  return updated;
 }
 function fetchAwbAndRefillForm() {
   const typedValue = dialogValue("airwayBillNo");
@@ -9506,7 +9450,6 @@ function bindPalletDimensionBuilder() {
   dialogBody.querySelector("[data-dialog-action='generate-tcn']")?.addEventListener("click", () => printTcn(true));
   dialogBody.querySelector("[data-dialog-action='view-tcn']")?.addEventListener("click", () => printTcn(false));
   dialogBody.querySelector("[data-dialog-action='duplicate-tcn']")?.addEventListener("click", duplicateTcn);
-  dialogBody.querySelector("[data-dialog-action='change-job-number']")?.addEventListener("click", () => changeShipmentJobNumber(record));
   const shipmentDocumentUpload = dialogBody.querySelector("input[name='shipmentDocumentUpload']");
   const shipmentDocumentName = dialogBody.querySelector("[data-shipment-document-name]");
   dialogBody.querySelector("[data-dialog-action='upload-shipment-document']")?.addEventListener("click", () => shipmentDocumentUpload?.click());
