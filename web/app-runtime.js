@@ -5022,7 +5022,7 @@ function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()
 function dashboardStatusUpdatesToolbox() {
   const counts = dashboardStatusUpdateCounts();
   const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
-  return `<button type="button" class="dashboard-status-toolbox" data-action="open-dashboard-status-updates"><span>Today&apos;s Shipment Status Updates</span><strong>${escapeHtml(total)}</strong><small>Live</small></button>`;
+  return `<button type="button" class="dashboard-status-toolbox" data-action="open-dashboard-status-updates"><span>Live</span><strong>${escapeHtml(total)}</strong></button>`;
 }
 function dashboardStatusCountRows(counts) {
   return statusOptions().map((status) => `<div class="dashboard-status-count-row"><span>${escapeHtml(status)}</span><strong>${escapeHtml(counts[status])}</strong><small>today</small></div>`).join("");
