@@ -3736,6 +3736,7 @@ function renderDashboard() {
   if (!isAdminSession()) {
     return `
       ${postLoginAnnouncementNotice()}
+      ${dashboardStatusUpdatesToolbox()}
       <section class="kpi-grid">
         ${kpi("Open Shipments", open, liveShipmentCaption, "open-shipments")}
         ${kpi("In Transit", transit, "Status: In-Transit", "in-transit")}
@@ -3750,6 +3751,7 @@ function renderDashboard() {
   }
   return `
     ${postLoginAnnouncementNotice()}
+    ${dashboardStatusUpdatesToolbox()}
     <section class="kpi-grid">
       ${kpi("Open Shipments", open, liveShipmentCaption, "open-shipments")}
       ${kpi("In Transit", transit, "Status: In-Transit", "in-transit")}
@@ -4989,7 +4991,89 @@ function kpi(title, value, caption, metric = "") {
   const metricAttr = metric ? ` data-dashboard-metric="${escapeHtml(metric)}" role="button" tabindex="0"` : "";
   return `<article class="kpi"${metricAttr}><span>${escapeHtml(title)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(caption)}</small></article>`;
 }
-
+function dashboardStatusCountLabel(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+  if (key === "pending approval") return "Pending Approvals";
+  if (key === "in transit") return "In-Transit";
+  return statusOptions().find((option) => option.toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ") === key) || "";
+}
+function dashboardStatusAllowedBranches() {
+  if (canViewAllBranches()) return CANONICAL_BRANCHES.slice();
+  const access = String(currentSession()?.branchAccess || defaultUserBranch()).trim();
+  if (!access || ["both", "all"].includes(access.toLowerCase())) return CANONICAL_BRANCHES.slice();
+  return access.split(",").map(normalizeBranchName).filter((branch) => CANONICAL_BRANCHES.includes(branch));
+}
+function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
+  const selectedBranches = new Set(branches);
+  const visibleJobNos = new Set(visibleRows(state.shipments)
+    .filter((row) => selectedBranches.has(normalizeBranchName(row.branch)))
+    .map((row) => String(row.jobNo || "").trim()).filter(Boolean));
+  const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
+  const todayKey = today();
+  (state.shipmentStatusHistory || []).forEach((entry) => {
+    const jobNo = String(entry.jobNo || "").trim();
+    const timestamp = String(entry.updatedAt || "").trim();
+    const entryDate = /^\d{4}-\d{2}-\d{2}/.test(timestamp) ? timestamp.slice(0, 10) : localDate(new Date(timestamp));
+    const status = dashboardStatusCountLabel(entry.status);
+    if (jobNo && visibleJobNos.has(jobNo) && entryDate === todayKey && status) counts[status] += 1;
+  });
+  return counts;
+}
+function dashboardStatusUpdatesToolbox() {
+  const counts = dashboardStatusUpdateCounts();
+  const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+  return `<button type="button" class="dashboard-status-toolbox" data-action="open-dashboard-status-updates"><span>Today&apos;s Shipment Status Updates</span><strong>${escapeHtml(total)}</strong><small>Live</small></button>`;
+}
+function dashboardStatusCountRows(counts) {
+  return statusOptions().map((status) => `<div class="dashboard-status-count-row"><span>${escapeHtml(status)}</span><strong>${escapeHtml(counts[status])}</strong><small>today</small></div>`).join("");
+}
+function dashboardStatusBranchFilterMarkup() {
+  const allowed = new Set(dashboardStatusAllowedBranches());
+  const canUseBoth = allowed.size > 1;
+  return `<fieldset class="dashboard-status-branch-filter"><legend>Branches</legend>
+    <label><input type="checkbox" data-status-branch="Kuwait HO" checked ${allowed.has("Kuwait HO") ? "" : "disabled"} /> Kuwait HO</label>
+    <label><input type="checkbox" data-status-branch="Dubai" checked ${allowed.has("Dubai") ? "" : "disabled"} /> Dubai</label>
+    <label><input type="checkbox" data-status-branch="Both" checked ${canUseBoth ? "" : "disabled"} /> Both</label>
+  </fieldset>`;
+}
+async function openDashboardStatusUpdates() {
+  if (recordDialog.open && dialogBody.querySelector("[data-dashboard-status-counts]")) {
+    recordDialog.close();
+    return;
+  }
+  await refreshSharedShipmentData();
+  const selectedBranches = () => Array.from(dialogBody.querySelectorAll("[data-status-branch]:checked"))
+    .map((input) => input.dataset.statusBranch).filter((branch) => branch !== "Both");
+  const renderCounts = () => {
+    const counts = dashboardStatusUpdateCounts(selectedBranches());
+    const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+    const totalNode = dialogBody.querySelector("[data-dashboard-status-total]");
+    const rowsNode = dialogBody.querySelector("[data-dashboard-status-counts]");
+    if (totalNode) totalNode.textContent = `${total} live update${total === 1 ? "" : "s"} today`;
+    if (rowsNode) rowsNode.innerHTML = dashboardStatusCountRows(counts);
+  };
+  openDialog({
+    title: "Today's Shipment Status Updates",
+    typeLabel: "Live today",
+    body: `${dashboardStatusBranchFilterMarkup()}<p class="empty-state">Counts are based on live status-history updates recorded today for shipments visible to your account.</p><div class="dashboard-status-counts" data-dashboard-status-counts>${dashboardStatusCountRows(dashboardStatusUpdateCounts())}</div><p class="dashboard-status-total" data-dashboard-status-total></p>`,
+    saveLabel: "Close",
+    singleColumn: true,
+    onSave() { recordDialog.close(); },
+    afterOpen() {
+      const both = dialogBody.querySelector("[data-status-branch='Both']");
+      dialogBody.querySelectorAll("[data-status-branch]").forEach((input) => input.addEventListener("change", (event) => {
+        if (event.target.dataset.statusBranch === "Both") {
+          dialogBody.querySelectorAll("[data-status-branch]:not([data-status-branch='Both']):not(:disabled)").forEach((branch) => { branch.checked = event.target.checked; });
+        } else if (both) {
+          const branches = [...dialogBody.querySelectorAll("[data-status-branch]:not([data-status-branch='Both']):not(:disabled)")];
+          both.checked = branches.length > 0 && branches.every((branch) => branch.checked);
+        }
+        renderCounts();
+      }));
+      renderCounts();
+    }
+  });
+}
 function alert(title, detail) {
   return `<article class="alert"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></article>`;
 }
@@ -6177,6 +6261,11 @@ async function handleModuleClick(event) {
 
   if (action === "mark-announcement-read") {
     await markAnnouncementRead(button.dataset.id || "");
+    return;
+  }
+
+  if (action === "open-dashboard-status-updates") {
+    await openDashboardStatusUpdates();
     return;
   }
 
