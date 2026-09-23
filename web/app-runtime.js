@@ -8822,12 +8822,9 @@ function changeShipmentJobNumber(record) {
   const field = dialogBody.querySelector("input[name='jobNo']");
   const button = dialogBody.querySelector("[data-dialog-action='change-job-number']");
   if (!field) return;
-  field.removeAttribute("readonly");
-  field.removeAttribute("disabled");
   field.readOnly = false;
-  field.disabled = false;
   field.dataset.adminJobNumberEdit = "true";
-  if (editing) editing.allowJobNumberChange = true;
+  editing.allowJobNumberChange = true;
   if (button) {
     button.disabled = true;
     button.textContent = "Job Number Unlocked";
@@ -9467,15 +9464,7 @@ function bindPalletDimensionBuilder() {
   dialogBody.querySelector("[data-dialog-action='generate-tcn']")?.addEventListener("click", () => printTcn(true));
   dialogBody.querySelector("[data-dialog-action='view-tcn']")?.addEventListener("click", () => printTcn(false));
   dialogBody.querySelector("[data-dialog-action='duplicate-tcn']")?.addEventListener("click", duplicateTcn);
-  const changeJobNumberButton = dialogBody.querySelector("[data-dialog-action='change-job-number']");
-  if (changeJobNumberButton) {
-    const unlock = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      changeShipmentJobNumber(record);
-    };
-    changeJobNumberButton.onclick = unlock;
-  }
+  dialogBody.querySelector("[data-dialog-action='change-job-number']")?.addEventListener("click", () => changeShipmentJobNumber(record));
   const shipmentDocumentUpload = dialogBody.querySelector("input[name='shipmentDocumentUpload']");
   const shipmentDocumentName = dialogBody.querySelector("[data-shipment-document-name]");
   dialogBody.querySelector("[data-dialog-action='upload-shipment-document']")?.addEventListener("click", () => shipmentDocumentUpload?.click());
