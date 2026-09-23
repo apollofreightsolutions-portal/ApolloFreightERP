@@ -5631,7 +5631,10 @@ function dropdownOptions(key, defaults = []) {
 
 function selectEditable(name, label, optionKey, defaults = [], selected = "", includeRemembered = true) {
   const options = includeRemembered ? dropdownOptions(optionKey, defaults) : defaults;
-  return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" list="${escapeHtml(optionKey)}Options" value="${escapeHtml(optionValue(selected))}" data-dropdown-key="${escapeHtml(optionKey)}" data-dropdown-input /><datalist id="${escapeHtml(optionKey)}Options">${options.map((option) => `<option value="${escapeHtml(optionValue(option))}" label="${escapeHtml(optionLabel(option))}"></option>`).join("")}</datalist></label>`;
+  const suggestionMarkup = includeRemembered
+    ? ` list="${escapeHtml(optionKey)}Options" data-dropdown-key="${escapeHtml(optionKey)}" data-dropdown-input /><datalist id="${escapeHtml(optionKey)}Options">${options.map((option) => `<option value="${escapeHtml(optionValue(option))}" label="${escapeHtml(optionLabel(option))}"></option>`).join("")}</datalist>`
+    : " />";
+  return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" value="${escapeHtml(optionValue(selected))}"${suggestionMarkup}</label>`;
 }
 function rememberDropdownOptions(data) {
   let changed = false;
