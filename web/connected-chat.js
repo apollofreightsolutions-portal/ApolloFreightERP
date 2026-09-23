@@ -9,6 +9,24 @@ const chatState = {
 function chatSession() { try { return JSON.parse(sessionStorage.getItem(CHAT_SESSION_KEY) || "null"); } catch { return null; } }
 function isCustomerChatSession() { return String(chatSession()?.portal || document.body.dataset.apolloPortal || "").toLowerCase() === "customer"; }
 function chatToken() { return String(chatSession()?.token || "").trim(); }
+function isChatPortalAllowed() {
+  const current = chatSession();
+  const portal = String(current?.portal || "").trim().toLowerCase();
+  return Boolean(current?.token && (portal === "company" || portal === "crm"));
+}
+function hideChatUiCompletely() {
+  const launcher = document.querySelector("#connectedChatLauncher");
+  const panel = document.querySelector("#connectedChatPanel");
+  if (launcher) { launcher.hidden = true; launcher.style.setProperty("display", "none", "important"); launcher.setAttribute("aria-expanded", "false"); }
+  if (panel) { panel.classList.remove("is-open"); panel.setAttribute("aria-hidden", "true"); panel.style.setProperty("display", "none", "important"); }
+  chatState.open = false;
+}
+function restoreChatUiContainers() {
+  const launcher = document.querySelector("#connectedChatLauncher");
+  const panel = document.querySelector("#connectedChatPanel");
+  if (launcher) launcher.style.removeProperty("display");
+  if (panel) panel.style.removeProperty("display");
+}
 function chatEsc(value) { return String(value || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 function formatChatTime(value) {
   if (!value) return ""; const d = new Date(value); if (Number.isNaN(d.getTime())) return "";
@@ -187,8 +205,18 @@ async function pollActiveConversation() {
 }
 
 async function refreshChat(force = false) {
-  if (chatState.polling) return; const currentToken = chatToken(); const shell = document.querySelector("#appShell"); const loggedIn = Boolean(currentToken && shell && !shell.classList.contains("is-hidden")); const launcher = document.querySelector("#connectedChatLauncher");
-  if (!loggedIn || isCustomerChatSession()) { chatState.token = ""; chatState.loaded = false; if (launcher) launcher.hidden = true; setChatOpen(false, false); return; }
+  if (chatState.polling) return;
+  const currentToken = chatToken();
+  const shell = document.querySelector("#appShell");
+  const loggedIn = Boolean(isChatPortalAllowed() && currentToken && shell && !shell.classList.contains("is-hidden"));
+  if (!loggedIn) {
+    chatState.token = ""; chatState.loaded = false; chatState.users = []; chatState.conversations = []; chatState.activeUser = ""; chatState.messages = []; chatState.unread = 0;
+    hideChatUiCompletely();
+    return;
+  }
+  ensureChatUi();
+  restoreChatUiContainers();
+  const launcher = document.querySelector("#connectedChatLauncher");
   if (!force && chatState.token === currentToken && chatState.loaded && !chatState.open) {
     try { const unread = await chatApi("/api/chat/unread", {}, 7000); chatState.unread = Number(unread.count || 0); updateBadge(); } catch {}
     return;
@@ -202,7 +230,7 @@ async function refreshChat(force = false) {
   finally { chatState.polling = false; }
 }
 
-ensureChatUi(); refreshChat(true);
+refreshChat(true);
 const chatShell = document.querySelector("#appShell"); if (chatShell) new MutationObserver(() => refreshChat(true)).observe(chatShell, { attributes:true, attributeFilter:["class"] });
 window.addEventListener("storage", () => refreshChat(true));
 setInterval(() => refreshChat(false), 4500);

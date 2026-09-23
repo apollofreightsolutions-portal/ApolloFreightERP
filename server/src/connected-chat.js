@@ -17,7 +17,7 @@ function lower(value) {
 
 async function loadActiveUser(query, userName) {
   const result = await query(
-    `select user_name, role, branch_access, account_status
+    `select user_name, role, branch_access, account_status, erp_portal_access, crm_portal_access
      from app_users
      where lower(user_name)=lower($1)
      limit 1`,
@@ -25,6 +25,8 @@ async function loadActiveUser(query, userName) {
   );
   const row = result.rows[0] || null;
   if (!row || lower(row.account_status || "Active") !== "active") return null;
+  const admin = lower(row.role) === "admin";
+  if (!admin && row.erp_portal_access !== true && row.crm_portal_access !== true) return null;
   return row;
 }
 
@@ -55,6 +57,12 @@ function publicMessage(row, currentUser) {
 function createConnectedChatRouter({ query, requireAppAuth }) {
   const router = express.Router();
   router.use(requireAppAuth);
+  router.use((request, response, next) => {
+    if (request.appSession?.employeePortal) {
+      return response.status(403).json({ ok: false, error: "Connected Chat is available only inside the ERP and CRM portals." });
+    }
+    return next();
+  });
 
   router.use(async (request, response, next) => {
     try {
@@ -73,6 +81,7 @@ function createConnectedChatRouter({ query, requireAppAuth }) {
         `select user_name, role, branch_access
          from app_users
          where lower(coalesce(account_status,'Active'))='active'
+           and (lower(trim(role))='admin' or coalesce(erp_portal_access,true)=true or coalesce(crm_portal_access,false)=true)
            and lower(user_name)<>lower($1)
          order by lower(user_name)`,
         [request.chatUser.user_name]

@@ -628,6 +628,12 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
   const businessTimezone = cleanText(process.env.APOLLO_BUSINESS_TIMEZONE || "Asia/Dubai", 80) || "Asia/Dubai";
   const limiter = createRateLimiter();
   router.use(requireAppAuth);
+  router.use((request, response, next) => {
+    if (request.appSession?.employeePortal) {
+      return response.status(403).json({ ok: false, error: "Apollo AI is available only inside the ERP and CRM portals." });
+    }
+    return next();
+  });
 
   router.get("/me", async (request, response, next) => {
     try {

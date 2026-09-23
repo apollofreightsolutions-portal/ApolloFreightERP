@@ -6,6 +6,24 @@ let aiState = { token: "", enabled: false, open: false, busy: false, meta: null,
 function session() { try { return JSON.parse(sessionStorage.getItem(AI_SESSION_KEY) || "null"); } catch { return null; } }
 function isCustomerSession() { return String(session()?.portal || document.body.dataset.apolloPortal || "").toLowerCase() === "customer"; }
 function token() { return String(session()?.token || "").trim(); }
+function isAiPortalAllowed() {
+  const current = session();
+  const portal = String(current?.portal || "").trim().toLowerCase();
+  return Boolean(current?.token && (portal === "company" || portal === "crm"));
+}
+function hideAiUiCompletely() {
+  const launcher = document.querySelector("#apolloAiLauncher");
+  const panel = document.querySelector("#apolloAiPanel");
+  if (launcher) { launcher.hidden = true; launcher.style.setProperty("display", "none", "important"); launcher.setAttribute("aria-expanded", "false"); }
+  if (panel) { panel.classList.remove("is-open"); panel.setAttribute("aria-hidden", "true"); panel.style.setProperty("display", "none", "important"); }
+  aiState.open = false;
+}
+function restoreAiUiContainers() {
+  const launcher = document.querySelector("#apolloAiLauncher");
+  const panel = document.querySelector("#apolloAiPanel");
+  if (launcher) launcher.style.removeProperty("display");
+  if (panel) panel.style.removeProperty("display");
+}
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[char]); }
 function escapeAttribute(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }
 
@@ -132,9 +150,19 @@ async function handleAction(button) {
 }
 
 async function refreshAccess(force = false) {
-  ensureUi(); const currentToken = token(); const appShell = document.querySelector("#appShell"); const loggedIn = Boolean(currentToken && appShell && !appShell.classList.contains("is-hidden")); const launcher = document.querySelector("#apolloAiLauncher");
-  if (!loggedIn || isCustomerSession()) { aiState.enabled = false; aiState.token = ""; aiState.meta = null; if (launcher) launcher.hidden = true; setOpen(false, false); return; }
-  if (!force && currentToken === aiState.token && aiState.meta) return;
+  const currentToken = token();
+  const appShell = document.querySelector("#appShell");
+  const loggedIn = Boolean(isAiPortalAllowed() && currentToken && appShell && !appShell.classList.contains("is-hidden"));
+  if (!loggedIn) {
+    aiState.enabled = false; aiState.token = ""; aiState.meta = null;
+    hideAiUiCompletely();
+    return;
+  }
+  ensureUi();
+  restoreAiUiContainers();
+  renderMessages();
+  const launcher = document.querySelector("#apolloAiLauncher");
+  if (!force && currentToken === aiState.token && aiState.meta) { if (launcher) launcher.hidden = !aiState.enabled; return; }
   aiState.token = currentToken;
   try {
     const meta = await api("/api/ai/me", {}, 12000); aiState.enabled = Boolean(meta.enabled); aiState.meta = meta; if (launcher) launcher.hidden = !aiState.enabled;
@@ -157,6 +185,6 @@ async function sendMessage(message) {
   finally { aiState.busy = false; if (sendButton) { sendButton.disabled = false; sendButton.textContent = "Ask Apollo AI"; } }
 }
 
-ensureUi(); renderMessages(); renderSuggestions(); refreshAccess(true);
+refreshAccess(true);
 const observer = new MutationObserver(() => refreshAccess(false)); const appShell = document.querySelector("#appShell"); if (appShell) observer.observe(appShell, { attributes:true, attributeFilter:["class"] });
 window.addEventListener("storage", () => refreshAccess(true)); setInterval(() => refreshAccess(false), 8000);
