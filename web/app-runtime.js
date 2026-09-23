@@ -8300,6 +8300,7 @@ function shipmentDialogBody(mode = "shipment", record = null) {
       <button type="button" class="secondary-button" data-dialog-action="view-tcn" ${tcnAvailable ? "" : "disabled title=\"Save the shipment before viewing a TCN\""}>View TCN</button>
       <button type="button" class="secondary-button" data-dialog-action="generate-pod">Delivery Note / POD</button>
       <button type="button" class="secondary-button" data-dialog-action="duplicate-tcn" ${tcnAvailable ? "" : "disabled title=\"Save the shipment before duplicating a TCN\""}>Duplicate TCN</button>
+      ${loaded && isAdminSession() ? `<button type="button" class="secondary-button" data-dialog-action="change-job-number">Change Job Number</button>` : ""}
       <span class="empty-state shipment-document-name" data-shipment-document-name></span>
     </div>
   `;
@@ -8797,7 +8798,45 @@ function bindAwbFetchButton() {
   const fetchButton = dialogBody.querySelector("[data-dialog-action='fetch-awb-data']");
   fetchButton?.addEventListener("click", fetchAwbAndRefillForm);
 }
+async function changeShipmentJobNumber(record) {
+  if (!isAdminSession()) {
+    notifyDenied("Change denied", "Only Admin can change a shipment Job Number.");
+    return;
+  }
+  const oldJobNo = String(record?.jobNo || "").trim();
+  if (!oldJobNo) return;
+  const newJobNo = String(window.prompt(`Enter the corrected Job Number for ${oldJobNo}:`, oldJobNo) || "").trim();
+  if (!newJobNo || newJobNo.toLowerCase() === oldJobNo.toLowerCase()) return;
+  const reason = String(window.prompt("Reason for this correction (optional):", "") || "").trim();
+  if (!window.confirm(`Change Job Number from ${oldJobNo} to ${newJobNo}?\n\nAll linked shipment references will be updated.`)) return;
 
+  try {
+    const result = await fetchJson(`/api/shipments/${encodeURIComponent(oldJobNo)}/change-job-number`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newJobNo, reason })
+    });
+    const updated = apiShipment(result.row || { ...record, job_no: newJobNo });
+    state.shipments = state.shipments.map((row) => row.jobNo === oldJobNo ? updated : row);
+    state.shipmentStatusHistory = state.shipmentStatusHistory.map((row) => row.jobNo === oldJobNo ? { ...row, jobNo: newJobNo } : row);
+    state.documents = state.documents.map((row) => row.linkedNo === oldJobNo ? { ...row, linkedNo: newJobNo } : row);
+    state.invoices = state.invoices.map((row) => row.shipmentNo === oldJobNo ? { ...row, shipmentNo: newJobNo } : row);
+    state.additionalCharges = state.additionalCharges.map((row) => row.shipmentNo === oldJobNo ? { ...row, shipmentNo: newJobNo } : row);
+    state.shipmentRequests = state.shipmentRequests.map((row) => row.convertedJobNo === oldJobNo ? { ...row, convertedJobNo: newJobNo } : row);
+    state.quotations = state.quotations.map((row) => row.convertedJobNo === oldJobNo ? { ...row, convertedJobNo: newJobNo } : row);
+    state.loads = state.loads.map((row) => ({
+      ...row,
+      jobNumbers: String(row.jobNumbers || "").split(",").map((job) => job.trim().toLowerCase() === oldJobNo.toLowerCase() ? newJobNo : job.trim()).filter(Boolean).join(", ")
+    }));
+    state.ui.activeShipmentNo = newJobNo;
+    saveState();
+    recordDialog.close();
+    render();
+    notifySuccess("Job Number changed", `${oldJobNo} was changed to ${newJobNo}. Linked records were updated.`);
+  } catch (error) {
+    notifyDenied("Job Number not changed", error.message || "The Job Number could not be changed.");
+  }
+}
 function fetchAwbAndRefillForm() {
   const typedValue = dialogValue("airwayBillNo");
   const query = String(typedValue || "").trim().toLowerCase();
@@ -9407,6 +9446,7 @@ function bindPalletDimensionBuilder() {
   dialogBody.querySelector("[data-dialog-action='generate-tcn']")?.addEventListener("click", () => printTcn(true));
   dialogBody.querySelector("[data-dialog-action='view-tcn']")?.addEventListener("click", () => printTcn(false));
   dialogBody.querySelector("[data-dialog-action='duplicate-tcn']")?.addEventListener("click", duplicateTcn);
+  dialogBody.querySelector("[data-dialog-action='change-job-number']")?.addEventListener("click", () => changeShipmentJobNumber(record));
   const shipmentDocumentUpload = dialogBody.querySelector("input[name='shipmentDocumentUpload']");
   const shipmentDocumentName = dialogBody.querySelector("[data-shipment-document-name]");
   dialogBody.querySelector("[data-dialog-action='upload-shipment-document']")?.addEventListener("click", () => shipmentDocumentUpload?.click());
