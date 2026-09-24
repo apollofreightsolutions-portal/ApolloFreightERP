@@ -1701,6 +1701,9 @@ label {
 
 .pallet-builder {
   grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -1716,8 +1719,10 @@ label {
 }
 
 .pallet-builder .cargo-entry {
-  grid-template-columns: 70px 52px repeat(3, 58px) 66px 82px 98px auto;
+  grid-template-columns: minmax(110px, 1.4fr) repeat(7, minmax(76px, 1fr)) auto;
   justify-content: stretch;
+  width: 100%;
+  min-width: 0;
 }
 
 .cargo-description-row {
@@ -1755,7 +1760,14 @@ label {
   min-width: 0;
   white-space: nowrap;
 }
-
+.record-dialog:has(.pallet-builder) {
+  width: min(1500px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+}
+.dialog-body:has(.pallet-builder) {
+  width: 100%;
+  min-width: 0;
+}
 .tariff-weight-builder {
   grid-column: 1 / -1;
   width: 100%;
