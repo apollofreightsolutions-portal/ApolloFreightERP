@@ -1441,6 +1441,26 @@ function nextShipmentNumber(branch = defaultUserBranch(), service = "") {
     .replaceAll("{SERVICE}", serviceCode);
 }
 
+function shipmentNumberWithServiceTag(branch, currentJobNo, service) {
+  const current = String(currentJobNo || "").trim();
+  const format = String(shipmentNumberFormatForBranch(branch) || "");
+  const hashPattern = format.match(/#+/);
+  if (!current || !hashPattern || !format.includes("{SERVICE}")) return current;
+  const fullYear = new Date().getFullYear().toString();
+  const resolvedFormat = format.replaceAll("YYYY", fullYear).replaceAll("YY", fullYear.slice(-2)).replaceAll("MM", String(new Date().getMonth() + 1).padStart(2, "0"));
+  const resolvedHash = resolvedFormat.match(/#+/);
+  const serviceMarker = resolvedFormat.indexOf("{SERVICE}");
+  if (!resolvedHash || serviceMarker < 0 || resolvedHash.index > serviceMarker) return current;
+  const digits = resolvedHash[0].length;
+  const beforeService = resolvedFormat.slice(0, serviceMarker);
+  const afterService = resolvedFormat.slice(serviceMarker + "{SERVICE}".length);
+  const serialPrefix = beforeService.slice(0, resolvedHash.index);
+  const serialSuffix = beforeService.slice(resolvedHash.index + digits);
+  const match = current.match(new RegExp(`^${escapeRegex(serialPrefix)}(\\d{${digits},})${escapeRegex(serialSuffix)}[A-Za-z0-9]+${escapeRegex(afterService)}$`, "i"));
+  if (!match) return current;
+  return `${serialPrefix}${match[1]}${serialSuffix}${shipmentServiceCode(service)}${afterService}`;
+}
+
 function nextInvoiceNumber() {
   return configuredNumber(state.settings.invoiceNumberFormat, state.invoices, "invoiceNo", "INV");
 }
@@ -7386,7 +7406,35 @@ function labelize(key) {
 function branchViewScopeOptions() {
   return ["Assigned Branch Only", "All Branches"];
 }
-
+async function renameShipmentJobNumber(oldJobNo, newJobNo, reason) {
+  const oldValue = String(oldJobNo || "").trim();
+  const newValue = String(newJobNo || "").trim();
+  if (!oldValue || oldValue.toLowerCase() === newValue.toLowerCase()) return true;
+  try {
+    const result = await fetchJson(`/api/shipments/${encodeURIComponent(oldValue)}/change-job-number`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newJobNo: newValue, reason: reason || "Shipment service type changed" })
+    });
+    const updated = apiShipment(result.row || {});
+    const localShipment = state.shipments.find((row) => row.jobNo === oldValue);
+    if (localShipment) Object.assign(localShipment, updated);
+    state.shipmentStatusHistory = state.shipmentStatusHistory.map((row) => row.jobNo === oldValue ? { ...row, jobNo: newValue } : row);
+    state.documents = state.documents.map((row) => row.linkedNo === oldValue ? { ...row, linkedNo: newValue } : row);
+    state.invoices = state.invoices.map((row) => row.shipmentNo === oldValue ? { ...row, shipmentNo: newValue } : row);
+    state.additionalCharges = state.additionalCharges.map((row) => row.shipmentNo === oldValue ? { ...row, shipmentNo: newValue } : row);
+    state.shipmentRequests = state.shipmentRequests.map((row) => row.convertedJobNo === oldValue ? { ...row, convertedJobNo: newValue } : row);
+    state.quotations = state.quotations.map((row) => row.convertedJobNo === oldValue ? { ...row, convertedJobNo: newValue } : row);
+    state.loads = state.loads.map((row) => ({
+      ...row,
+      jobNumbers: String(row.jobNumbers || "").split(",").map((job) => job.trim().toLowerCase() === oldValue.toLowerCase() ? newValue : job.trim()).filter(Boolean).join(", ")
+    }));
+    return true;
+  } catch (error) {
+    notifyDenied("Shipment not saved", error.message || "The shipment Job Number could not be updated.");
+    return false;
+  }
+}
 let isSavingDialogRecord = false;
 
 async function saveDialogRecord() {
@@ -7490,6 +7538,11 @@ async function saveDialogRecordInner() {
 
   const changeSummary = summarizeChanges(editing.record, updatedRecord, Object.keys(data));
   const originalSnapshot = { ...editing.record };
+  if (editing.type === "shipment" && updatedRecord.jobNo !== editing.record.jobNo) {
+    const renamed = await renameShipmentJobNumber(editing.record.jobNo, updatedRecord.jobNo, "Shipment service type changed");
+    if (!renamed) return;
+    editing.id = updatedRecord.jobNo;
+  }
   Object.assign(editing.record, updatedRecord);
   const editedType = editing.type;
   const editedId = editing.id;
@@ -8884,8 +8937,11 @@ function bindShipmentDirectionDialog() {
 
   const refreshShipmentNumber = () => {
     const entryMode = dialogBody.querySelector("[name='entryMode']")?.value || "shipment";
-    if (entryMode !== "shipment" || !jobNoField || jobNoField.readOnly) return;
-    jobNoField.value = nextShipmentNumber(branchSelect?.value || defaultUserBranch(), serviceSelect.value);
+    if (entryMode !== "shipment" || !jobNoField || !serviceSelect.value) return;
+    const branch = branchSelect?.value || defaultUserBranch();
+    jobNoField.value = jobNoField.readOnly
+      ? shipmentNumberWithServiceTag(branch, jobNoField.value, serviceSelect.value)
+      : nextShipmentNumber(branch, serviceSelect.value);
   };
 
   const rebuildServiceOptions = (preserveValue) => {
@@ -12644,6 +12700,11 @@ async function createShipmentDraft(data) {
     updatedRecord.status = "Draft";
     updatedRecord.notes = shipmentMetaNotes(updatedRecord);
     const changeSummary = summarizeChanges(editing.record, updatedRecord, Object.keys(data));
+    if (updatedRecord.jobNo !== editing.record.jobNo) {
+      const renamed = await renameShipmentJobNumber(editing.record.jobNo, updatedRecord.jobNo, "Shipment service type changed while saving draft");
+      if (!renamed) return false;
+      editing.id = updatedRecord.jobNo;
+    }
     const saved = await persistRecord("shipment", updatedRecord);
     if (!saved) {
       notifyDenied("Draft not saved", "The draft could not be saved. Check the connection and try again.");
