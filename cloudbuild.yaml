@@ -1,15 +1,10 @@
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
+  - name: 'gcr.io/kaniko-project/executor:latest'
     args:
-      - 'build'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
-      - '.'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+      - '--dockerfile=Dockerfile'
+      - '--context=dir://.'
+      - '--destination=us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+      - '--cache=true'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
