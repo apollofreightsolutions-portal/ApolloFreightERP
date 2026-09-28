@@ -3,7 +3,7 @@ steps:
     args:
       - '--dockerfile=Dockerfile'
       - '--context=dir://.'
-      - '--destination=us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+      - '--destination=us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$BUILD_ID'
       - '--cache=true'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -13,7 +13,7 @@ steps:
       - 'deploy'
       - 'apollo-freighterp'
       - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/apollo-freighterp/apollo-freighterp:$BUILD_ID'
       - '--region'
       - 'us-central1'
       - '--platform'
