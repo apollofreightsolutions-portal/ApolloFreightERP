@@ -61,7 +61,7 @@ function googleCloudStorageConfig() {
   if (!googleCloudStorageClient) googleCloudStorageClient = new Storage();
   return {
     bucket: googleCloudStorageClient.bucket(bucketName),
-    prefix: String(process.env.GCS_PREFIX || "apollo-freight/employee-documents").trim().replace(/^\/+|\/+$/g, "")
+    prefix: String(process.env.GCS_PREFIX || "apollo-freight").trim().replace(/^\/+|\/+$/g, "")
   };
 }
 
@@ -2784,7 +2784,7 @@ app.post("/api/employee-profile-documents", requireEmployeePortalAuth, async (re
     const storage = googleCloudStorageConfig();
     if (!storage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server. New uploads are disabled until GCS is available." });
     if (storage) {
-      const objectName = `${storage.prefix}/${safeEmployeeDocumentPart(userName)}/${typeConfig.code.toLowerCase()}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
+      const objectName = `${storage.prefix}/employee-private/${safeEmployeeDocumentPart(userName)}/${typeConfig.code.toLowerCase()}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
       const object = storage.bucket.file(objectName);
       await object.save(fileBuffer, {
         resumable: false,
