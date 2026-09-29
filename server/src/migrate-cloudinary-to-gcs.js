@@ -6,6 +6,7 @@ const prefix = String(process.env.GCS_PREFIX || "apollo-freight").trim().replace
 const apply = process.argv.includes("--apply");
 const storage = bucketName ? new Storage() : null;
 const STEP_TIMEOUT_MS = Number(process.env.MIGRATION_STEP_TIMEOUT_MS || 60000);
+const BATCH_SIZE = Number(process.env.MIGRATION_BATCH_SIZE || 200);
 
 function withTimeout(promise, label) {
   let timer;
@@ -124,14 +125,25 @@ function migratedNotes(metadata, objectName) {
 
 async function loadRows() {
   console.error("Migration dry-run: querying documents...");
-  const documents = (await withTimeout(query(`
-    select id, document_no, linked_no, type, file_name, storage_url, notes
-    from documents
-      where coalesce(storage_url, '') <> ''
-      and coalesce(notes, '') not like '%\"storageProvider\":\"gcs\"%'
-      and (lower(storage_url) like '%cloudinary%' or lower(notes) like '%cloudinarypublicid%')
+  const documents = [];
+  let lastDocumentId = 0;
+  while (true) {
+    const batch = (await withTimeout(query(`
+      select id, document_no, linked_no, type, file_name, storage_url, notes
+      from documents
+      where id > $1
+        and coalesce(storage_url, '') <> ''
+        and coalesce(notes, '') not like '%\"storageProvider\":\"gcs\"%'
+        and (lower(storage_url) like '%cloudinary%' or lower(notes) like '%cloudinarypublicid%')
       order by id
-  `), "documents query")).rows.map((row) => ({ ...row, table: "documents", key: row.id, source: row.storage_url }));
+      limit $2
+    `, [lastDocumentId, BATCH_SIZE]), `documents batch after id ${lastDocumentId}`)).rows;
+    if (!batch.length) break;
+    documents.push(...batch.map((row) => ({ ...row, table: "documents", key: row.id, source: row.storage_url })));
+    lastDocumentId = Number(batch[batch.length - 1].id);
+    console.error(`Migration dry-run: documents progress through id ${lastDocumentId}; matched ${documents.length} candidate records.`);
+    if (batch.length < BATCH_SIZE) break;
+  }
 
   const leaveTable = (await withTimeout(query("select to_regclass('public.leave_requests') as table_name"), "leave_requests table check")).rows[0]?.table_name;
   let leaveRequests = [];
