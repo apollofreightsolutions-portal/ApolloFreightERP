@@ -1,5 +1,5 @@
 const { Storage } = require("@google-cloud/storage");
-const { closePool, query } = require("./db");
+const { closePool, getPool, query } = require("./db");
 
 const bucketName = String(process.env.GCS_BUCKET || process.env.GOOGLE_CLOUD_STORAGE_BUCKET || "").trim();
 const prefix = String(process.env.GCS_PREFIX || "apollo-freight").trim().replace(/^\/+|\/+$/g, "");
@@ -126,23 +126,30 @@ function migratedNotes(metadata, objectName) {
 async function loadRows() {
   console.error("Migration dry-run: querying documents...");
   const documents = [];
-  let lastDocumentId = 0;
-  while (true) {
-    const batch = (await withTimeout(query(`
+  const client = await getPool().connect();
+  try {
+    await client.query("begin");
+    await client.query("set local statement_timeout = '300000'");
+    await client.query(`declare cloudinary_documents cursor for
       select id, document_no, linked_no, type, file_name, storage_url, notes
       from documents
-      where id > $1
-        and coalesce(storage_url, '') <> ''
+      where coalesce(storage_url, '') <> ''
         and coalesce(notes, '') not like '%\"storageProvider\":\"gcs\"%'
         and (lower(storage_url) like '%cloudinary%' or lower(notes) like '%cloudinarypublicid%')
-      order by id
-      limit $2
-    `, [lastDocumentId, BATCH_SIZE]), `documents batch after id ${lastDocumentId}`)).rows;
-    if (!batch.length) break;
-    documents.push(...batch.map((row) => ({ ...row, table: "documents", key: row.id, source: row.storage_url })));
-    lastDocumentId = Number(batch[batch.length - 1].id);
-    console.error(`Migration dry-run: documents progress through id ${lastDocumentId}; matched ${documents.length} candidate records.`);
-    if (batch.length < BATCH_SIZE) break;
+      order by id`);
+    while (true) {
+      const batch = (await client.query(`fetch forward ${BATCH_SIZE} from cloudinary_documents`)).rows;
+      if (!batch.length) break;
+      documents.push(...batch.map((row) => ({ ...row, table: "documents", key: row.id, source: row.storage_url })));
+      console.error(`Migration dry-run: documents cursor progress through id ${batch[batch.length - 1].id}; matched ${documents.length} candidate records.`);
+    }
+    await client.query("close cloudinary_documents");
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
 
   const leaveTable = (await withTimeout(query("select to_regclass('public.leave_requests') as table_name"), "leave_requests table check")).rows[0]?.table_name;
