@@ -123,26 +123,28 @@ function migratedNotes(metadata, objectName) {
 }
 
 async function loadRows() {
-  const documents = (await query(`
+  console.error("Migration dry-run: querying documents...");
+  const documents = (await withTimeout(query(`
     select id, document_no, linked_no, type, file_name, storage_url, notes
     from documents
       where coalesce(storage_url, '') <> ''
-      and coalesce(notes, '') not like '%"storageProvider":"gcs"%'
+      and coalesce(notes, '') not like '%\"storageProvider\":\"gcs\"%'
       and (lower(storage_url) like '%cloudinary%' or lower(notes) like '%cloudinarypublicid%')
-    order by id
-  `)).rows.map((row) => ({ ...row, table: "documents", key: row.id, source: row.storage_url }));
+      order by id
+  `), "documents query")).rows.map((row) => ({ ...row, table: "documents", key: row.id, source: row.storage_url }));
 
-  const leaveTable = (await query("select to_regclass('public.leave_requests') as table_name")).rows[0]?.table_name;
+  const leaveTable = (await withTimeout(query("select to_regclass('public.leave_requests') as table_name"), "leave_requests table check")).rows[0]?.table_name;
   let leaveRequests = [];
   if (leaveTable) {
-    leaveRequests = (await query(`
+    console.error("Migration dry-run: querying leave_requests...");
+    leaveRequests = (await withTimeout(query(`
       select request_no, user_name, attachment_url, updated_at
       from leave_requests
       where coalesce(attachment_url, '') <> ''
-        and coalesce(attachment_url, '') not like '%"storageProvider":"gcs"%'
+        and coalesce(attachment_url, '') not like '%\"storageProvider\":\"gcs\"%'
         and (lower(attachment_url) like '%cloudinary%' or lower(attachment_url) like '%cloudinarypublicid%')
       order by request_no
-    `)).rows.map((row) => ({ ...row, table: "leave_requests", key: row.request_no, source: row.attachment_url }));
+    `), "leave_requests query")).rows.map((row) => ({ ...row, table: "leave_requests", key: row.request_no, source: row.attachment_url }));
   }
   return { documents, leaveRequests, leaveTable: Boolean(leaveTable) };
 }
