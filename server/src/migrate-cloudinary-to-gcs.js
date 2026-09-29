@@ -5,6 +5,15 @@ const bucketName = String(process.env.GCS_BUCKET || process.env.GOOGLE_CLOUD_STO
 const prefix = String(process.env.GCS_PREFIX || "apollo-freight").trim().replace(/^\/+|\/+$/g, "");
 const apply = process.argv.includes("--apply");
 const storage = bucketName ? new Storage() : null;
+const STEP_TIMEOUT_MS = Number(process.env.MIGRATION_STEP_TIMEOUT_MS || 60000);
+
+function withTimeout(promise, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${STEP_TIMEOUT_MS} ms.`)), STEP_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function clean(value) {
   return String(value || "").trim();
@@ -141,9 +150,12 @@ async function loadRows() {
 async function run() {
   if (!bucketName) throw new Error("GCS_BUCKET is required.");
   const bucket = storage.bucket(bucketName);
-  const [files] = await bucket.getFiles({ prefix: `${prefix}/` });
+  console.error(`Migration dry-run: listing GCS objects under ${prefix}/...`);
+  const [files] = await withTimeout(bucket.getFiles({ prefix: `${prefix}/` }), "GCS object listing");
   const index = makeIndex(files);
-  const { documents, leaveRequests, leaveTable } = await loadRows();
+  console.error(`Migration dry-run: found ${index.exact.size} GCS objects; reading database records...`);
+  const { documents, leaveRequests, leaveTable } = await withTimeout(loadRows(), "database record read");
+  console.error(`Migration dry-run: read ${documents.length} documents and ${leaveRequests.length} leave attachments.`);
   const rows = [...documents, ...leaveRequests];
   const results = rows.map((row) => {
     const metadata = row.table === "documents" ? safeJson(row.notes) : safeJson(row.attachment_url);
