@@ -175,7 +175,7 @@ async function run() {
   const [files] = await withTimeout(bucket.getFiles({ prefix: `${prefix}/` }), "GCS object listing");
   const index = makeIndex(files);
   console.error(`Migration dry-run: found ${index.exact.size} GCS objects; reading database records...`);
-  const { documents, leaveRequests, leaveTable } = await withTimeout(loadRows(), "database record read");
+  const { documents, leaveRequests, leaveTable } = await loadRows();
   console.error(`Migration dry-run: read ${documents.length} documents and ${leaveRequests.length} leave attachments.`);
   const rows = [...documents, ...leaveRequests];
   const results = rows.map((row) => {
