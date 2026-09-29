@@ -135,7 +135,7 @@ async function loadRows() {
       from documents
       where coalesce(storage_url, '') <> ''
         and coalesce(notes, '') not like '%\"storageProvider\":\"gcs\"%'
-        and (lower(storage_url) like '%cloudinary%' or lower(notes) like '%cloudinarypublicid%')
+        and lower(storage_url) like '%cloudinary%'
       order by id`);
     while (true) {
       const batch = (await client.query(`fetch forward ${BATCH_SIZE} from cloudinary_documents`)).rows;
