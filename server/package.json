@@ -7,9 +7,10 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/migrate.js",
+    "check": "node --check src/index.js && node --check src/migrate.js && node --check src/migrate-cloudinary-to-gcs.js",
     "migrate": "node src/migrate.js",
-    "db:setup": "node src/migrate.js"
+    "db:setup": "node src/migrate.js",
+    "migrate:cloudinary-to-gcs": "node src/migrate-cloudinary-to-gcs.js"
   },
   "engines": {
     "node": ">=20"
