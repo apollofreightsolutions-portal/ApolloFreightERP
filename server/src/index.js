@@ -84,6 +84,39 @@ async function saveToGoogleCloudStorage(storage, objectName, fileBuffer, mimeTyp
   return `gs://${storage.bucket.name}/${objectName}`;
 }
 
+function legacyCloudinaryObjectCandidates(storage, item, metadata) {
+  let publicId = String(metadata.cloudinaryPublicId || "").trim();
+  if (!publicId) {
+    try {
+      const parsed = new URL(String(item.storage_url || ""));
+      const marker = "/upload/";
+      const markerIndex = parsed.pathname.indexOf(marker);
+      if (markerIndex >= 0) {
+        publicId = parsed.pathname.slice(markerIndex + marker.length).replace(/^v\d+\//, "");
+      }
+    } catch {}
+  }
+  publicId = decodeURIComponent(publicId).replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+  if (!publicId) return [];
+  const fileName = String(item.file_name || metadata.fileName || "").trim();
+  const extension = fileName.match(/\.[a-z0-9]{1,8}$/i)?.[0].toLowerCase() || "";
+  const values = new Set([publicId]);
+  if (extension && !publicId.toLowerCase().endsWith(extension)) values.add(`${publicId}${extension}`);
+  for (const value of [...values]) {
+    values.add(value.startsWith(`${storage.prefix}/`) ? value : `${storage.prefix}/${value}`);
+  }
+  return [...values];
+}
+
+async function resolveLegacyCloudinaryDocumentToGcs(storage, item, metadata) {
+  const candidates = legacyCloudinaryObjectCandidates(storage, item, metadata);
+  for (const objectName of candidates) {
+    const [exists] = await storage.bucket.file(objectName).exists();
+    if (exists) return googleCloudStorageSignedUrl(storage.bucket, objectName);
+  }
+  return "";
+}
+
 async function resolveStoredDocumentUrl(item) {
   if (!item?.storage_url) return "";
   let metadata = {};
@@ -3022,7 +3055,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
 app.get("/api/documents/:documentNo/view", requireErpPortalAuth, async (request, response, next) => {
   try {
     const documentNo = String(request.params.documentNo || "").trim();
-    const result = await query("select storage_url, notes from documents where document_no=$1 limit 1", [documentNo]);
+    const result = await query("select storage_url, file_name, type, notes from documents where document_no=$1 limit 1", [documentNo]);
     const item = result.rows[0];
     if (!item?.storage_url) return response.status(404).json({ ok: false, error: "Uploaded file not found." });
     let metadata = {}; try { metadata = JSON.parse(item.notes || "{}"); } catch {}
@@ -3030,6 +3063,13 @@ app.get("/api/documents/:documentNo/view", requireErpPortalAuth, async (request,
       const storage = googleCloudStorageConfig();
       if (!storage) return response.status(503).json({ ok: false, error: "Google Cloud Storage is not configured on the server." });
       return response.json({ ok: true, url: await googleCloudStorageSignedUrl(storage.bucket, metadata.objectName) });
+    }
+    if (String(item.type || "").trim().toLowerCase() === "pod" && /cloudinary/i.test(String(item.storage_url || "") + " " + String(item.notes || ""))) {
+      const storage = googleCloudStorageConfig();
+      if (storage) {
+        const gcsUrl = await resolveLegacyCloudinaryDocumentToGcs(storage, item, metadata);
+        if (gcsUrl) return response.json({ ok: true, url: gcsUrl, storageProvider: "gcs", migrated: false });
+      }
     }
     return response.json({ ok: true, url: item.storage_url });
   } catch (error) { return next(error); }
