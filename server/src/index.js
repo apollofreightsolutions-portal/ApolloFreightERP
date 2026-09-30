@@ -3363,10 +3363,6 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
     const type = (await query("select * from hr_leave_types where code=$1 and active=true limit 1", [leaveType])).rows[0];
     if (!type) return response.status(400).json({ok:false,error:"Choose a valid leave type."});
     const startDate = isoDate(data.startDate); const endDate = isoDate(data.endDate);
-    const globalSettings = (await query("select settings_json from hr_leave_settings where settings_key='global' limit 1")).rows[0]?.settings_json || {};
-    const backdatedDays = Math.max(0, Number(globalSettings.backdated_days ?? 3));
-    const earliestStart = new Date(); earliestStart.setHours(0,0,0,0); earliestStart.setDate(earliestStart.getDate() - backdatedDays);
-    if (startDate && new Date(`${startDate}T00:00:00`) < earliestStart) return response.status(400).json({ok:false,error:`Leave cannot be backdated by more than ${backdatedDays} day(s). Please contact HR.`});
     const branch = hrBranchForRequest(request);
     const calculation = await calculateHrLeave(startDate,endDate,branch);
     const halfDayType = String(data.halfDayType || "").toUpperCase();
