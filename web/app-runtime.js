@@ -2172,6 +2172,12 @@ function normalizeBranchName(value) {
   return text;
 }
 
+function shipmentForReference(reference) {
+  const key = String(reference || "").trim().toLowerCase();
+  if (!key) return null;
+  return (state.shipments || []).find((shipmentItem) => String(shipmentItem?.jobNo || "").trim().toLowerCase() === key) || null;
+}
+
 function allBranchFilterOptions() {
   return CANONICAL_BRANCHES.slice();
 }
@@ -2258,16 +2264,16 @@ function branchValuesForRecord(row) {
   // branch and have to infer one from what they're linked to.
   if (branches.size > 0) return [...branches];
 
-  const shipmentKeys = [row?.shipmentNo, row?.jobNo, row?.linkedNo, row?.referenceNo]
+  const shipmentKeys = [row?.shipmentNo, row?.shipment_no, row?.jobNo, row?.linkedNo, row?.linked_no, row?.referenceNo]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
-  shipmentKeys.forEach((jobNo) => add(state.shipments.find((shipmentItem) => shipmentItem.jobNo === jobNo)?.branch));
+  shipmentKeys.forEach((jobNo) => add(shipmentForReference(jobNo)?.branch));
 
   String(row?.jobNumbers || "")
     .split(",")
     .map((jobNo) => jobNo.trim())
     .filter(Boolean)
-    .forEach((jobNo) => add(state.shipments.find((shipmentItem) => shipmentItem.jobNo === jobNo)?.branch));
+    .forEach((jobNo) => add(shipmentForReference(jobNo)?.branch));
 
   // A linked shipment's own branch is more specific than the customer's master-record branch -
   // if that already resolved something, stop before also folding in the customer-level guess.
@@ -3729,9 +3735,9 @@ function dashboardBranchKpi(title, invoiceRows, metric, valueForRow, caption) {
   const branches = [["Kuwait HO", "KWD"], ["Dubai", "AED"]];
   const cells = branches.map(([branch, currency]) => {
     const branchRows = invoiceRows.filter((row) => {
-      const linkedShipment = state.shipments.find((shipment) => shipment.jobNo === row.shipmentNo);
-      const rowBranch = String(row.branch || linkedShipment?.branch || "Kuwait HO").trim().toLowerCase();
-      return branch === "Dubai" ? /dubai|dxb/.test(rowBranch) : !/dubai|dxb/.test(rowBranch);
+      const linkedShipment = shipmentForReference(row.shipmentNo || row.shipment_no);
+      const rowBranch = normalizeBranchName(row.branch || row.branchName || row.branch_name || linkedShipment?.branch || "Kuwait HO");
+      return rowBranch.toLowerCase() === branch.toLowerCase();
     });
     const total = branchRows.reduce((sum, row) => sum + Number(valueForRow(row) || 0), 0);
     return `<div class="kpi-branch-cell"><small>${escapeHtml(branch)}</small><strong>${escapeHtml(currency)} ${escapeHtml(money(total))}</strong></div>`;
