@@ -4253,6 +4253,7 @@ function shipmentLandscapeActionsMarkup() {
   <div class="shipment-landscape-action-row">
     <button type="button" class="primary-button shipment-new-action" data-action="new-record" data-type="shipment" data-mode="shipment">New</button>
     <button type="button" class="secondary-button" data-action="quick-open-shipment">Open</button>
+    <button type="button" class="secondary-button" data-action="export-list" data-type="shipment">Export Shipment Register</button>
     <button type="button" class="secondary-button" data-action="generate-document" data-type="shipment">Generate Shipment</button>
     <button type="button" class="secondary-button" data-action="export-document" data-type="shipment">Save / Export</button>
     <button type="button" class="secondary-button" data-action="request-block" data-type="shipment">Block</button>
@@ -10701,8 +10702,10 @@ function downloadCsv(preview) {
 }
 
 function exportCollectionCsv(type) {
-  const rows = collectionFor(type);
-  const columns = columnsForType(type);
+  const scope = type === "shipment" ? "shipment:register" : type;
+  const baseRows = type === "shipment" ? filteredRows(visibleRows(state.shipments)) : collectionFor(type);
+  const columns = configurableColumns(type, columnsForType(type), scope);
+  const rows = applySort(scope, applyColumnFilters(scope, baseRows, columns));
   if (!rows.length || !columns.length) {
     notifyDenied("Export not ready", "No rows are available for this section.");
     return;
@@ -12970,11 +12973,11 @@ async function postRecord(type, record) {
     });
     if (result.mode === "demo") throw new Error("Database tables are not ready yet.");
     if (type === "shipment") mergeSynchronizedShipmentRows(result.relatedRows);
+    clearApiWriteError();
     return result.row || true;
   } catch (error) {
     if (/already exists/i.test(error?.message || "")) {
       notifyDenied("Already used", error.message);
-      window.alert(`Already used\n${error.message}`);
       return false;
     }
     markApiWriteError(error);
@@ -12994,6 +12997,7 @@ async function persistRecord(type, record) {
     });
     if (result.mode === "demo") throw new Error("Database tables are not ready yet.");
     if (type === "shipment") mergeSynchronizedShipmentRows(result.relatedRows);
+    clearApiWriteError();
     return true;
   } catch (error) {
     markApiWriteError(error);
@@ -13009,6 +13013,7 @@ async function deleteRecord(type, id) {
       method: "DELETE"
     });
     if (result.mode === "demo") throw new Error("Database tables are not ready yet.");
+    clearApiWriteError();
     return true;
   } catch (error) {
     markApiWriteError(error);
@@ -13024,7 +13029,19 @@ function markApiWriteError(error) {
     mode: "browser",
     error: error?.message || "Live database save failed."
   };
-  notifyFailed("Live database save failed", state.api.error);
+  saveState();
+}
+
+function clearApiWriteError() {
+  if (state.api.status !== "API save warning") return;
+  state.api = {
+    ...state.api,
+    status: "API connected",
+    database: "connected",
+    mode: "database",
+    error: ""
+  };
+  saveState();
 }
 
 // hrAdminDeletePanel() already restricts who even SEES a payslip/announcement delete button to
