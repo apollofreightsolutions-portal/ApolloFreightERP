@@ -12977,7 +12977,7 @@ async function postRecord(type, record) {
     return result.row || true;
   } catch (error) {
     if (/already exists/i.test(error?.message || "")) {
-      notifyDenied("Already used", error.message);
+      markApiWriteError(error);
       return false;
     }
     markApiWriteError(error);
