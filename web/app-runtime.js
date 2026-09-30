@@ -1824,6 +1824,14 @@ async function boot() {
       }
       saveState();
     }
+    const reportField = event.target.closest("[name='reportType'], [name='reportFormat'], [name='reportFromDate'], [name='reportToDate']");
+    if (reportField) {
+      state.ui.reportType = normalizedReportType(moduleContent.querySelector("[name='reportType']")?.value || state.ui.reportType);
+      state.ui.reportFormat = normalizedReportFormat(moduleContent.querySelector("[name='reportFormat']")?.value || state.ui.reportFormat);
+      state.ui.reportFromDate = moduleContent.querySelector("[name='reportFromDate']")?.value || "";
+      state.ui.reportToDate = moduleContent.querySelector("[name='reportToDate']")?.value || "";
+      saveState();
+    }
     const activityFilter = event.target.closest("[data-customer-activity-filter]");
     if (activityFilter) {
       state.ui.customerActivityFilter = activityFilter.value || "All";
@@ -3282,7 +3290,8 @@ function render() {
   const liveRecordSelectors = {};
   moduleContent.querySelectorAll("[data-load-select], [data-delete-select]").forEach((selector) => {
     const type = selector.dataset.loadSelect || selector.dataset.deleteSelect;
-    if (type) liveRecordSelectors[type] = String(selector.value || "").trim();
+    const value = String(selector.value || "").trim();
+    if (type && collectionFor(type).some((row) => String(rowId(type, row)) === value)) liveRecordSelectors[type] = value;
   });
   if (Object.keys(liveRecordSelectors).length) {
     state.ui.selectedRecordSelectors = {
@@ -4642,7 +4651,7 @@ function renderReports() {
     <section class="panel">${panelHeader("Report Preview and Export", "Reports")}
       <div class="report-toolbar">
         ${strictSelect("reportType", "Report Type", reportTypeOptions(), normalizedReportType(state.ui.reportType))}
-        ${select("reportFormat", "Preview As", ["PDF", "Excel CSV"], state.ui.reportFormat || "PDF")}
+        ${strictSelect("reportFormat", "Open / Export As", [{ value: "PDF", label: "Open PDF" }, { value: "Excel CSV", label: "Excel Export" }], normalizedReportFormat(state.ui.reportFormat))}
         ${input("reportFromDate", "From Date", state.ui.reportFromDate || "", false, "date")}
         ${input("reportToDate", "To Date", state.ui.reportToDate || "", false, "date")}
         <button type="button" data-action="preview-report">Preview Report</button>
@@ -5377,6 +5386,12 @@ function reportTypeOptions() {
 function normalizedReportType(value = "") {
   const selected = reportTypeOptions().find((option) => option.toLowerCase() === String(value || "").trim().toLowerCase());
   return selected || "All Shipments";
+}
+
+function normalizedReportFormat(value = "") {
+  return String(value || "").trim().toLowerCase() === "excel csv" || String(value || "").trim().toLowerCase() === "excel export"
+    ? "Excel CSV"
+    : "PDF";
 }
 
 function shipmentDirectionOptions() {
@@ -10505,7 +10520,7 @@ function parseChangeSummary(summary) {
 
 function previewReport() {
   const reportType = normalizedReportType(moduleContent.querySelector("[name='reportType']")?.value || state.ui.reportType);
-  const reportFormat = moduleContent.querySelector("[name='reportFormat']")?.value || state.ui.reportFormat || "PDF";
+  const reportFormat = normalizedReportFormat(moduleContent.querySelector("[name='reportFormat']")?.value || state.ui.reportFormat);
   const reportFromDate = moduleContent.querySelector("[name='reportFromDate']")?.value || "";
   const reportToDate = moduleContent.querySelector("[name='reportToDate']")?.value || "";
   const rows = reportRows(reportType, reportFromDate, reportToDate);
