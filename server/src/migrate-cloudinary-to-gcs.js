@@ -7,6 +7,7 @@ const apply = process.argv.includes("--apply");
 const storage = bucketName ? new Storage() : null;
 const STEP_TIMEOUT_MS = Number(process.env.MIGRATION_STEP_TIMEOUT_MS || 60000);
 const BATCH_SIZE = Number(process.env.MIGRATION_BATCH_SIZE || 200);
+const documentType = clean(process.env.MIGRATION_DOCUMENT_TYPE).toLowerCase();
 
 function withTimeout(promise, label) {
   let timer;
@@ -124,7 +125,8 @@ function migratedNotes(metadata, objectName) {
 }
 
 async function loadRows() {
-  console.error("Migration dry-run: querying documents...");
+  const typeClause = documentType ? `and lower(type) = '${documentType.replace(/'/g, "''")}'` : "";
+  console.error(`Migration dry-run: querying documents${documentType ? ` of type ${documentType}` : ""}...`);
   const documents = [];
   const client = await getPool().connect();
   try {
@@ -135,7 +137,8 @@ async function loadRows() {
       from documents
       where coalesce(storage_url, '') <> ''
         and coalesce(notes, '') not like '%\"storageProvider\":\"gcs\"%'
-        and lower(storage_url) like '%cloudinary%'
+        and (lower(storage_url) like '%cloudinary%' or lower(notes) like '%cloudinarypublicid%')
+        ${typeClause}
       order by id`);
     while (true) {
       const batch = (await client.query(`fetch forward ${BATCH_SIZE} from cloudinary_documents`)).rows;
@@ -195,6 +198,7 @@ async function run() {
     documentsScanned: documents.length,
     leaveAttachmentsScanned: leaveRequests.length,
     leaveRequestsTablePresent: leaveTable,
+    documentType: documentType || null,
     matchCounts: counts
   }, null, 2));
 
