@@ -598,6 +598,37 @@ function requireErpPortalAuth(request, response, next) {
   });
 }
 
+// The HR frontend reuses the generic resource API for employee profiles, leave requests,
+// payslips and announcements. Allow Employee Portal sessions only for those resources; ERP,
+// CRM, customer and shipment resources remain protected by the normal ERP middleware.
+const HR_GENERIC_RESOURCES = new Set(["employees", "leave-requests", "payslips", "hr-announcements"]);
+function requireErpOrHrResourceAuth(request, response, next) {
+  return requireAppAuth(request, response, () => {
+    const resourceName = String(request.params?.resource || "");
+    if (request.appSession?.crmPortal) {
+      return response.status(403).json({ ok: false, error: "Company ERP Portal access is required for this operation." });
+    }
+    if (request.appSession?.employeePortal && !HR_GENERIC_RESOURCES.has(resourceName)) {
+      return response.status(403).json({ ok: false, error: "This HR account is not allowed to access that resource." });
+    }
+    return next();
+  });
+}
+
+function rejectUnauthorizedHrMutation(request, response, resourceName, action) {
+  if (!request.appSession?.employeePortal || isHrAdminSession(request.appSession)) return false;
+  const userName = String(request.appSession.userName || "").trim().toLowerCase();
+  const bodyUserName = String(request.body?.userName ?? request.body?.user_name ?? "").trim().toLowerCase();
+  const recordId = String(request.params?.id || "").trim().toLowerCase();
+  const ownsEmployeeRecord = resourceName === "employees" && (bodyUserName === userName || recordId === userName);
+  const ownsLeaveRequest = resourceName === "leave-requests" && bodyUserName === userName;
+  const canCreateOwn = action === "create" && (ownsEmployeeRecord || ownsLeaveRequest);
+  const canUpdateOwn = action === "update" && ownsEmployeeRecord;
+  if (canCreateOwn || canUpdateOwn) return false;
+  response.status(403).json({ ok: false, error: "HR Admin access is required for this HR change." });
+  return true;
+}
+
 function requireEmployeePortalAuth(request, response, next) {
   const session = appAuthFromRequest(request);
   if (!session) return response.status(401).json({ ok: false, error: "Login required." });
@@ -4136,7 +4167,7 @@ app.use("/api/customer/compliance", createCustomerComplianceRouter({ query, requ
 app.use("/api/chat", createConnectedChatRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth }));
 
-app.get("/api/:resource", requireErpPortalAuth, async (request, response, next) => {
+app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -4146,6 +4177,10 @@ app.get("/api/:resource", requireErpPortalAuth, async (request, response, next) 
 
   try {
     const result = await getRows(resourceName, config);
+    if (request.appSession?.employeePortal && !isHrAdminSession(request.appSession) && (resourceName === "leave-requests" || resourceName === "payslips")) {
+      const userName = String(request.appSession.userName || "").trim().toLowerCase();
+      result.rows = result.rows.filter((row) => String(row.user_name || "").trim().toLowerCase() === userName);
+    }
     if (resourceName === "documents") {
       result.rows = result.rows.filter((row) => !EMPLOYEE_DOCUMENT_TYPE_NAMES.has(String(row.type || "")));
     }
@@ -4159,9 +4194,11 @@ app.get("/api/:resource", requireErpPortalAuth, async (request, response, next) 
   }
 });
 
-app.post("/api/:resource", requireErpPortalAuth, async (request, response, next) => {
+app.post("/api/:resource", requireErpOrHrResourceAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
+
+  if (rejectUnauthorizedHrMutation(request, response, resourceName, "create")) return;
 
   if (!config) {
     return next();
@@ -4307,9 +4344,11 @@ app.put("/api/shipments/:id", requireErpPortalAuth, async (request, response, ne
   }
 });
 
-app.put("/api/:resource/:id", requireErpPortalAuth, async (request, response, next) => {
+app.put("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
+
+  if (rejectUnauthorizedHrMutation(request, response, resourceName, "update")) return;
 
   if (!config) {
     return next();
@@ -4365,9 +4404,13 @@ app.delete("/api/audit", requireErpPortalAuth, async (_request, response, next) 
   }
 });
 
-app.delete("/api/:resource/:id", requireErpPortalAuth, async (request, response, next) => {
+app.delete("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
+
+  if (request.appSession?.employeePortal && !isHrAdminSession(request.appSession)) {
+    return response.status(403).json({ ok: false, error: "HR Admin access is required to delete HR records." });
+  }
 
   if (!config) {
     return next();
