@@ -2985,11 +2985,27 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
       const saved = await query(`insert into documents (document_no, linked_no, type, status, date, owner, file_name, storage_url, notes, created_by) values ($1,$2,'POD','Uploaded',current_date,$3,$4,$5,$6,$3) on conflict (document_no) do update set file_name=excluded.file_name,storage_url=excluded.storage_url,notes=excluded.notes,status='Uploaded',date=current_date,owner=excluded.owner,updated_at=now() returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`, [documentNo, jobNo, userName, fileName, storageUrl, notes]);
       const airwayBillNo = String(shipment.rows[0]?.airway_bill_no || requestedAirwayBillNo || "").trim();
       let relatedRows = shipment.rows;
+      const relatedDocuments = [saved.rows[0]];
       if (airwayBillNo) {
         const updated = await query("update shipments set status=case when lower(trim(status))='delivered' then 'Delivered' else status end, pod_status=case when lower(trim(status))='delivered' then 'Uploaded' else pod_status end, updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
         relatedRows = updated.rows;
+        for (const related of updated.rows) {
+          if (String(related.job_no || "").trim().toLowerCase() === jobNo.toLowerCase()) continue;
+          const relatedJobPart = safeEmployeeDocumentPart(related.job_no);
+          const relatedDocumentNo = splitNo
+            ? `POD-${relatedJobPart.toUpperCase()}-${safeEmployeeDocumentPart(splitNo).toUpperCase()}`
+            : `POD-${relatedJobPart.toUpperCase()}`;
+          const relatedDocument = await query(
+            `insert into documents (document_no, linked_no, type, status, date, owner, file_name, storage_url, notes, created_by)
+             values ($1,$2,'POD','Uploaded',current_date,$3,$4,$5,$6,$3)
+             on conflict (document_no) do update set file_name=excluded.file_name,storage_url=excluded.storage_url,notes=excluded.notes,status='Uploaded',date=current_date,owner=excluded.owner,updated_at=now()
+             returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`,
+            [relatedDocumentNo, related.job_no, userName, fileName, storageUrl, notes]
+          );
+          relatedDocuments.push(relatedDocument.rows[0]);
+        }
       }
-      return response.status(201).json({ ok: true, row: saved.rows[0], airwayBillNo, relatedRows, relatedDocuments: [saved.rows[0]] });
+      return response.status(201).json({ ok: true, row: saved.rows[0], airwayBillNo, relatedRows, relatedDocuments });
     }
     const kind = mimeType === "application/pdf" ? "raw" : "image";
     const timestamp = Math.floor(Date.now() / 1000);
