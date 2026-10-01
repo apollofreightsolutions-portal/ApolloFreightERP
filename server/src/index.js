@@ -3141,6 +3141,21 @@ function hrBranchForRequest(request, requestedBranch = "") {
   return normalizeHrBranch(String(request.appSession?.branchAccess || "").split(",")[0]);
 }
 
+async function hrBranchForUser(userName) {
+  const row = (await query("select branch_access from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
+  return normalizeHrBranch(row?.branch_access || "Kuwait HO");
+}
+
+async function hrLeaveSettings() {
+  try {
+    const row = (await query("select settings_json from hr_leave_settings where settings_key='global' limit 1")).rows[0];
+    return row?.settings_json && typeof row.settings_json === "object" ? row.settings_json : {};
+  } catch (error) {
+    if (error.code !== "42P01") throw error;
+    return {};
+  }
+}
+
 function dateParts(startDate, endDate) {
   const start = new Date(`${startDate}T00:00:00Z`);
   const end = new Date(`${endDate}T00:00:00Z`);
@@ -3153,18 +3168,22 @@ function dateParts(startDate, endDate) {
 }
 
 async function hrCalendarRules(branch = "Kuwait HO") {
+  const normalizedBranch = String(branch || "").trim().toLowerCase() === "all" ? "All" : normalizeHrBranch(branch);
   const [weekends, holidays, types] = await Promise.all([
-    query("select branch,weekday,active from hr_weekend_rules where branch in ('All',$1) order by weekday", [branch]),
-    query("select id, holiday_date, day_type, title, notes, branch from hr_calendar_days where active = true and (lower(trim(branch))='all' or lower(trim(branch))=lower(trim($1))) order by holiday_date", [branch]),
+    query("select branch,weekday,active from hr_weekend_rules where branch in ('All',$1) order by weekday", [normalizedBranch]),
+    query("select id, holiday_date, day_type, title, notes, branch from hr_calendar_days where active = true and (lower(trim(branch))='all' or lower(trim(branch))=lower(trim($1))) order by holiday_date", [normalizedBranch]),
     query("select * from hr_leave_types where active = true order by id")
   ]);
-  const normalizedBranch = String(branch || "").trim().toLowerCase() === "all" ? "All" : normalizeHrBranch(branch);
   const exactWeekendRows = weekends.rows.filter((row) => String(row.branch || "").trim().toLowerCase() !== "all" && normalizeHrBranch(row.branch) === normalizedBranch);
   const sharedWeekendRows = weekends.rows.filter((row) => String(row.branch || "").trim().toLowerCase() === "all");
   const activeExactWeekendRows = exactWeekendRows.filter((row) => row.active);
   let weekendOverride = null;
   try { weekendOverride = (await query("select configured from hr_weekend_rule_overrides where branch=$1 limit 1", [normalizedBranch])).rows[0] || null; } catch (error) { if (error.code !== "42P01") throw error; }
-  const weekendRows = weekendOverride ? activeExactWeekendRows : (activeExactWeekendRows.length ? activeExactWeekendRows : sharedWeekendRows.filter((row) => row.active));
+  const weekendRows = normalizedBranch === "All"
+    ? sharedWeekendRows.filter((row) => row.active)
+    : weekendOverride?.configured
+      ? activeExactWeekendRows
+      : (activeExactWeekendRows.length ? activeExactWeekendRows : sharedWeekendRows.filter((row) => row.active));
   const effectiveDates = new Map();
   for (const row of holidays.rows) {
     const isAll = String(row.branch || "").trim().toLowerCase() === "all";
@@ -3182,19 +3201,21 @@ async function calculateHrLeave(startDate, endDate, branch = "Kuwait HO") {
   const dates = dateParts(startDate, endDate);
   if (!dates) throw new Error("A valid leave date range is required.");
   const rules = await hrCalendarRules(branch);
-  const holidayMap = new Map(rules.holidays
-    .filter((row) => String(row.day_type || "").trim().toUpperCase() === "PUBLIC_HOLIDAY")
-    .map((row) => [String(row.holiday_date).slice(0, 10), row]));
+  const calendarMap = new Map(rules.holidays.map((row) => [String(row.holiday_date).slice(0, 10), row]));
   let weekendDays = 0;
   let publicHolidayDays = 0;
   let workingDays = 0;
   for (const date of dates) {
     const key = date.toISOString().slice(0, 10);
     const day = date.getUTCDay();
-    // Weekends count as leave. A marked public holiday is the only date
-    // excluded from the leave total, even if it is also a weekend.
-    if (rules.weekends.includes(day)) weekendDays += 1;
-    if (holidayMap.has(key) && String(holidayMap.get(key).day_type) === "PUBLIC_HOLIDAY") {
+    const calendarRule = calendarMap.get(key);
+    const dayType = String(calendarRule?.day_type || "").trim().toUpperCase();
+    const isWorkingDayOverride = dayType === "WORKING_DAY";
+    const isPublicHoliday = dayType === "PUBLIC_HOLIDAY";
+    // Public holidays are never deducted from leave. A WORKING_DAY override
+    // takes precedence over a weekend or shared public-holiday rule.
+    if (rules.weekends.includes(day) && !isWorkingDayOverride) weekendDays += 1;
+    if (isPublicHoliday && !isWorkingDayOverride) {
       publicHolidayDays += 1;
     } else {
       workingDays += 1;
@@ -3383,6 +3404,7 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
     const calculation = await calculateHrLeave(startDate,endDate,branch);
     const halfDayType = String(data.halfDayType || "").toUpperCase();
     if (["FIRST_HALF","SECOND_HALF"].includes(halfDayType) && startDate !== endDate) return response.status(400).json({ok:false,error:"Half-day leave must use the same start and end date."});
+    if (["FIRST_HALF","SECOND_HALF"].includes(halfDayType) && !type.allow_half_day) return response.status(400).json({ok:false,error:`${type.name} does not allow half-day leave.`});
     if (["FIRST_HALF","SECOND_HALF"].includes(halfDayType)) {
       calculation.actualLeaveDays = Math.max(0, calculation.actualLeaveDays - 0.5);
     }
@@ -3402,8 +3424,21 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
     const blackout = calendarRules.holidays.find((item) => String(item.day_type || "").toUpperCase() === "BLACKOUT" && String(item.holiday_date).slice(0,10) >= startDate && String(item.holiday_date).slice(0,10) <= endDate);
     if (blackout) return response.status(400).json({ok:false,error:`Leave is restricted during ${blackout.title || 'a blackout date'}. HR must change the calendar rule first.`});
     const requestNo = `LV-${year}-${Date.now().toString().slice(-7)}`;
-    const rejoiningDate = isoDate(data.rejoiningDate) || null;
-    if (!rejoiningDate || rejoiningDate <= endDate) return response.status(400).json({ok:false,error:"A valid rejoining date after the leave end date is required."});
+    const calendarMap = new Map(calendarRules.holidays.map((item) => [String(item.holiday_date).slice(0,10), item]));
+    const isWorkingDate = (date) => {
+      const item = calendarMap.get(date);
+      const dayType = String(item?.day_type || "").toUpperCase();
+      if (dayType === "WORKING_DAY") return true;
+      if (dayType === "PUBLIC_HOLIDAY" || dayType === "BLACKOUT") return false;
+      return !calendarRules.weekends.includes(new Date(`${date}T00:00:00Z`).getUTCDay());
+    };
+    let rejoiningDate = isoDate(data.rejoiningDate) || null;
+    if (!rejoiningDate) {
+      const suggested = new Date(`${endDate}T00:00:00Z`);
+      do { suggested.setUTCDate(suggested.getUTCDate() + 1); } while (!isWorkingDate(suggested.toISOString().slice(0,10)));
+      rejoiningDate = suggested.toISOString().slice(0,10);
+    }
+    if (rejoiningDate <= endDate || !isWorkingDate(rejoiningDate)) return response.status(400).json({ok:false,error:"Rejoining date must be after leave and fall on a working day for the employee's branch."});
     const reason = String(data.reason || "").trim();
     const contactDuringLeave = String(data.contactDuringLeave || "").trim();
     const leaveAddress = String(data.leaveAddress || "").trim();
@@ -3413,6 +3448,9 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
        where lower(e.department)=lower($1) and r.status in ('Pending','Approved') and r.start_date <= $3 and r.end_date >= $2`,
       [employee.department, startDate, endDate]
     ) : { rows: [{ count: 0 }] };
+    const leaveSettings = await hrLeaveSettings();
+    const maxSameDepartmentLeave = Number(leaveSettings.max_same_department_leave || 0);
+    if (maxSameDepartmentLeave > 0 && Number(staffing.rows[0]?.count || 0) >= maxSameDepartmentLeave) return response.status(400).json({ok:false,error:`The maximum number of employees from ${employee.department} already on overlapping leave has been reached.`});
     const staffingWarning = Number(staffing.rows[0]?.count || 0) > 0
       ? `${staffing.rows[0].count} colleague(s) in ${employee.department} already have overlapping pending or approved leave.` : "";
     const saved = await query(`insert into leave_requests (request_no,user_name,employee_name,leave_type,start_date,end_date,total_days,calendar_days,weekend_days,public_holiday_days,actual_leave_days,half_day_type,reason,rejoining_date,contact_during_leave,leave_address,emergency_contact,declaration_accepted,declaration_accepted_at,status,applied_at,created_at,updated_at)
@@ -3504,9 +3542,17 @@ app.put("/api/hr/leave-requests/:requestNo/decision", requireEmployeePortalAuth,
     const status = decision === "approve" ? "Approved" : decision === "reject" ? "Rejected" : "Sent Back";
     const comment = String(request.body?.reason || "").trim();
     if (decision !== "approve" && !comment) return response.status(400).json({ok:false,error:`A ${decision === "reject" ? "rejection" : "send-back"} reason is required.`});
+    let approvalBalance = null;
+    if (decision === "approve") {
+      approvalBalance = await hrBalanceForUser(existing.user_name, Number(String(existing.start_date).slice(0,4)), existing.leave_type);
+      const approvalType = (await query("select allow_negative_balance,require_attachment,attachment_after_days from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1", [existing.leave_type])).rows[0];
+      const requestedDays = Number(existing.actual_leave_days || existing.total_days || 0);
+      if (requestedDays > approvalBalance.available && !approvalType?.allow_negative_balance) return response.status(400).json({ok:false,error:`Insufficient leave balance to approve this request. Available: ${approvalBalance.available} day(s), requested: ${requestedDays}.`});
+      if (approvalType?.require_attachment && !existing.attachment_url && requestedDays >= Number(approvalType.attachment_after_days || 0)) return response.status(400).json({ok:false,error:"A supporting document is required before this leave request can be approved."});
+    }
     const saved = await query("update leave_requests set status=$1,approved_by=$2,approved_at=now(),rejection_reason=$3,approved_by_delegate=$4,updated_at=now() where request_no=$5 and status='Pending' returning *",[status,request.appSession.userName,comment,authority.delegated,requestNo]);
     if (!saved.rows[0]) return response.status(409).json({ok:false,error:"This leave request was already updated by another reviewer."});
-    const balance = await hrBalanceForUser(existing.user_name, Number(String(existing.start_date).slice(0,4)), existing.leave_type);
+    const balance = approvalBalance || await hrBalanceForUser(existing.user_name, Number(String(existing.start_date).slice(0,4)), existing.leave_type);
     if (status === "Approved") await query("insert into hr_leave_ledger(user_name,year,leave_type_code,transaction_type,reference_no,days,balance_after,reason,created_by) values($1,$2,$3,'APPROVED_LEAVE',$4,$5,$6,$7,$8)",[existing.user_name,balance.year,existing.leave_type,requestNo,-Number(existing.actual_leave_days||existing.total_days||0),balance.available,"Leave approved",request.appSession.userName]);
     return response.json({ok:true,row:saved.rows[0]});
   } catch(error){ return next(error); }
@@ -3538,14 +3584,23 @@ app.post("/api/hr/leave-requests/:requestNo/extension", requireEmployeePortalAut
     if(original.status!=="Approved") return response.status(400).json({ok:false,error:"Only an approved leave request can be extended."});
     const newEnd=isoDate(request.body?.endDate); const start=new Date(`${String(original.end_date).slice(0,10)}T00:00:00Z`); start.setUTCDate(start.getUTCDate()+1); const extensionStart=start.toISOString().slice(0,10);
     if(!newEnd||newEnd<extensionStart) return response.status(400).json({ok:false,error:"Extension end date must be after the current leave end date."});
-    const calculation=await calculateHrLeave(extensionStart,newEnd,hrBranchForRequest(request)); if(calculation.actualLeaveDays<=0) return response.status(400).json({ok:false,error:"The extension contains no working leave days."});
+    const employeeBranch = await hrBranchForUser(original.user_name);
+    const extensionRules=await hrCalendarRules(employeeBranch);
+    const extensionBlackout=extensionRules.holidays.find((item)=>String(item.day_type||"").toUpperCase()==="BLACKOUT"&&String(item.holiday_date).slice(0,10)>=extensionStart&&String(item.holiday_date).slice(0,10)<=newEnd);
+    if(extensionBlackout) return response.status(400).json({ok:false,error:`Leave is restricted during ${extensionBlackout.title||"a blackout date"}. HR must change the calendar rule first.`});
+    const calculation=await calculateHrLeave(extensionStart,newEnd,employeeBranch); if(calculation.actualLeaveDays<=0) return response.status(400).json({ok:false,error:"The extension contains no working leave days."});
     const type=(await query("select * from hr_leave_types where code=$1 limit 1",[String(original.leave_type||"").toUpperCase()])).rows[0];
     const balance=await hrBalanceForUser(original.user_name,Number(extensionStart.slice(0,4)),String(original.leave_type||"").toUpperCase());
     if(calculation.actualLeaveDays>balance.available&&!type?.allow_negative_balance) return response.status(400).json({ok:false,error:"Insufficient leave balance for this extension."});
+    const extensionCalendarMap=new Map(extensionRules.holidays.map((item)=>[String(item.holiday_date).slice(0,10),item]));
+    const extensionIsWorkingDate=(date)=>{const item=extensionCalendarMap.get(date),dayType=String(item?.day_type||"").toUpperCase();if(dayType==="WORKING_DAY")return true;if(["PUBLIC_HOLIDAY","BLACKOUT"].includes(dayType))return false;return !extensionRules.weekends.includes(new Date(`${date}T00:00:00Z`).getUTCDay());};
+    let rejoiningDate=isoDate(request.body?.rejoiningDate)||null;
+    if(!rejoiningDate){const suggested=new Date(`${newEnd}T00:00:00Z`);do{suggested.setUTCDate(suggested.getUTCDate()+1);}while(!extensionIsWorkingDate(suggested.toISOString().slice(0,10)));rejoiningDate=suggested.toISOString().slice(0,10);}
+    if(rejoiningDate<=newEnd||!extensionIsWorkingDate(rejoiningDate)) return response.status(400).json({ok:false,error:"Extension rejoining date must be after the extension and fall on a working day."});
     const requestNo=`LV-${extensionStart.slice(0,4)}-${Date.now().toString().slice(-7)}`;
     const saved=await query(`insert into leave_requests(request_no,user_name,employee_name,leave_type,start_date,end_date,total_days,calendar_days,weekend_days,public_holiday_days,actual_leave_days,reason,rejoining_date,contact_during_leave,leave_address,emergency_contact,declaration_accepted,declaration_accepted_at,status,applied_at,created_at,updated_at,extension_of,extension_reason)
       values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,now(),'Pending',now(),now(),now(),$17,$18) returning *`,
-      [requestNo,original.user_name,original.employee_name,original.leave_type,extensionStart,newEnd,calculation.actualLeaveDays,calculation.calendarDays,calculation.weekendDays,calculation.publicHolidayDays,calculation.actualLeaveDays,String(request.body?.reason||"Leave extension").trim(),request.body?.rejoiningDate||null,original.contact_during_leave,original.leave_address,original.emergency_contact,original.request_no,String(request.body?.reason||"Leave extension").trim()]);
+      [requestNo,original.user_name,original.employee_name,original.leave_type,extensionStart,newEnd,calculation.actualLeaveDays,calculation.calendarDays,calculation.weekendDays,calculation.publicHolidayDays,calculation.actualLeaveDays,String(request.body?.reason||"Leave extension").trim(),rejoiningDate,original.contact_during_leave,original.leave_address,original.emergency_contact,original.request_no,String(request.body?.reason||"Leave extension").trim()]);
     return response.status(201).json({ok:true,row:saved.rows[0],calculation});
   } catch(error){ return next(error); }
 });
@@ -3563,7 +3618,7 @@ app.post("/api/hr/leave-requests/:requestNo/rejoin", requireEmployeePortalAuth, 
     const promised=isoDate(existing.rejoining_date);
     if(!promised||actualReturn<promised) return response.status(400).json({ok:false,error:"Actual return date must be on or after the promised rejoining date."});
     let lateReturnDays=0;
-    if(actualReturn>promised){ const dayBefore=new Date(`${actualReturn}T00:00:00Z`); dayBefore.setUTCDate(dayBefore.getUTCDate()-1); const type=(await query("select paid from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1",[existing.leave_type])).rows[0]; const calc=await calculateHrLeave(promised,dayBefore.toISOString().slice(0,10),hrBranchForRequest(request)); lateReturnDays=type?.paid===false?0:Number(calc.actualLeaveDays||0); }
+    if(actualReturn>promised){ const dayBefore=new Date(`${actualReturn}T00:00:00Z`); dayBefore.setUTCDate(dayBefore.getUTCDate()-1); const type=(await query("select paid from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1",[existing.leave_type])).rows[0]; const calc=await calculateHrLeave(promised,dayBefore.toISOString().slice(0,10),await hrBranchForUser(existing.user_name)); lateReturnDays=type?.paid===false?0:Number(calc.actualLeaveDays||0); }
     const saved=await query("update leave_requests set rejoined_at=$1,rejoined_by=$2,late_return_days=$3,updated_at=now() where request_no=$4 and rejoined_at is null returning *",[actualReturn,request.appSession.userName,lateReturnDays,requestNo]);
     if(!saved.rows[0]) return response.status(409).json({ok:false,error:"This leave request was already marked as rejoined."});
     if(lateReturnDays>0) await query("insert into hr_leave_ledger(user_name,year,leave_type_code,transaction_type,reference_no,days,balance_after,reason,created_by) values($1,$2,$3,'LATE_RETURN',$4,$5,0,$6,$7)",[existing.user_name,Number(String(existing.start_date).slice(0,4)),String(existing.leave_type||'').toUpperCase(),requestNo,lateReturnDays,`Late return: ${lateReturnDays} additional leave day(s)`,request.appSession.userName]);
