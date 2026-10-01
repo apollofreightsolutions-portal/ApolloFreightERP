@@ -8411,6 +8411,7 @@ function shipmentDialogBody(mode = "shipment", record = null) {
   const isAirway = actualMode === "airway";
   const isNewFromAirway = Boolean(record?.isNewFromAirway);
   const loaded = Boolean(record) && !isNewFromAirway;
+  const jobNoReadOnly = !loaded || isAirway || !isAdminSession();
   const tcnAvailable = Boolean(record && state.shipments.some((shipmentItem) => shipmentItem.jobNo === record.jobNo));
   const sectionOpen = loaded;
   const defaultCustomer = record?.customer || "";
@@ -8418,7 +8419,7 @@ function shipmentDialogBody(mode = "shipment", record = null) {
   return `
     <input type="hidden" name="entryMode" value="${escapeHtml(actualMode)}" />
     ${formSection("Shipment Information", `
-      ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber()), loaded && !(isAdminSession() && !isAirway))}
+      ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber()), jobNoReadOnly)}
       ${input("bookingDate", "Booking Date", fieldValue("bookingDate", today()), false, "date")}
       ${input("shipmentDate", "Shipment Date", fieldValue("shipmentDate", today()), false, "date")}
       ${strictSelect("status", "Status", statusOptions(), fieldValue("status", "Booked"))}
