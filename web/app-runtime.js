@@ -8978,12 +8978,14 @@ function bindShipmentDirectionDialog() {
       : "false";
   }
 
-  const refreshShipmentNumber = () => {
+  const refreshShipmentNumber = (branchChanged = false) => {
     const entryMode = dialogBody.querySelector("[name='entryMode']")?.value || "shipment";
     if (entryMode !== "shipment" || !jobNoField || !serviceSelect.value) return;
-    if (jobNoField.dataset.adminEditable === "true") return;
     const branch = branchSelect?.value || defaultUserBranch();
-    jobNoField.value = jobNoField.readOnly
+    if (jobNoField.dataset.adminEditable === "true" && !branchChanged) return;
+    jobNoField.value = branchChanged
+      ? nextShipmentNumber(branch, serviceSelect.value)
+      : jobNoField.readOnly
       ? shipmentNumberWithServiceTag(branch, jobNoField.value, serviceSelect.value)
       : nextShipmentNumber(branch, serviceSelect.value);
   };
@@ -9000,7 +9002,7 @@ function bindShipmentDirectionDialog() {
     refreshShipmentNumber();
   });
   serviceSelect.addEventListener("change", refreshShipmentNumber);
-  branchSelect?.addEventListener("change", refreshShipmentNumber);
+  branchSelect?.addEventListener("change", () => refreshShipmentNumber(true));
   rebuildServiceOptions(serviceSelect.value);
   refreshShipmentNumber();
 }
