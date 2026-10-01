@@ -1695,7 +1695,7 @@ function maybePlayAdminNotification() {
   lastPendingNotificationCount = pending;
 }
 
-function playBeep() {
+function playNotificationSound(kind = "success") {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return;
 
@@ -1703,15 +1703,26 @@ function playBeep() {
     const audioContext = new AudioContextClass();
     const oscillator = audioContext.createOscillator();
     const gain = audioContext.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.value = 880;
-    gain.gain.value = 0.08;
+    const failure = kind === "failed" || kind === "denied";
+    const startFrequency = failure ? 520 : 740;
+    const endFrequency = failure ? 220 : 1046;
+    const start = audioContext.currentTime;
+    oscillator.type = failure ? "triangle" : "sine";
+    oscillator.frequency.setValueAtTime(startFrequency, start);
+    oscillator.frequency.exponentialRampToValueAtTime(endFrequency, start + (failure ? 0.24 : 0.14));
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.08, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + (failure ? 0.28 : 0.2));
     oscillator.connect(gain);
     gain.connect(audioContext.destination);
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.18);
+    oscillator.start(start);
+    oscillator.stop(start + (failure ? 0.28 : 0.2));
     oscillator.onended = () => audioContext.close().catch(() => {});
   } catch {}
+}
+
+function playBeep() {
+  playNotificationSound("success");
 }
 
 async function addHistory(action, reference, details = "") {
@@ -2300,6 +2311,8 @@ function branchValuesForRecord(row) {
 }
 
 function notify(status, title, detail = "") {
+  if (status === "success") playBeep();
+  if (status === "failed" || status === "denied") playNotificationSound("failed");
   if (!toastStack) {
     if (detail) window.alert(`${title}\n${detail}`);
     else window.alert(title);
