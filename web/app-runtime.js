@@ -1413,7 +1413,18 @@ function shipmentServiceCode(service) {
   const normalized = String(service || "").trim().toUpperCase();
   return normalized === "CONSOLIDATION" || normalized === "CONSOLADATION" ? "CO" : normalized;
 }
-
+function shipmentNumberTemplatePart(value) {
+  const tokenized = String(value || "")
+    .replaceAll("YYYY", "\u0001")
+    .replaceAll("YY", "\u0002")
+    .replaceAll("MM", "\u0003")
+    .replaceAll("{SERVICE}", "\u0004");
+  return escapeRegex(tokenized)
+    .replaceAll("\u0001", "\\d{4}")
+    .replaceAll("\u0002", "\\d{2}")
+    .replaceAll("\u0003", "\\d{2}")
+    .replaceAll("\u0004", "[A-Za-z0-9]+");
+}
 function nextShipmentNumber(branch = defaultUserBranch(), service = "") {
   const normalizedBranch = normalizeBranchName(branch);
   const serviceCode = shipmentServiceCode(service);
@@ -1428,8 +1439,11 @@ function nextShipmentNumber(branch = defaultUserBranch(), service = "") {
   const digits = hashPattern[0].length;
   const prefix = resolvedFormat.slice(0, hashPattern.index);
   const suffix = resolvedFormat.slice(hashPattern.index + digits);
-  const suffixPattern = escapeRegex(suffix).replace("\\{SERVICE\\}", "[A-Za-z0-9]+") || "";
-  const numberPattern = new RegExp(`^${escapeRegex(prefix)}(\\d{${digits},})${suffixPattern}$`, "i");
+  const formatHashIndex = String(format).indexOf("#");
+  const numberPattern = new RegExp(
+    `^${shipmentNumberTemplatePart(String(format).slice(0, formatHashIndex))}(\\d{${digits},})${shipmentNumberTemplatePart(String(format).slice(formatHashIndex + digits))}$`,
+    "i"
+  );
   const max = state.shipments
     .filter((item) => normalizeBranchName(item.branch || "") === normalizedBranch)
     .map((item) => String(item.jobNo || "").match(numberPattern))
@@ -4711,16 +4725,16 @@ function renderSettings() {
                 <td><strong>Job No</strong></td>
                 <td>
                   <label>Format<input name="kuwaitShipmentNumberFormat" value="${escapeHtml(state.settings.kuwaitShipmentNumberFormat || "AFS-#####/MM/KWI/{SERVICE}")}" /></label>
-                  <label>Next Serial<input name="kuwaitShipmentSerialStart" type="number" min="1" value="${escapeHtml(state.settings.kuwaitShipmentSerialStart || "1")}" /></label>
+                  <label>Initial Serial<input name="kuwaitShipmentSerialStart" type="number" min="1" value="${escapeHtml(state.settings.kuwaitShipmentSerialStart || "1")}" /></label>
                 </td>
                 <td>
                   <label>Format<input name="dubaiShipmentNumberFormat" value="${escapeHtml(state.settings.dubaiShipmentNumberFormat || "AFS-#####/MM/DBX/{SERVICE}")}" /></label>
-                  <label>Next Serial<input name="dubaiShipmentSerialStart" type="number" min="1" value="${escapeHtml(state.settings.dubaiShipmentSerialStart || "1")}" /></label>
+                  <label>Initial Serial<input name="dubaiShipmentSerialStart" type="number" min="1" value="${escapeHtml(state.settings.dubaiShipmentSerialStart || "1")}" /></label>
                 </td>
               </tr></tbody>
             </table>
           </div>
-          <p class="empty-state">Use <strong>#####</strong> for serial number, <strong>MM</strong> for month, and <strong>{SERVICE}</strong> for the service type selected in the shipment panel.</p>
+          <p class="empty-state">Use <strong>#####</strong> for serial number, <strong>MM</strong> for month, and <strong>{SERVICE}</strong> for the service type selected in the shipment panel. The initial serial is used only when no matching shipment exists; thereafter each branch continues from its highest used serial across month changes.</p>
           ${input("invoiceNumberFormat", "Invoice Number Format", state.settings.invoiceNumberFormat)}
           ${input("consolidationNumberFormat", "Consolidation Number Format", state.settings.consolidationNumberFormat)}
           ${input("tcnNumberFormat", "TCN Number Format", state.settings.tcnNumberFormat)}
@@ -8404,7 +8418,7 @@ function shipmentDialogBody(mode = "shipment", record = null) {
   return `
     <input type="hidden" name="entryMode" value="${escapeHtml(actualMode)}" />
     ${formSection("Shipment Information", `
-      ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber()), loaded)}
+      ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber()), loaded && !(isAdminSession() && !isAirway))}
       ${input("bookingDate", "Booking Date", fieldValue("bookingDate", today()), false, "date")}
       ${input("shipmentDate", "Shipment Date", fieldValue("shipmentDate", today()), false, "date")}
       ${strictSelect("status", "Status", statusOptions(), fieldValue("status", "Booked"))}
@@ -8956,10 +8970,17 @@ function bindShipmentDirectionDialog() {
   const branchSelect = dialogBody.querySelector("[name='branch']");
   const jobNoField = dialogBody.querySelector("[name='jobNo']");
   if (!directionSelect || !serviceSelect) return;
+  if (jobNoField) {
+    jobNoField.dataset.adminEditable = isAdminSession()
+      && String(dialogTitle?.textContent || "").trim() === String(jobNoField.value || "").trim()
+      ? "true"
+      : "false";
+  }
 
   const refreshShipmentNumber = () => {
     const entryMode = dialogBody.querySelector("[name='entryMode']")?.value || "shipment";
     if (entryMode !== "shipment" || !jobNoField || !serviceSelect.value) return;
+    if (jobNoField.dataset.adminEditable === "true") return;
     const branch = branchSelect?.value || defaultUserBranch();
     jobNoField.value = jobNoField.readOnly
       ? shipmentNumberWithServiceTag(branch, jobNoField.value, serviceSelect.value)
