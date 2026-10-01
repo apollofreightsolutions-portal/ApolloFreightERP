@@ -19,7 +19,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--update-env-vars'
-      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,GCS_BUCKET=apollo-freight-private-cs-project-xui8rpt4,GCS_PREFIX=apollo-freight,ALLOWED_ORIGIN=https://connected.apollo-freight.com,https://apollo-freight.com,https://www.apollo-freight.com'
+      - '^|^GOOGLE_CLOUD_PROJECT=$PROJECT_ID|GOOGLE_CLOUD_LOCATION=us-central1|GCS_BUCKET=apollo-freight-private-cs-project-xui8rpt4|GCS_PREFIX=apollo-freight|ALLOWED_ORIGIN=https://connected.apollo-freight.com,https://apollo-freight.com,https://www.apollo-freight.com'
 
 options:
   logging: CLOUD_LOGGING_ONLY
