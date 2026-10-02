@@ -1470,7 +1470,7 @@ function shipmentNumberWithServiceTag(branch, currentJobNo, service) {
   const afterService = resolvedFormat.slice(serviceMarker + "{SERVICE}".length);
   const serialPrefix = beforeService.slice(0, resolvedHash.index);
   const serialSuffix = beforeService.slice(resolvedHash.index + digits);
-  const match = current.match(new RegExp(`^${escapeRegex(serialPrefix)}(\\d{${digits},})${escapeRegex(serialSuffix)}[A-Za-z0-9]+${escapeRegex(afterService)}$`, "i"));
+  const match = current.match(new RegExp(`^${escapeRegex(serialPrefix)}(\\d{${digits},})${escapeRegex(serialSuffix)}[A-Za-z0-9]*${escapeRegex(afterService)}$`, "i"));
   if (!match) return current;
   return `${serialPrefix}${match[1]}${serialSuffix}${shipmentServiceCode(service)}${afterService}`;
 }
@@ -8428,23 +8428,25 @@ function shipmentDialogBody(mode = "shipment", record = null) {
   const tcnAvailable = Boolean(record && state.shipments.some((shipmentItem) => shipmentItem.jobNo === record.jobNo));
   const sectionOpen = loaded;
   const defaultCustomer = record?.customer || "";
+  const defaultBranch = normalizeBranchName(record?.branch || defaultUserBranch());
+  const defaultService = String(record?.shipmentService || "LE").trim() || "LE";
   const fieldValue = (key, fallback = "") => record?.[key] ?? fallback;
   return `
     <input type="hidden" name="entryMode" value="${escapeHtml(actualMode)}" />
     ${formSection("Shipment Information", `
-      ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber()), jobNoReadOnly)}
+      ${input("jobNo", isAirway ? "Airway Bill Number" : "Shipment Number", fieldValue("jobNo", isAirway ? nextNumber("AWB", state.shipments, "jobNo") : nextShipmentNumber(defaultBranch, defaultService)), jobNoReadOnly)}
       ${input("bookingDate", "Booking Date", fieldValue("bookingDate", today()), false, "date")}
       ${input("shipmentDate", "Shipment Date", fieldValue("shipmentDate", today()), false, "date")}
       ${strictSelect("status", "Status", statusOptions(), fieldValue("status", "Booked"))}
       ${strictSelect("loadType", "Load Type", ["LTL", "FTL", "AIR", "SEA"], fieldValue("loadType", "LTL"))}
       ${strictSelect("shipmentVia", "Shipment Via", ["Air", "Sea", "Land", "Warehouse"], fieldValue("shipmentVia", shipmentViaValue(record) || "Land"))}
       ${strictSelect("shipmentDirection", "Shipment Type", shipmentDirectionOptions(), fieldValue("shipmentDirection", "Export"))}
-      ${strictSelect("shipmentService", "Service Type", shipmentServiceOptions(fieldValue("shipmentDirection", "Export")), fieldValue("shipmentService", "LE"))}
+      ${strictSelect("shipmentService", "Service Type", shipmentServiceOptions(fieldValue("shipmentDirection", "Export")), defaultService)}
       ${selectEditable("origin", "Origin", "origin", [], fieldValue("origin"), false)}
       ${selectEditable("destination", "Destination", "destination", [], fieldValue("destination"), false)}
       ${input("customerReference", "Customer Reference", fieldValue("customerReference"))}
       ${textarea("shipmentRemarks", "Remarks", fieldValue("shipmentRemarks"), false, 2)}
-      ${strictSelect("branch", "Branch", branchOptions(), normalizeBranchName(fieldValue("branch", defaultUserBranch())))}
+      ${strictSelect("branch", "Branch", branchOptions(), defaultBranch)}
       ${input("salesPerson", "Sales Person", fieldValue("salesPerson", currentUserName()))}
       <label>Airway Bill / Bill of Lading
         <span class="inline-input-button">
