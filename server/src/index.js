@@ -1878,6 +1878,16 @@ async function updateRow(config, id, body) {
     throw error;
   }
 
+  if (mfaColumnAvailable && config.table === "app_users" && Object.prototype.hasOwnProperty.call(body, "mfa_policy")) {
+    const requestedMfaPolicy = normalizeMfaPolicy(body.mfa_policy);
+    const persistedMfaPolicy = normalizeMfaPolicy(result.rows[0].mfa_policy);
+    if (requestedMfaPolicy !== persistedMfaPolicy) {
+      const error = new Error("The MFA policy was not persisted. Please run database migration 043_company_user_mfa.sql and try again.");
+      error.status = 503;
+      throw error;
+    }
+  }
+
   if (mfaColumnAvailable && config.table === "app_users" && Object.prototype.hasOwnProperty.call(body, "mfa_policy") && normalizeMfaPolicy(body.mfa_policy) === "disabled") {
     await query("update app_users set mfa_secret_enc='', mfa_recovery_codes='[]', mfa_enrolled_at=null where user_name=$1", [id]);
   }

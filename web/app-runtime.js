@@ -2123,7 +2123,7 @@ function renderModuleNav() {
     const crmButton = portalAccessPanel.querySelector("[data-portal-switch='crm']");
     if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || !isChecked(session.hrPortalAccess);
     if (erpButton) erpButton.hidden = isCustomerSession() || (!isHrSession() && !isCrmSession()) || session.erpPortalAccess === false;
-    if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || (session.maintenancePortalAccess !== true && session.erpPortalAccess !== true);
+    if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || (!isChecked(session.maintenancePortalAccess) && session.erpPortalAccess === false);
     if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || session.crmPortalAccess !== true;
   }
 }
@@ -2518,7 +2518,7 @@ async function switchPortal(target) {
     return;
   }
   if (target === "maintenance") {
-    if (session.maintenancePortalAccess !== true) {
+    if (!isChecked(session.maintenancePortalAccess) && session.erpPortalAccess === false) {
       notifyDenied("Access denied", "Maintenance Portal access is not enabled for this account. Contact Company Management.");
       return;
     }
