@@ -1726,7 +1726,8 @@ async function sanitizeConsolidationJobNumbers(rawJobNumbers, excludeLoadNo = ""
 
 async function insertRow(config, body) {
   body = await prepareRecordForConfig(config, body);
-  const { columns, values } = collectValues(config, body);
+  let insertConfig = config;
+  let { columns, values } = collectValues(insertConfig, body);
   requireFields(config, columns);
 
   if (!columns.length) {
@@ -1739,19 +1740,36 @@ async function insertRow(config, body) {
   // job/AWB number. Database uniqueness is the authority; retry the collided sequence value
   // rather than making the second user re-enter the whole shipment.
   const isShipment = config.table === "shipments";
-  const maxAttempts = isShipment ? 12 : 1;
+  const maxAttempts = isShipment ? 12 : config.table === "app_users" ? 2 : 1;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const placeholders = values.map((_, index) => `$${index + 1}`);
     try {
       const result = await query(
-        `insert into ${config.table} (${columns.join(", ")})
+        `insert into ${insertConfig.table} (${columns.join(", ")})
          values (${placeholders.join(", ")})
-         returning ${columnsFor(config)}`,
+         returning ${columnsFor(insertConfig)}`,
         values
       );
       return result.rows[0];
     } catch (error) {
+      if (config.table === "app_users" && error?.code === "42703" && insertConfig === config) {
+        const requestedMfaPolicy = Object.prototype.hasOwnProperty.call(body, "mfa_policy")
+          ? normalizeMfaPolicy(body.mfa_policy)
+          : "disabled";
+        if (requestedMfaPolicy !== "disabled") {
+          const migrationError = new Error("MFA settings cannot be changed until database migration 043_company_user_mfa.sql is applied.");
+          migrationError.status = 503;
+          throw migrationError;
+        }
+        insertConfig = {
+          ...config,
+          fields: config.fields.filter((item) => item.column !== "mfa_policy")
+        };
+        ({ columns, values } = collectValues(insertConfig, body));
+        requireFields(insertConfig, columns);
+        continue;
+      }
       if (error.code === "23505" && isShipment && attempt < maxAttempts) {
         const awbIndex = columns.indexOf("airway_bill_no");
         const jobIndex = columns.indexOf("job_no");
@@ -1797,22 +1815,62 @@ async function updateRow(config, id, body) {
   }
 
   body = await prepareRecordForConfig(config, body);
-  const { columns, values } = collectValues(config, body, false);
+  let updateConfig = config;
+  let mfaColumnAvailable = true;
+  let { columns, values } = collectValues(updateConfig, body, false);
   if (!columns.length) {
     const error = new Error("No values supplied.");
     error.status = 400;
     throw error;
   }
 
-  const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
-  values.push(id);
-  const result = await query(
-    `update ${config.table}
-     set ${assignments.join(", ")}
-     where ${config.key} = $${values.length}
-     returning ${columnsFor(config)}`,
-    values
-  );
+  let result;
+  try {
+    const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
+    const updateValues = [...values, id];
+    result = await query(
+      `update ${updateConfig.table}
+       set ${assignments.join(", ")}
+       where ${updateConfig.key} = $${updateValues.length}
+       returning ${columnsFor(updateConfig)}`,
+      updateValues
+    );
+  } catch (error) {
+    // Migration 043 is intentionally run separately in production. Until it is
+    // applied, allow existing user permissions/settings to be saved without
+    // the new MFA column. Never pretend an Optional/Required MFA change saved.
+    if (config.table !== "app_users" || error?.code !== "42703") throw error;
+
+    const requestedMfaPolicy = Object.prototype.hasOwnProperty.call(body, "mfa_policy")
+      ? normalizeMfaPolicy(body.mfa_policy)
+      : "disabled";
+    if (requestedMfaPolicy !== "disabled") {
+      const migrationError = new Error("MFA settings cannot be changed until database migration 043_company_user_mfa.sql is applied.");
+      migrationError.status = 503;
+      throw migrationError;
+    }
+
+    updateConfig = {
+      ...config,
+      fields: config.fields.filter((item) => item.column !== "mfa_policy")
+    };
+    ({ columns, values } = collectValues(updateConfig, body, false));
+    if (!columns.length) {
+      const errorWithoutMfa = new Error("No values supplied.");
+      errorWithoutMfa.status = 400;
+      throw errorWithoutMfa;
+    }
+    mfaColumnAvailable = false;
+    const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
+    const updateValues = [...values, id];
+    result = await query(
+      `update ${updateConfig.table}
+       set ${assignments.join(", ")}
+       where ${updateConfig.key} = $${updateValues.length}
+       returning ${columnsFor(updateConfig)}`,
+      updateValues
+    );
+  }
 
   if (!result.rows[0]) {
     const error = new Error("Record not found.");
@@ -1820,7 +1878,7 @@ async function updateRow(config, id, body) {
     throw error;
   }
 
-  if (config.table === "app_users" && Object.prototype.hasOwnProperty.call(body, "mfa_policy") && normalizeMfaPolicy(body.mfa_policy) === "disabled") {
+  if (mfaColumnAvailable && config.table === "app_users" && Object.prototype.hasOwnProperty.call(body, "mfa_policy") && normalizeMfaPolicy(body.mfa_policy) === "disabled") {
     await query("update app_users set mfa_secret_enc='', mfa_recovery_codes='[]', mfa_enrolled_at=null where user_name=$1", [id]);
   }
 
