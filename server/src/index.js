@@ -20,6 +20,16 @@ const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
 const { graphMailStatus, sendMicrosoftGraphMail } = require("./microsoft-graph-mail");
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
+const {
+  normalizePolicy: normalizeMfaPolicy,
+  encryptSecret: encryptMfaSecret,
+  decryptSecret: decryptMfaSecret,
+  verifyTotp,
+  createRecoveryCodes,
+  recoveryCodeHash,
+  consumeRecoveryCode,
+  enrollmentPayload
+} = require("./mfa");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -1054,6 +1064,7 @@ const resources = {
       field("crm_view_team_reports", ["crmViewTeamReports", "crm_view_team_reports"]),
       field("crm_admin_access", ["crmAdminAccess", "crm_admin_access"]),
       field("ai_access", ["aiAccess", "ai_access"]),
+      field("mfa_policy", ["mfaPolicy", "mfa_policy"]),
       field("notes")
     ]
   },
@@ -1464,7 +1475,8 @@ async function loginUser(identifier, password) {
       `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
               can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
               can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin,
-              crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, ai_access, password
+              crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, ai_access,
+              mfa_policy, mfa_secret_enc, mfa_recovery_codes, mfa_enrolled_at, password
        from app_users
        where lower(user_name) = lower($1) or lower(email) = lower($1)
        limit 1`,
@@ -1502,6 +1514,10 @@ async function loginUser(identifier, password) {
       result.rows[0].crm_view_team_reports = String(result.rows[0].role || "").toLowerCase() === "admin";
       result.rows[0].crm_admin_access = String(result.rows[0].role || "").toLowerCase() === "admin";
       result.rows[0].ai_access = String(result.rows[0].role || "").toLowerCase() === "admin";
+      result.rows[0].mfa_policy = "disabled";
+      result.rows[0].mfa_secret_enc = "";
+      result.rows[0].mfa_recovery_codes = "[]";
+      result.rows[0].mfa_enrolled_at = null;
     }
   }
 
@@ -1511,6 +1527,7 @@ async function loginUser(identifier, password) {
   }
 
   delete row.password;
+  row.mfa_policy = normalizeMfaPolicy(row.mfa_policy);
   return row;
 }
 
@@ -1567,6 +1584,12 @@ async function prepareRecordForConfig(config, body) {
     if (password && !password.startsWith("pbkdf2$")) {
       prepared.password = hashCustomerPassword(password);
     }
+    if (Object.prototype.hasOwnProperty.call(prepared, "mfa_policy")) {
+      prepared.mfa_policy = normalizeMfaPolicy(prepared.mfa_policy);
+    }
+    delete prepared.mfa_secret_enc;
+    delete prepared.mfa_recovery_codes;
+    delete prepared.mfa_enrolled_at;
   }
 
   if (config.table === "shipment_requests") {
@@ -1777,6 +1800,10 @@ async function updateRow(config, id, body) {
     const error = new Error("Record not found.");
     error.status = 404;
     throw error;
+  }
+
+  if (config.table === "app_users" && Object.prototype.hasOwnProperty.call(body, "mfa_policy") && normalizeMfaPolicy(body.mfa_policy) === "disabled") {
+    await query("update app_users set mfa_secret_enc='', mfa_recovery_codes='[]', mfa_enrolled_at=null where user_name=$1", [id]);
   }
 
   if (config.table === "shipment_requests") {
@@ -2146,6 +2173,23 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
       return response.status(403).json({ ok: false, error: "ERP Portal access is not enabled for this account." });
     }
 
+    const mfaPolicy = normalizeMfaPolicy(row.mfa_policy);
+    if (!employeeLogin && !maintenanceLogin && !crmLogin && mfaPolicy !== "disabled") {
+      const challenge = signCustomerToken({
+        userName: row.user_name,
+        role: row.role,
+        portal: "mfa",
+        purpose: "login",
+        exp: Date.now() + 10 * 60 * 1000
+      });
+      if (row.mfa_enrolled_at && row.mfa_secret_enc) {
+        return response.json({ ok: true, mfaRequired: true, mfaChallenge: challenge, userName: row.user_name });
+      }
+      if (mfaPolicy === "required") {
+        return response.json({ ok: true, mfaEnrollmentRequired: true, mfaChallenge: challenge, userName: row.user_name });
+      }
+    }
+
     return response.json({
       ok: true,
       session: {
@@ -2209,6 +2253,95 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
 
     return next(error);
   }
+});
+
+function mfaChallengePayload(request, purpose = "login") {
+  const payload = verifyCustomerToken(String(request.body?.challenge || request.body?.mfaChallenge || ""));
+  if (!payload || payload.portal !== "mfa" || payload.purpose !== purpose || !payload.userName) return null;
+  return payload;
+}
+
+function mfaSession(row) {
+  return {
+    userName: row.user_name,
+    email: row.email,
+    role: row.role,
+    branchAccess: row.branch_access,
+    branchViewScope: row.branch_view_scope || "Assigned Branch Only",
+    sectionAccess: row.section_access,
+    canViewAllEntry: row.can_view_all_entry,
+    canViewOnlySelfEntry: row.can_view_only_self_entry,
+    canEditAllEntry: row.can_edit_all_entry,
+    canViewUpdatedHistory: row.can_view_updated_history,
+    canBillingSalesEntry: row.can_billing_sales_entry !== false,
+    canBillingCostEntry: row.can_billing_cost_entry !== false,
+    hrPortalAccess: Boolean(row.hr_portal_access),
+    erpPortalAccess: row.erp_portal_access !== false,
+    maintenancePortalAccess: Boolean(row.maintenance_portal_access),
+    isHrAdmin: Boolean(row.is_hr_admin),
+    aiAccess: Boolean(row.ai_access),
+    ...crmSessionFlags(row),
+    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+  };
+}
+
+app.post("/api/mfa/enroll", async (request, response, next) => {
+  try {
+    const challenge = mfaChallengePayload(request);
+    const session = request.appSession || appAuthFromRequest(request);
+    const userName = String(session?.userName || challenge?.userName || "").trim();
+    if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+    const row = (await query("select user_name, mfa_policy, mfa_enrolled_at from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
+    if (!row) return response.status(404).json({ ok: false, error: "User account not found." });
+    if (normalizeMfaPolicy(row.mfa_policy) === "disabled") return response.status(400).json({ ok: false, error: "MFA is disabled for this user. Ask an Admin to enable Optional or Required MFA." });
+    if (row.mfa_enrolled_at) return response.status(409).json({ ok: false, error: "MFA is already enrolled for this user." });
+    const payload = await enrollmentPayload({ userName });
+    await query("update app_users set mfa_secret_enc=$1, mfa_recovery_codes='[]', mfa_enrolled_at=null where lower(user_name)=lower($2)", [encryptMfaSecret(payload.secret, customerPortalSecret), userName]);
+    return response.json({ ok: true, userName, secret: payload.secret, qrDataUrl: payload.qrDataUrl });
+  } catch (error) { return next(error); }
+});
+
+app.post("/api/mfa/enroll/verify", async (request, response, next) => {
+  try {
+    const challenge = mfaChallengePayload(request);
+    const session = request.appSession || appAuthFromRequest(request);
+    const userName = String(session?.userName || challenge?.userName || "").trim();
+    if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+    const row = (await query("select mfa_secret_enc, mfa_enrolled_at from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
+    if (!row?.mfa_secret_enc || row.mfa_enrolled_at) return response.status(400).json({ ok: false, error: "Start a new MFA enrollment first." });
+    const secret = decryptMfaSecret(row.mfa_secret_enc, customerPortalSecret);
+    if (!verifyTotp(secret, request.body?.code)) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid or expired." });
+    const recoveryCodes = createRecoveryCodes();
+    await query("update app_users set mfa_recovery_codes=$1, mfa_enrolled_at=now() where lower(user_name)=lower($2)", [JSON.stringify(recoveryCodes.map(recoveryCodeHash)), userName]);
+    return response.json({ ok: true, recoveryCodes });
+  } catch (error) { return next(error); }
+});
+
+app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => {
+  try {
+    const challenge = mfaChallengePayload(request);
+    if (!challenge) return response.status(401).json({ ok: false, error: "The MFA login challenge is invalid or expired." });
+    const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [challenge.userName])).rows[0];
+    if (!row || String(row.account_status || "Active").toLowerCase() !== "active" || !row.mfa_enrolled_at || !row.mfa_secret_enc) return response.status(401).json({ ok: false, error: "MFA is not enrolled for this user." });
+    const code = String(request.body?.code || "").trim();
+    let valid = false;
+    let recoveryCodes = row.mfa_recovery_codes || "[]";
+    if (/^\d{6}$/.test(code)) valid = verifyTotp(decryptMfaSecret(row.mfa_secret_enc, customerPortalSecret), code);
+    else if (code) { const consumed = consumeRecoveryCode(recoveryCodes, code); valid = consumed.valid; recoveryCodes = JSON.stringify(consumed.remaining); }
+    if (!valid) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid." });
+    if (recoveryCodes !== row.mfa_recovery_codes) await query("update app_users set mfa_recovery_codes=$1 where lower(user_name)=lower($2)", [recoveryCodes, row.user_name]);
+    return response.json({ ok: true, session: mfaSession(row) });
+  } catch (error) { return next(error); }
+});
+
+app.post("/api/mfa/reset/:userName", requireAppAuth, async (request, response, next) => {
+  try {
+    if (String(request.appSession.role || "").toLowerCase() !== "admin") return response.status(403).json({ ok: false, error: "Only Admin can reset user MFA." });
+    const userName = decodeURIComponent(request.params.userName || "").trim();
+    const result = await query("update app_users set mfa_secret_enc='', mfa_recovery_codes='[]', mfa_enrolled_at=null where lower(user_name)=lower($1) returning user_name", [userName]);
+    if (!result.rows[0]) return response.status(404).json({ ok: false, error: "User account not found." });
+    return response.json({ ok: true, userName: result.rows[0].user_name });
+  } catch (error) { return next(error); }
 });
 
 app.post("/api/portal-switch", requireAppAuth, async (request, response, next) => {

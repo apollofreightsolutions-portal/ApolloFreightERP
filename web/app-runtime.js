@@ -1046,7 +1046,8 @@ function user(
   crmArchiveAccess = false,
   crmViewTeamReports = false,
   crmAdminAccess = false,
-  aiAccess = true
+  aiAccess = true,
+  mfaPolicy = "disabled"
 ) {
   return {
     userName,
@@ -1077,7 +1078,8 @@ function user(
     crmArchiveAccess: isChecked(crmArchiveAccess),
     crmViewTeamReports: isChecked(crmViewTeamReports),
     crmAdminAccess: isChecked(crmAdminAccess),
-    aiAccess: isChecked(aiAccess)
+    aiAccess: isChecked(aiAccess),
+    mfaPolicy: ["disabled", "optional", "required"].includes(String(mfaPolicy || "").toLowerCase()) ? String(mfaPolicy).toLowerCase() : "disabled"
   };
 }
 
@@ -2460,7 +2462,36 @@ async function attemptApiLogin(userName, password, loginMode = "company") {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userName, password, loginMode })
   });
-  return result.session;
+  if (loginMode !== "company" || (!result.mfaRequired && !result.mfaEnrollmentRequired)) return result.session;
+  if (result.mfaEnrollmentRequired) {
+    const enrollment = await fetchJson("/api/mfa/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge: result.mfaChallenge })
+    });
+    const popup = window.open("", "apollo-mfa-enrollment", "width=420,height=520");
+    if (popup) {
+      popup.document.write(`<title>Microsoft Authenticator registration</title><p>Scan this QR code with Microsoft Authenticator.</p><img alt="MFA registration QR code" style="max-width:240px" src="${enrollment.qrDataUrl}"><p>If scanning is unavailable, enter this secret manually:</p><code>${enrollment.secret}</code>`);
+      popup.document.close();
+    } else {
+      window.alert(`Scan the MFA QR code with Microsoft Authenticator. Manual setup key: ${enrollment.secret}`);
+    }
+    const code = window.prompt("Enter the 6-digit code shown by Microsoft Authenticator to finish registration:", "");
+    if (!code) throw new Error("MFA registration was cancelled.");
+    await fetchJson("/api/mfa/enroll/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge: result.mfaChallenge, code })
+    });
+  }
+  const code = window.prompt("Enter the 6-digit code from Microsoft Authenticator (or a recovery code):", "");
+  if (!code) throw new Error("MFA verification was cancelled.");
+  const verified = await fetchJson("/api/mfa/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge: result.mfaChallenge, code })
+  });
+  return verified.session;
 }
 
 async function restoreHandoffSession() {
@@ -3018,7 +3049,8 @@ function apiUser(row) {
     isChecked(row.crm_archive_access),
     isChecked(row.crm_view_team_reports),
     isChecked(row.crm_admin_access),
-    isChecked(row.ai_access)
+    isChecked(row.ai_access),
+    row.mfa_policy || "disabled"
   );
 }
 
@@ -7120,6 +7152,7 @@ function openRecord(type, id, presetRecord) {
           crmViewTeamReports: isChecked(data.crmViewTeamReports),
           crmAdminAccess: isChecked(data.crmAdminAccess),
           aiAccess: isChecked(data.aiAccess),
+          mfaPolicy: data.mfaPolicy || record.mfaPolicy || "disabled",
           notes: data.notes || record.notes || ""
         };
         const payload = { ...updatedRecord };
@@ -8763,6 +8796,7 @@ function userDialogBody(record) {
     ${input("userName", "User Name", fieldValue("userName"), loaded)}
     ${passwordField("password", loaded ? "Reset Password (leave blank to keep current)" : "Password", "")}
     ${input("email", "Email", fieldValue("email"), false, "email")}
+    ${strictSelect("mfaPolicy", "Microsoft Authenticator MFA", ["disabled", "optional", "required"], fieldValue("mfaPolicy", "disabled"))}
     <div class="user-account-access-grid">
       ${strictSelect("role", "User Role", roleOptions(), fieldValue("role", "Operations"))}
       ${strictSelect("accountStatus", "User Account", accountStatusOptions(), fieldValue("accountStatus", "Active"))}
@@ -12563,7 +12597,8 @@ async function createUser(data) {
     isChecked(data.crmArchiveAccess),
     isChecked(data.crmViewTeamReports),
     isChecked(data.crmAdminAccess),
-    isChecked(data.aiAccess)
+    isChecked(data.aiAccess),
+    data.mfaPolicy || "disabled"
   );
   state.users.unshift(record);
   await postRecord("user", record);
