@@ -2124,7 +2124,7 @@ function renderModuleNav() {
     if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || !isChecked(session.hrPortalAccess);
     if (erpButton) erpButton.hidden = isCustomerSession() || (!isHrSession() && !isCrmSession()) || session.erpPortalAccess === false;
     if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || (!isChecked(session.maintenancePortalAccess) && session.erpPortalAccess === false);
-    if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || session.crmPortalAccess !== true;
+    if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || !isChecked(session.crmPortalAccess);
   }
 }
 
@@ -2764,6 +2764,10 @@ async function syncFromApi() {
     state.api = { status: "API offline", database: "local data", mode: "browser", error: error.message };
   } finally {
     hideSyncingIndicator();
+    // The initial ERP render happens before the live session/data sync finishes.
+    // Re-apply portal visibility here so HR, CRM, and Maintenance are immediately
+    // consistent with the current authenticated session, not only after a portal switch.
+    renderModuleNav();
     render();
   }
 }
@@ -7156,6 +7160,9 @@ function openRecord(type, id, presetRecord) {
           notes: data.notes || record.notes || ""
         };
         const payload = { ...updatedRecord };
+        // Include the database spelling explicitly so this security-critical
+        // field remains unambiguous during rolling deployment.
+        payload.mfa_policy = updatedRecord.mfaPolicy;
         if (String(data.password || "").trim()) {
           payload.password = data.password;
         }
@@ -13076,6 +13083,9 @@ async function persistRecord(type, record) {
       body: JSON.stringify(record)
     });
     if (result.mode === "demo") throw new Error("Database tables are not ready yet.");
+    if (type === "user" && record.mfaPolicy && result.row?.mfa_policy !== undefined && String(result.row.mfa_policy).toLowerCase() !== String(record.mfaPolicy).toLowerCase()) {
+      throw new Error("The MFA policy was not persisted by the server.");
+    }
     if (type === "shipment") mergeSynchronizedShipmentRows(result.relatedRows);
     clearApiWriteError();
     return true;

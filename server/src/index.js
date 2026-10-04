@@ -1501,12 +1501,15 @@ async function loginUser(identifier, password) {
       [identifier]
     );
   } catch (error) {
-    // Allow existing live databases to keep signing in while the optional HR
-    // migration is still being applied by the deployment service.
+    // Allow existing live databases to keep signing in while the additive MFA
+    // migration is still being applied. Preserve all existing portal permissions;
+    // only the unavailable MFA columns receive compatibility defaults.
     if (error?.code !== "42703") throw error;
     result = await query(
       `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
               can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
+              can_billing_sales_entry, can_billing_cost_entry, hr_portal_access, erp_portal_access, maintenance_portal_access, is_hr_admin,
+              crm_portal_access, crm_role, crm_view_all_accounts, crm_manage_assignments, crm_export_access, crm_archive_access, crm_view_team_reports, crm_admin_access, ai_access,
               password
        from app_users
        where lower(user_name) = lower($1) or lower(email) = lower($1)
@@ -1514,24 +1517,8 @@ async function loginUser(identifier, password) {
       [identifier]
     );
     if (result.rows[0]) {
-      result.rows[0].hr_portal_access = false;
       result.rows[0].can_billing_sales_entry = true;
       result.rows[0].can_billing_cost_entry = true;
-      // Same reasoning as the migration comment: default erp_portal_access to true (matches
-      // pre-migration behavior of no ERP access gate existing at all) - is_hr_admin defaults
-      // false, a brand new opt-in permission.
-      result.rows[0].erp_portal_access = true;
-      result.rows[0].maintenance_portal_access = false;
-      result.rows[0].is_hr_admin = false;
-      result.rows[0].crm_portal_access = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].crm_role = String(result.rows[0].role || "").toLowerCase() === "admin" ? "Management" : "Sales Executive";
-      result.rows[0].crm_view_all_accounts = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].crm_manage_assignments = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].crm_export_access = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].crm_archive_access = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].crm_view_team_reports = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].crm_admin_access = String(result.rows[0].role || "").toLowerCase() === "admin";
-      result.rows[0].ai_access = String(result.rows[0].role || "").toLowerCase() === "admin";
       result.rows[0].mfa_policy = "disabled";
       result.rows[0].mfa_secret_enc = "";
       result.rows[0].mfa_recovery_codes = "[]";
