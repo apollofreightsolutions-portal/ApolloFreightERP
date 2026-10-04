@@ -1,5 +1,7 @@
 "use strict";
 
+const nodemailer = require("nodemailer");
+
 let cachedAccessToken = "";
 let cachedAccessTokenExpiresAt = 0;
 
@@ -9,26 +11,37 @@ function envFlag(name, defaultValue = false) {
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
-function graphMailConfig() {
+function mailConfig() {
+  const provider = String(process.env.MAIL_PROVIDER || "microsoft_graph").trim().toLowerCase();
+  const smtpPort = Math.max(1, Number(process.env.SMTP_PORT || 587));
   return {
     enabled: envFlag("MAIL_SEND_ENABLED", false),
-    provider: String(process.env.MAIL_PROVIDER || "microsoft_graph").trim().toLowerCase(),
+    provider,
     tenantId: String(process.env.M365_TENANT_ID || "").trim(),
     clientId: String(process.env.M365_CLIENT_ID || "").trim(),
     clientSecret: String(process.env.M365_CLIENT_SECRET || ""),
-    from: String(process.env.MAIL_FROM || "").trim().toLowerCase(),
-    timeoutMs: Math.max(3000, Number(process.env.MAIL_GRAPH_TIMEOUT_MS || 15000))
+    from: String(process.env.MAIL_FROM || process.env.SMTP_USER || "").trim().toLowerCase(),
+    timeoutMs: Math.max(3000, Number(process.env.MAIL_GRAPH_TIMEOUT_MS || process.env.SMTP_TIMEOUT_MS || 15000)),
+    smtpHost: String(process.env.SMTP_HOST || "smtp.gmail.com").trim(),
+    smtpPort,
+    smtpSecure: envFlag("SMTP_SECURE", smtpPort === 465),
+    smtpUser: String(process.env.SMTP_USER || "").trim(),
+    smtpPassword: String(process.env.SMTP_PASSWORD || "")
   };
 }
 
-function assertGraphMailConfig(config) {
+function assertMailEnabled(config) {
   if (!config.enabled) {
-    const error = new Error("Central email sending is disabled. Set MAIL_SEND_ENABLED=true after Microsoft Graph access is configured.");
+    const error = new Error("Central email sending is disabled. Set MAIL_SEND_ENABLED=true after the selected email provider is configured.");
     error.status = 503;
     throw error;
   }
+}
+
+function assertGraphMailConfig(config) {
+  assertMailEnabled(config);
   if (config.provider !== "microsoft_graph") {
-    const error = new Error("MAIL_PROVIDER must be microsoft_graph for Apollo Connected central email sending.");
+    const error = new Error("MAIL_PROVIDER must be microsoft_graph for Microsoft Graph email sending.");
     error.status = 503;
     throw error;
   }
@@ -39,6 +52,25 @@ function assertGraphMailConfig(config) {
   if (!config.from) missing.push("MAIL_FROM");
   if (missing.length) {
     const error = new Error(`Microsoft Graph mail configuration is incomplete: ${missing.join(", ")}.`);
+    error.status = 503;
+    throw error;
+  }
+}
+
+function assertSmtpMailConfig(config) {
+  assertMailEnabled(config);
+  if (config.provider !== "smtp") {
+    const error = new Error("MAIL_PROVIDER must be smtp for SMTP email sending.");
+    error.status = 503;
+    throw error;
+  }
+  const missing = [];
+  if (!config.smtpHost) missing.push("SMTP_HOST");
+  if (!config.smtpUser) missing.push("SMTP_USER");
+  if (!config.smtpPassword) missing.push("SMTP_PASSWORD");
+  if (!config.from) missing.push("MAIL_FROM or SMTP_USER");
+  if (missing.length) {
+    const error = new Error(`SMTP mail configuration is incomplete: ${missing.join(", ")}.`);
     error.status = 503;
     throw error;
   }
@@ -75,7 +107,7 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-async function graphAccessToken(config = graphMailConfig()) {
+async function graphAccessToken(config = mailConfig()) {
   assertGraphMailConfig(config);
   if (cachedAccessToken && Date.now() < cachedAccessTokenExpiresAt - 60000) return cachedAccessToken;
 
@@ -106,9 +138,7 @@ async function graphAccessToken(config = graphMailConfig()) {
   return cachedAccessToken;
 }
 
-async function sendMicrosoftGraphMail({ to, subject, html, text = "" }) {
-  const config = graphMailConfig();
-  assertGraphMailConfig(config);
+function validateMessage({ to, subject, html, text }) {
   const recipients = normalizeRecipients(to);
   if (!recipients.length) {
     const error = new Error("No valid customer email address is available for this shipment.");
@@ -122,7 +152,10 @@ async function sendMicrosoftGraphMail({ to, subject, html, text = "" }) {
     error.status = 400;
     throw error;
   }
+  return { recipients, cleanSubject, content };
+}
 
+async function sendGraphMail({ recipients, cleanSubject, content, html, config }) {
   const token = await graphAccessToken(config);
   const endpoint = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(config.from)}/sendMail`;
   const response = await fetchWithTimeout(endpoint, {
@@ -148,20 +181,63 @@ async function sendMicrosoftGraphMail({ to, subject, html, text = "" }) {
     const payload = await response.json().catch(() => ({}));
     const detail = payload?.error?.message || payload?.error_description || payload?.error || `HTTP ${response.status}`;
     const error = new Error(`Microsoft Graph sendMail failed: ${detail}`);
-    error.status = response.status === 401 || response.status === 403 ? 502 : 502;
+    error.status = 502;
     throw error;
   }
+}
 
-  return { accepted: true, from: config.from, to: recipients };
+async function sendSmtpMail({ recipients, cleanSubject, content, html, config }) {
+  assertSmtpMailConfig(config);
+  const transporter = nodemailer.createTransport({
+    host: config.smtpHost,
+    port: config.smtpPort,
+    secure: config.smtpSecure,
+    auth: {
+      user: config.smtpUser,
+      pass: config.smtpPassword
+    },
+    connectionTimeout: config.timeoutMs,
+    greetingTimeout: config.timeoutMs,
+    socketTimeout: config.timeoutMs
+  });
+  try {
+    await transporter.sendMail({
+      from: config.from,
+      to: recipients,
+      subject: cleanSubject,
+      ...(html ? { html } : { text: content })
+    });
+  } catch (error) {
+    const smtpError = new Error(`SMTP email send failed: ${error?.message || error}`);
+    smtpError.status = 502;
+    throw smtpError;
+  } finally {
+    transporter.close();
+  }
+}
+
+async function sendMicrosoftGraphMail({ to, subject, html, text = "" }) {
+  const config = mailConfig();
+  const message = validateMessage({ to, subject, html, text });
+  if (config.provider === "smtp") {
+    await sendSmtpMail({ ...message, html, config });
+  } else {
+    await sendGraphMail({ ...message, html, config });
+  }
+  return { accepted: true, from: config.from, to: message.recipients };
 }
 
 function graphMailStatus() {
-  const config = graphMailConfig();
+  const config = mailConfig();
+  const configured = config.provider === "smtp"
+    ? Boolean(config.smtpHost && config.smtpUser && config.smtpPassword && config.from)
+    : Boolean(config.tenantId && config.clientId && config.clientSecret && config.from);
   return {
     enabled: config.enabled,
     provider: config.provider,
-    configured: Boolean(config.tenantId && config.clientId && config.clientSecret && config.from),
+    configured,
     from: config.from || "",
+    smtpHost: config.provider === "smtp" ? config.smtpHost : "",
     timeoutMs: config.timeoutMs
   };
 }
