@@ -7168,7 +7168,7 @@ function openRecord(type, id, presetRecord) {
         }
         const saved = await persistRecord("user", payload);
         if (!saved) {
-          notifyDenied("Not saved", "This user could not be saved to the server. Please try again.");
+          notifyDenied("Not saved", state.api?.error || "This user could not be saved to the server. Please try again.");
           return;
         }
         state.users = state.users.map((row) => rowId("user", row) === id ? updatedRecord : row);
