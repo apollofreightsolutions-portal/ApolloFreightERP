@@ -2342,6 +2342,7 @@ function mfaSession(row) {
     userName: row.user_name,
     email: row.email,
     role: row.role,
+    portal: "company",
     branchAccess: row.branch_access,
     branchViewScope: row.branch_view_scope || "Assigned Branch Only",
     sectionAccess: row.section_access,
@@ -2357,7 +2358,7 @@ function mfaSession(row) {
     isHrAdmin: Boolean(row.is_hr_admin),
     aiAccess: Boolean(row.ai_access),
     ...crmSessionFlags(row),
-    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: false, crmPortal: false, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
   };
 }
 

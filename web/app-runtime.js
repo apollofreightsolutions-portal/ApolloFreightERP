@@ -183,10 +183,10 @@ function rememberSession(sessionOrUserName) {
       // persisted here or it would silently stop working the moment currentSession() re-reads
       // from storage instead of the raw login response.
       isHrAdmin: Boolean(session.isHrAdmin),
-      hrPortalAccess: session.hrPortalAccess === true,
+      hrPortalAccess: isChecked(session.hrPortalAccess),
       erpPortalAccess: session.erpPortalAccess !== false,
-      maintenancePortalAccess: session.maintenancePortalAccess === true,
-      crmPortalAccess: session.crmPortalAccess === true,
+      maintenancePortalAccess: isChecked(session.maintenancePortalAccess),
+      crmPortalAccess: isChecked(session.crmPortalAccess),
       crmRole: session.crmRole || "Sales Executive",
       crmViewAllAccounts: session.crmViewAllAccounts === true,
       crmManageAssignments: session.crmManageAssignments === true,
@@ -2121,7 +2121,7 @@ function renderModuleNav() {
     const erpButton = portalAccessPanel.querySelector("[data-portal-switch='erp']");
     const maintenanceButton = portalAccessPanel.querySelector("[data-portal-switch='maintenance']");
     const crmButton = portalAccessPanel.querySelector("[data-portal-switch='crm']");
-    if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || session.hrPortalAccess !== true;
+    if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || !isChecked(session.hrPortalAccess);
     if (erpButton) erpButton.hidden = isCustomerSession() || (!isHrSession() && !isCrmSession()) || session.erpPortalAccess === false;
     if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || (session.maintenancePortalAccess !== true && session.erpPortalAccess !== true);
     if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || session.crmPortalAccess !== true;
@@ -2530,7 +2530,7 @@ async function switchPortal(target) {
     return;
   }
   const portal = target === "hr" ? "employee" : target === "crm" ? "crm" : "company";
-  if (portal === "employee" && session.hrPortalAccess !== true) {
+  if (portal === "employee" && !isChecked(session.hrPortalAccess)) {
     notifyDenied("Access denied", "HR Portal access is not enabled for this account. Contact Company Management.");
     return;
   }
