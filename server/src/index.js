@@ -1456,12 +1456,30 @@ async function getRows(resourceName, config) {
   // shipment history. Keep the defensive cap for ancillary resources, but never
   // truncate shipments or their status history at 500 rows.
   const limitClause = resourceName === "shipments" || resourceName === "shipmentStatusHistory" ? "" : "limit 500";
-  const result = await query(
-    `select ${columnsFor(config)}
-     from ${config.table}
-     order by ${config.order}
-     ${limitClause}`
-  );
+  let result;
+  try {
+    result = await query(
+      `select ${columnsFor(config)}
+       from ${config.table}
+       order by ${config.order}
+       ${limitClause}`
+    );
+  } catch (error) {
+    // Keep the User List working while an older live revision/database is still
+    // waiting for the additive MFA migration. The policy defaults to disabled
+    // in apiUser when this compatibility projection omits the new column.
+    if (resourceName !== "users" || error?.code !== "42703") throw error;
+    const legacyConfig = {
+      ...config,
+      fields: config.fields.filter((item) => item.column !== "mfa_policy")
+    };
+    result = await query(
+      `select ${columnsFor(legacyConfig)}
+       from ${legacyConfig.table}
+       order by ${legacyConfig.order}
+       ${limitClause}`
+    );
+  }
   return {
     ok: true,
     rows: result.rows
