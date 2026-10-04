@@ -2260,12 +2260,14 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
     }
 
     const mfaPolicy = normalizeMfaPolicy(row.mfa_policy);
-    if (!employeeLogin && !maintenanceLogin && !crmLogin && mfaPolicy !== "disabled") {
+    if (mfaPolicy !== "disabled") {
+      const targetPortal = employeeLogin ? "employee" : crmLogin ? "crm" : "company";
       const challenge = signCustomerToken({
         userName: row.user_name,
         role: row.role,
         portal: "mfa",
         purpose: "login",
+        targetPortal,
         exp: Date.now() + 10 * 60 * 1000
       });
       if (row.mfa_enrolled_at && row.mfa_secret_enc) {
@@ -2347,12 +2349,13 @@ function mfaChallengePayload(request, purpose = "login") {
   return payload;
 }
 
-function mfaSession(row) {
+function mfaSession(row, targetPortal = "company") {
+  const portal = targetPortal === "employee" ? "employee" : targetPortal === "crm" ? "crm" : "company";
   return {
     userName: row.user_name,
     email: row.email,
     role: row.role,
-    portal: "company",
+    portal,
     branchAccess: row.branch_access,
     branchViewScope: row.branch_view_scope || "Assigned Branch Only",
     sectionAccess: row.section_access,
@@ -2368,7 +2371,7 @@ function mfaSession(row) {
     isHrAdmin: Boolean(row.is_hr_admin),
     aiAccess: Boolean(row.ai_access),
     ...crmSessionFlags(row),
-    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: false, crmPortal: false, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: portal === "employee", crmPortal: portal === "crm", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
   };
 }
 
@@ -2417,7 +2420,7 @@ app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => 
     else if (code) { const consumed = consumeRecoveryCode(recoveryCodes, code); valid = consumed.valid; recoveryCodes = JSON.stringify(consumed.remaining); }
     if (!valid) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid." });
     if (recoveryCodes !== row.mfa_recovery_codes) await query("update app_users set mfa_recovery_codes=$1 where lower(user_name)=lower($2)", [recoveryCodes, row.user_name]);
-    return response.json({ ok: true, session: mfaSession(row) });
+    return response.json({ ok: true, session: mfaSession(row, challenge.targetPortal) });
   } catch (error) { return next(error); }
 });
 

@@ -2462,7 +2462,7 @@ async function attemptApiLogin(userName, password, loginMode = "company") {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userName, password, loginMode })
   });
-  if (loginMode !== "company" || (!result.mfaRequired && !result.mfaEnrollmentRequired)) return result.session;
+  if (!result.mfaRequired && !result.mfaEnrollmentRequired) return result.session;
   if (result.mfaEnrollmentRequired) {
     const enrollment = await fetchJson("/api/mfa/enroll", {
       method: "POST",
