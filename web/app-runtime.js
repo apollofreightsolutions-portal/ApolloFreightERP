@@ -9119,15 +9119,6 @@ function fetchAwbAndRefillForm() {
 function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "", direction = "") {
   const typedValue = String(airwayBillNo || sourceRecord.airwayBillNo || sourceRecord.jobNo || "").trim();
   const prefillRecord = { ...sourceRecord };
-  // Origin and Destination must be carried into the new shipment created from the fetched
-  // airway bill. Keep the fields suggestion-free; this only restores the values from the source
-  // shipment and does not add them to the remembered dropdown list.
-  prefillRecord.origin = String(
-    sourceRecord.origin || sourceRecord.fromLocation || sourceRecord.from_location || sourceRecord.shipperLocation || ""
-  ).trim();
-  prefillRecord.destination = String(
-    sourceRecord.destination || sourceRecord.toLocation || sourceRecord.to_location || sourceRecord.consigneeLocation || ""
-  ).trim();
   // The source is only used as a template.  The saved record must be a new shipment,
   // while retaining the fetched AWB/Bill of Lading as its reference.
   prefillRecord.entryMode = "shipment";
