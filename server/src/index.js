@@ -4122,6 +4122,10 @@ async function withDatabaseTransaction(work) {
   const client = await getPool().connect();
   try {
     await client.query("begin");
+    // Secondary workflows must fail fast. A timeout rolls back only this transaction and
+    // cannot roll back a shipment insert that was already committed before synchronization.
+    await client.query("set local lock_timeout = '5000ms'");
+    await client.query("set local statement_timeout = '15000ms'");
     const result = await work(client);
     await client.query("commit");
     return result;
@@ -4456,11 +4460,19 @@ app.post("/api/shipments", requireErpPortalAuth, async (request, response, next)
     }
 
     const row = await insertRow(resources.shipments, request.body || {});
-    const relatedRows = await synchronizeShipmentAirwayBill(row, {
-      joinExistingGroup: true,
-      updatedBy: request.appSession?.userName || "system",
-      notes: `AWB group synchronization after shipment creation for ${row.airway_bill_no || ""}`
-    });
+    let relatedRows = [row];
+    try {
+      relatedRows = await synchronizeShipmentAirwayBill(row, {
+        joinExistingGroup: true,
+        updatedBy: request.appSession?.userName || "system",
+        notes: `AWB group synchronization after shipment creation for ${row.airway_bill_no || ""}`
+      });
+    } catch (syncError) {
+      // The shipment insert is already committed. AWB synchronization is secondary and must
+      // never make the UI report a successful shipment as "not saved" or cause a retry/duplicate.
+      console.warn("Shipment saved; Airway Bill synchronization deferred:", syncError?.message || syncError);
+      relatedRows = [row];
+    }
     const savedRow = relatedRows.find((item) => String(item.job_no) === String(row.job_no)) || row;
     response.status(201).json({ ok: true, row: savedRow, relatedRows });
   } catch (error) {
