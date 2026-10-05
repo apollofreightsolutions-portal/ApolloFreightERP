@@ -2312,10 +2312,18 @@ function branchValuesForRecord(row) {
   return [...branches];
 }
 
+function notificationHost() {
+  if (!toastStack || !document.body) return null;
+  const target = recordDialog?.open ? recordDialog : document.body;
+  if (toastStack.parentElement !== target) target.appendChild(toastStack);
+  return toastStack;
+}
+
 function notify(status, title, detail = "") {
   if (status === "success") playBeep();
   if (status === "failed" || status === "denied") playNotificationSound("failed");
-  if (!toastStack) {
+  const host = notificationHost();
+  if (!host) {
     if (detail) window.alert(`${title}\n${detail}`);
     else window.alert(title);
     return;
@@ -2324,7 +2332,7 @@ function notify(status, title, detail = "") {
   const toast = document.createElement("div");
   toast.className = `toast toast-${status}`;
   toast.innerHTML = `<strong>${escapeHtml(title)}</strong>${detail ? `<span>${escapeHtml(detail)}</span>` : ""}`;
-  toastStack.appendChild(toast);
+  host.appendChild(toast);
   window.setTimeout(() => toast.remove(), 4200);
 }
 
