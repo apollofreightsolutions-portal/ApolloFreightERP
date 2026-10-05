@@ -2348,6 +2348,14 @@ function notifyFailed(title, detail = "") {
   notify("failed", title, detail);
 }
 
+// Portal modules are loaded as separate ES modules, so the core notification helpers are not
+// otherwise visible to them. Expose the same screen notification channel to every portal rather
+// than allowing HR, CRM, AI, or Chat buttons to fall back to inconsistent browser alerts.
+window.notifySuccess = notifySuccess;
+window.notifyDenied = notifyDenied;
+window.notifyFailed = notifyFailed;
+window.apolloNotify = notify;
+
 function openShipmentWorkspace() {
   activeModule = "Shipment / Airway";
   render();
@@ -6216,14 +6224,14 @@ function auditRowMarkup(row, index, columns) {
 function openShipmentRequestByNumber(rawQuery) {
   const query = String(rawQuery || "").trim().toLowerCase();
   if (!query) {
-    window.alert("Enter a Request No first.");
+    notifyDenied("Request not opened", "Enter a Request No first.");
     return;
   }
 
   const match = state.shipmentRequests.find((row) => String(row.requestNo || "").trim().toLowerCase() === query);
 
   if (!match) {
-    window.alert(`No request found matching "${rawQuery}".`);
+    notifyDenied("Request not found", `No request found matching "${rawQuery}".`);
     return;
   }
 
@@ -6233,14 +6241,14 @@ function openShipmentRequestByNumber(rawQuery) {
 function openQuotationByNumber(rawQuery) {
   const query = String(rawQuery || "").trim().toLowerCase();
   if (!query) {
-    window.alert("Enter a Quotation No first.");
+    notifyDenied("Quotation not opened", "Enter a Quotation No first.");
     return;
   }
 
   const match = visibleRows(state.quotations).find((row) => String(row.quotationNo || "").trim().toLowerCase() === query);
 
   if (!match) {
-    window.alert(`No quotation found matching "${rawQuery}". You may not have access to view this record.`);
+    notifyDenied("Quotation not found", `No quotation found matching "${rawQuery}". You may not have access to view this record.`);
     return;
   }
 
@@ -6250,7 +6258,7 @@ function openQuotationByNumber(rawQuery) {
 function openInvoiceByNumber(rawQuery) {
   const query = String(rawQuery || "").trim().toLowerCase();
   if (!query) {
-    window.alert("Enter an Invoice No or Shipment No first.");
+    notifyDenied("Invoice not opened", "Enter an Invoice No or Shipment No first.");
     return;
   }
 
@@ -6261,7 +6269,7 @@ function openInvoiceByNumber(rawQuery) {
   });
 
   if (!match) {
-    window.alert(`No invoice found matching "${rawQuery}". You may not have access to view this record.`);
+    notifyDenied("Invoice not found", `No invoice found matching "${rawQuery}". You may not have access to view this record.`);
     return;
   }
 
@@ -6271,7 +6279,7 @@ function openInvoiceByNumber(rawQuery) {
 function openShipmentByNumber(rawQuery) {
   const query = String(rawQuery || "").trim().toLowerCase();
   if (!query) {
-    window.alert("Enter a Job No, AWB No, or TCN No first.");
+    notifyDenied("Shipment not opened", "Enter a Job No, AWB No, or TCN No first.");
     return;
   }
 
@@ -6289,7 +6297,7 @@ function openShipmentByNumber(rawQuery) {
     const message = searchAllBranches
       ? `No shipment found matching "${rawQuery}".`
       : `No shipment found matching "${rawQuery}". You may not have access to view this record.`;
-    window.alert(message);
+    notifyDenied("Shipment not found", message);
     return;
   }
 
@@ -6709,7 +6717,7 @@ async function handleModuleClick(event) {
       return;
     }
     const margin = filteredRows(visibleRows(state.shipments)).reduce((sum, row) => sum + Number(row.sell || 0) - Number(row.buyCost || 0), 0);
-    window.alert(`Current margin: ${money(margin)}`);
+    notifySuccess("Current margin", money(margin));
     return;
   }
 
@@ -6925,7 +6933,7 @@ function handleLoadRecord(type) {
 
   if (type === "load") {
     if (!selectedId) {
-      window.alert("Select a consolidation first.");
+      notifyDenied("Manifest not opened", "Select a consolidation first.");
       return;
     }
     state.ui.selectedLoadNo = selectedId;
@@ -6936,7 +6944,7 @@ function handleLoadRecord(type) {
 
   if (type === "status") {
     if (!selectedId) {
-      window.alert("Select a shipment first.");
+      notifyDenied("Shipment not opened", "Select a shipment first.");
       return;
     }
     state.ui.expandedStatusJob = selectedId;
@@ -7328,7 +7336,6 @@ function allCollectionFor(type) {
 function notifyDuplicate(id) {
   const message = `${id} is already used. Enter a different serial number.`;
   notifyDenied("Already used", message);
-  window.alert(`Already used\n${message}`);
 }
 
 function isDuplicateCustomerDetails(name, email, mobile, excludeCode = "") {
@@ -7369,7 +7376,6 @@ function duplicateAirwayBillExists(awbNo, branch, excludeJobNo = "") {
 function notifyDuplicateAirwayBill(awbNo, branch) {
   const message = `Airway Bill ${awbNo} is already used by another shipment in ${branch || "this branch"}. Enter a different AWB number.`;
   notifyDenied("Airway Bill already used", message);
-  window.alert(`Airway Bill already used\n${message}`);
 }
 
 function detailFieldControl(type, key, value, record) {
@@ -9100,7 +9106,7 @@ function fetchAwbAndRefillForm() {
   const typedValue = dialogValue("airwayBillNo");
   const query = String(typedValue || "").trim().toLowerCase();
   if (!query) {
-    window.alert("Enter an Airway Bill / Bill of Lading number first.");
+    notifyDenied("Airway Bill not fetched", "Enter an Airway Bill / Bill of Lading number first.");
     return;
   }
 
@@ -9110,7 +9116,7 @@ function fetchAwbAndRefillForm() {
   );
 
   if (!match) {
-    window.alert(`No shipment found matching Airway Bill "${typedValue}" in any branch.`);
+    notifyDenied("Airway Bill not found", `No shipment found matching Airway Bill "${typedValue}" in any branch.`);
     return;
   }
 

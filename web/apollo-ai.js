@@ -131,7 +131,12 @@ async function handleAction(button) {
   if (!item) return;
   if (item.type === "tcn") {
     const docs = window.ApolloConnectedDocuments;
-    if (!docs?.openTcn) return window.alert("TCN viewer is not available on this screen yet.");
+    if (!docs?.openTcn) {
+      const message = "TCN viewer is not available on this screen yet.";
+      if (typeof window.notifyDenied === "function") return window.notifyDenied("TCN unavailable", message);
+      if (typeof window.apolloNotify === "function") return window.apolloNotify("denied", "TCN unavailable", message);
+      return window.alert(message);
+    }
     docs.openTcn(item.jobNo, false); return;
   }
   if (item.type === "shipment") {
@@ -144,7 +149,12 @@ async function handleAction(button) {
       const result = await api(`/api/ai/document/${encodeURIComponent(item.documentNo)}/view`, {}, 15000);
       if (!result.url) throw new Error("POD file link was not returned.");
       window.open(result.url, "_blank", "noopener,noreferrer");
-    } catch (error) { window.alert(error.message || "POD could not be opened."); }
+    } catch (error) {
+      const message = error.message || "POD could not be opened.";
+      if (typeof window.notifyFailed === "function") window.notifyFailed("POD could not be opened", message);
+      else if (typeof window.apolloNotify === "function") window.apolloNotify("failed", "POD could not be opened", message);
+      else window.alert(message);
+    }
     finally { button.disabled = false; }
   }
 }

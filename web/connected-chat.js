@@ -185,7 +185,12 @@ async function sendChatMessage(event) {
   try {
     const result = await chatApi("/api/chat/messages", { method:"POST", body:JSON.stringify({ to:chatState.activeUser, body:text, context }) });
     chatState.messages.push(result.message); if (input) input.value = ""; chatState.shareScreen = false; renderMessages(); renderShareState(); await refreshConversations();
-  } catch (error) { window.alert(error.message || "Message could not be sent."); }
+  } catch (error) {
+    const message = error.message || "Message could not be sent.";
+    if (typeof window.notifyFailed === "function") window.notifyFailed("Message not sent", message);
+    else if (typeof window.apolloNotify === "function") window.apolloNotify("failed", "Message not sent", message);
+    else window.alert(message);
+  }
   finally { if (send) send.disabled = false; }
 }
 

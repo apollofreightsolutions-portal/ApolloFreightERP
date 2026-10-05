@@ -31,6 +31,16 @@ function bool(value) { return value === true || value === 1 || String(value || "
 function today() { return new Date().toISOString().slice(0,10); }
 function refresh() { if (typeof window.__APOLLO_CRM_RENDER === "function") window.__APOLLO_CRM_RENDER(); }
 function crmSession() { return session(); }
+const crmSuccess = (title, detail = "") => {
+  if (typeof window.notifySuccess === "function") return window.notifySuccess(title, detail);
+  if (typeof window.apolloNotify === "function") return window.apolloNotify("success", title, detail);
+};
+const crmFailed = (title, detail = "") => {
+  if (typeof window.notifyFailed === "function") return window.notifyFailed(title, detail);
+  if (typeof window.notifyDenied === "function") return window.notifyDenied(title, detail);
+  if (typeof window.apolloNotify === "function") return window.apolloNotify("failed", title, detail);
+  window.alert(detail ? `${title}\n${detail}` : title);
+};
 
 async function request(path, options = {}) {
   const response = await fetch(`${CRM_API}/api/crm${path}`, {
@@ -287,11 +297,12 @@ async function submitForm(form){const type=form.dataset.crmForm; if(!type||type=
   else if(type==="reassign"){path="/reassign";payload=data;}
   else return;
   await request(path,{method,body:JSON.stringify(payload)}); d?.close(); invalidate("dashboard","accounts","contacts","opportunities","visits","meetings","tasks","activity","reports","users","adminUsers"); refresh();
- }catch(error){alert(error.message);}}
+  crmSuccess("CRM saved", "The CRM record was saved successfully.");
+ }catch(error){crmFailed("CRM save failed", error.message);}}
 
-async function completeTask(id){const r=recordBy("tasks",id);if(!r)return;try{await request(`/tasks/${id}`,{method:"PUT",body:JSON.stringify({status:"Completed",title:r.title,description:r.description,dueDate:date(r.due_date)==="—"?null:date(r.due_date),priority:r.priority,assignedTo:r.assigned_to})});invalidate("dashboard","tasks","activity","reports");refresh();}catch(error){alert(error.message)}}
+async function completeTask(id){const r=recordBy("tasks",id);if(!r)return;try{await request(`/tasks/${id}`,{method:"PUT",body:JSON.stringify({status:"Completed",title:r.title,description:r.description,dueDate:date(r.due_date)==="—"?null:date(r.due_date),priority:r.priority,assignedTo:r.assigned_to})});invalidate("dashboard","tasks","activity","reports");refresh();crmSuccess("Task completed", "The CRM follow-up was marked completed.");}catch(error){crmFailed("Task update failed", error.message)}}
 async function doReassign(form){await submitForm(form);}
-async function exportEntity(entity){try{const response=await request(`/export/${entity}`);const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`apollo-crm-${entity}-${today()}.csv`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);}catch(error){alert(error.message)}}
+async function exportEntity(entity){try{const response=await request(`/export/${entity}`);const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`apollo-crm-${entity}-${today()}.csv`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);crmSuccess("Export ready", `${entity} data was downloaded.`);}catch(error){crmFailed("Export failed", error.message)}}
 
 function bind(){
   document.addEventListener("click",event=>{
