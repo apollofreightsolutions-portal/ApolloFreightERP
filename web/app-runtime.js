@@ -9932,22 +9932,49 @@ function invoiceTariffOptionsForCustomer(customerName) {
   }));
 }
 
+function invoiceCustomerLookupKeys(customerName) {
+  const keys = new Set();
+  const add = (value) => {
+    const key = normalizeLookupText(value);
+    if (key) keys.add(key);
+  };
+  add(customerName);
+  const customer = state.customers.find((row) =>
+    normalizeLookupText(row.name) === normalizeLookupText(customerName) ||
+    normalizeLookupText(row.code) === normalizeLookupText(customerName)
+  );
+  if (customer) {
+    add(customer.name);
+    add(customer.code);
+  }
+  return keys;
+}
+
+function invoiceRecordCustomerKeys(row) {
+  return [
+    row?.customer,
+    row?.customerName,
+    row?.customerCode,
+    row?.customer_code,
+    row?.billTo1,
+    row?.billTo2,
+    row?.consigneeName
+  ].map(normalizeLookupText).filter(Boolean);
+}
+
 function invoiceTariffsForCustomer(customerName) {
-  const lookup = normalizeLookupText(customerName);
-  if (!lookup) return [];
-  return state.tariffs.filter((row) => normalizeLookupText(row.customer || '') === lookup);
+  const lookups = invoiceCustomerLookupKeys(customerName);
+  if (!lookups.size) return [];
+  return state.tariffs.filter((row) => invoiceRecordCustomerKeys(row).some((key) => lookups.has(key)));
 }
 
 function invoiceShipmentsForCustomer(customerName) {
-  const lookup = normalizeLookupText(customerName);
-  if (!lookup) return [];
+  const lookups = invoiceCustomerLookupKeys(customerName);
+  if (!lookups.size) return [];
   // Billing intentionally allows ALL shipments regardless of status - invoicing normally happens
   // after delivery, so Delivered shipments must stay selectable here (unlike the Manifest/POD
   // pickers, which do exclude Delivered shipments).
-  return state.shipments.filter((row) => {
-    const rowCustomer = normalizeLookupText(row.customer || row.customerName || row.billTo1 || '');
-    return rowCustomer === lookup;
-  });
+  return state.shipments.filter((row) => invoiceRecordCustomerKeys(row).some((key) => lookups.has(key)));
 }
 
 function parseInvoiceLineItems(value) {
