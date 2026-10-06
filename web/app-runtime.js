@@ -5113,7 +5113,11 @@ function dashboardStatusCountLabel(value) {
   return statusOptions().find((option) => option.toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ") === key) || "";
 }
 function dashboardStatusAllowedBranches() {
-  if (canViewAllBranches()) return CANONICAL_BRANCHES.slice();
+  if (canViewAllBranches()) {
+    const selected = selectedAdminBranches();
+    if (!selected.length || selected.some((branch) => String(branch).toLowerCase() === "both")) return CANONICAL_BRANCHES.slice();
+    return selected.filter((branch) => CANONICAL_BRANCHES.includes(normalizeBranchName(branch)));
+  }
   const access = String(currentSession()?.branchAccess || defaultUserBranch()).trim();
   if (!access || ["both", "all"].includes(access.toLowerCase())) return CANONICAL_BRANCHES.slice();
   return access.split(",").map(normalizeBranchName).filter((branch) => CANONICAL_BRANCHES.includes(branch));
