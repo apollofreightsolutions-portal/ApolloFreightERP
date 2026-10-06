@@ -2473,6 +2473,53 @@ async function attemptCustomerLogin(userName, password) {
   return { session: result.session, data: result.data };
 }
 
+function openMfaCodeWindow({ qrDataUrl = "", secret = "", title, instructions, enrollment = false }) {
+  return new Promise((resolve, reject) => {
+    const popup = window.open("", "apollo-mfa-verification", "width=460,height=680,resizable=yes,scrollbars=yes");
+    if (!popup) {
+      reject(new Error("The MFA verification window was blocked. Allow popups for this portal and try again."));
+      return;
+    }
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", onMessage);
+      if (closeTimer) window.clearInterval(closeTimer);
+      try { popup.close(); } catch {}
+      callback(value);
+    };
+    const onMessage = (event) => {
+      if (event.source !== popup || event.data?.type !== "apollo-mfa-code") return;
+      const code = String(event.data.code || "").trim();
+      if (!code) return;
+      finish(resolve, code);
+    };
+    window.addEventListener("message", onMessage);
+    let closeTimer = window.setInterval(() => {
+      if (popup.closed) finish(reject, new Error("MFA verification was cancelled."));
+    }, 500);
+    const qrMarkup = qrDataUrl
+      ? `<img alt="Microsoft Authenticator registration QR code" style="display:block;width:260px;height:260px;margin:18px auto;image-rendering:auto" src="${escapeHtml(qrDataUrl)}">`
+      : "";
+    const secretMarkup = secret
+      ? `<details><summary>Can’t scan the QR code?</summary><p>Enter this setup key manually in Microsoft Authenticator:</p><code>${escapeHtml(secret)}</code></details>`
+      : "";
+    popup.document.write(`<!doctype html><html><head><title>${escapeHtml(title)}</title><style>
+      :root{font-family:Arial,sans-serif;color:#172033;background:#f6f8fb}body{margin:0;padding:24px}main{max-width:390px;margin:auto;background:#fff;border:1px solid #d8e0eb;border-radius:14px;padding:24px;box-shadow:0 8px 24px #17203318}h1{font-size:22px;margin:0 0 10px}p{line-height:1.45;color:#4b5870}.step{font-weight:700;color:#2563a8;margin-top:20px}input{box-sizing:border-box;width:100%;font-size:24px;letter-spacing:6px;text-align:center;padding:12px;border:1px solid #aebbd0;border-radius:8px}button{width:100%;margin-top:14px;padding:12px;border:0;border-radius:8px;background:#1261a0;color:#fff;font-weight:700;font-size:15px;cursor:pointer}button:disabled{opacity:.6;cursor:wait}code{display:block;word-break:break-all;background:#eef3f8;padding:10px;border-radius:6px;font-size:13px}details{margin-top:16px;font-size:13px;color:#4b5870}</style></head><body><main>
+      <h1>${escapeHtml(title)}</h1><p>${escapeHtml(instructions)}</p>
+      ${qrMarkup}${secretMarkup}
+      <p class="step">${enrollment ? "Enter the 6-digit code shown by Microsoft Authenticator" : "Enter your Authenticator code or recovery code"}</p>
+      <form id="mfa-form"><input id="mfa-code" name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="${enrollment ? "6" : "64"}" required autofocus placeholder="${enrollment ? "000000" : "6-digit code"}"><button id="mfa-submit" type="submit">${enrollment ? "Verify and Continue" : "Verify and Sign In"}</button></form>
+    </main><script>
+      const form=document.getElementById('mfa-form'); const field=document.getElementById('mfa-code'); const button=document.getElementById('mfa-submit');
+      form.addEventListener('submit',function(event){event.preventDefault();const code=field.value.trim();if(!code)return;button.disabled=true;button.textContent='Verifying…';window.opener.postMessage({type:'apollo-mfa-code',code:code},'*');});
+    </script></body></html>`);
+    popup.document.close();
+    popup.focus();
+  });
+}
+
 async function attemptApiLogin(userName, password, loginMode = "company") {
   if (!userName || !password) {
     throw new Error("User name and password are required.");
@@ -2490,23 +2537,24 @@ async function attemptApiLogin(userName, password, loginMode = "company") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ challenge: result.mfaChallenge })
     });
-    const popup = window.open("", "apollo-mfa-enrollment", "width=420,height=520");
-    if (popup) {
-      popup.document.write(`<title>Microsoft Authenticator registration</title><p>Scan this QR code with Microsoft Authenticator.</p><img alt="MFA registration QR code" style="max-width:240px" src="${enrollment.qrDataUrl}"><p>If scanning is unavailable, enter this secret manually:</p><code>${enrollment.secret}</code>`);
-      popup.document.close();
-    } else {
-      window.alert(`Scan the MFA QR code with Microsoft Authenticator. Manual setup key: ${enrollment.secret}`);
-    }
-    const code = window.prompt("Enter the 6-digit code shown by Microsoft Authenticator to finish registration:", "");
-    if (!code) throw new Error("MFA registration was cancelled.");
+    const code = await openMfaCodeWindow({
+      title: "Microsoft Authenticator registration",
+      instructions: "Scan the QR code, add this account to Microsoft Authenticator, then enter the current code below.",
+      qrDataUrl: enrollment.qrDataUrl,
+      secret: enrollment.secret,
+      enrollment: true
+    });
     await fetchJson("/api/mfa/enroll/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ challenge: result.mfaChallenge, code })
     });
   }
-  const code = window.prompt("Enter the 6-digit code from Microsoft Authenticator (or a recovery code):", "");
-  if (!code) throw new Error("MFA verification was cancelled.");
+  const code = await openMfaCodeWindow({
+    title: "Microsoft Authenticator verification",
+    instructions: "Enter the current 6-digit code from Microsoft Authenticator. A recovery code may also be used.",
+    enrollment: false
+  });
   const verified = await fetchJson("/api/mfa/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4485,15 +4533,11 @@ function renderInvoices() {
 function invoiceActionPanelMarkup() {
   return `<article class="panel invoice-actions-panel">${panelHeader("Invoice Actions", "New / Load")}
     <div class="action-stack">
+      ${loadSelectorMarkup("invoice", "Saved Records")}
       <div class="action-row">
         <button type="button" class="primary-button" data-action="new-record" data-type="invoice">New</button>
         <button type="button" class="secondary-button" data-action="export-list" data-type="invoice">Export Excel</button>
-      </div>
-      ${loadSelectorMarkup("invoice", "Saved Records")}
-      <div class="action-row">
         <button type="button" class="secondary-button" data-action="load-record" data-type="invoice">Load</button>
-      </div>
-      <div class="action-row">
         <button type="button" class="secondary-button" data-action="generate-document" data-type="invoice">Generate Bill</button>
         <button type="button" class="secondary-button" data-action="export-document" data-type="invoice">Save / Export</button>
       </div>
