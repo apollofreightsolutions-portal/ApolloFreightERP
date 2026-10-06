@@ -5144,12 +5144,11 @@ function dashboardStatusEntryIsLater(candidate, current) {
 }
 function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
   const selectedBranches = new Set(branches);
-  // Live tracking is a branch-level operational view. Do not use visibleRows() here because it
-  // also applies the current user's ownership filter, which hides another operator's shipment
-  // from the branch-wide Live count. branchAllowed() still enforces the user's permitted branch
-  // access, while selectedBranches applies the dashboard branch filter.
+  // Live tracking must follow the same User Management visibility scope as the rest of ERP:
+  // ownedByCurrentUser() enforces branch access, All Branches scope, and the canViewAllEntry
+  // permission. selectedBranches then applies the dashboard branch filter for users who can use it.
   const visibleJobNos = new Set((state.shipments || [])
-    .filter((row) => branchAllowed(row) && selectedBranches.has(normalizeBranchName(row.branch)))
+    .filter((row) => ownedByCurrentUser(row) && selectedBranches.has(normalizeBranchName(row.branch)))
     .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();
