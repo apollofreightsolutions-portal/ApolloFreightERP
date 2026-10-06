@@ -5144,8 +5144,12 @@ function dashboardStatusEntryIsLater(candidate, current) {
 }
 function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
   const selectedBranches = new Set(branches);
-  const visibleJobNos = new Set(visibleRows(state.shipments)
-    .filter((row) => selectedBranches.has(normalizeBranchName(row.branch)))
+  // Live tracking is a branch-level operational view. Do not use visibleRows() here because it
+  // also applies the current user's ownership filter, which hides another operator's shipment
+  // from the branch-wide Live count. branchAllowed() still enforces the user's permitted branch
+  // access, while selectedBranches applies the dashboard branch filter.
+  const visibleJobNos = new Set((state.shipments || [])
+    .filter((row) => branchAllowed(row) && selectedBranches.has(normalizeBranchName(row.branch)))
     .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();
