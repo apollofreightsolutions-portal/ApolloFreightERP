@@ -2531,6 +2531,7 @@ async function attemptApiLogin(userName, password, loginMode = "company") {
     body: JSON.stringify({ userName, password, loginMode })
   });
   if (!result.mfaRequired && !result.mfaEnrollmentRequired) return result.session;
+  let verifiedCode = "";
   if (result.mfaEnrollmentRequired) {
     const enrollment = await fetchJson("/api/mfa/enroll", {
       method: "POST",
@@ -2544,23 +2545,42 @@ async function attemptApiLogin(userName, password, loginMode = "company") {
       secret: enrollment.secret,
       enrollment: true
     });
+    verifiedCode = code;
     await fetchJson("/api/mfa/enroll/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ challenge: result.mfaChallenge, code })
     });
   }
-  const code = await openMfaCodeWindow({
-    title: "Microsoft Authenticator verification",
-    instructions: "Enter the current 6-digit code from Microsoft Authenticator. A recovery code may also be used.",
-    enrollment: false
-  });
-  const verified = await fetchJson("/api/mfa/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ challenge: result.mfaChallenge, code })
-  });
-  return verified.session;
+  const verifyLoginCode = async (code) => {
+    const verified = await fetchJson("/api/mfa/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge: result.mfaChallenge, code })
+    });
+    return verified.session;
+  };
+  if (!verifiedCode) {
+    verifiedCode = await openMfaCodeWindow({
+      title: "Microsoft Authenticator verification",
+      instructions: "Enter the current 6-digit code from Microsoft Authenticator. A recovery code may also be used.",
+      enrollment: false
+    });
+  }
+  try {
+    return await verifyLoginCode(verifiedCode);
+  } catch (error) {
+    // The enrollment code may roll over during the two server requests. Since
+    // enrollment is already complete, let the user enter the newly generated code
+    // instead of sending them back to the username/password page.
+    if (!result.mfaEnrollmentRequired || !/invalid|expired/i.test(String(error.message || ""))) throw error;
+    const retryCode = await openMfaCodeWindow({
+      title: "Microsoft Authenticator verification",
+      instructions: "The enrollment code expired. Enter the new 6-digit code from Microsoft Authenticator.",
+      enrollment: false
+    });
+    return verifyLoginCode(retryCode);
+  }
 }
 
 async function restoreHandoffSession() {
