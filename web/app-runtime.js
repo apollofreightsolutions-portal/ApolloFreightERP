@@ -4473,11 +4473,11 @@ function renderInvoices() {
   const rows = filteredRows(visibleRows(state.invoices));
   const canEnterBilling = canBillingSalesEntry() || canBillingCostEntry();
   return `
-    <section class="split-grid wide-left">
-      <article class="panel">${panelHeader("Invoice Register", "Billing")} ${registerColumnSettingsMarkup("invoice", "Invoice Register columns", defaultColumnLayouts().invoice)} ${table("invoice", rows, invoiceColumns(), false, "invoice")}</article>
+    <section class="invoice-module-layout">
       ${canEnterBilling
         ? invoiceActionPanelMarkup()
         : `<article class="panel">${panelHeader("Invoice Actions", "Restricted")}${empty("Your account has view-only access to billing.")}</article>`}
+      <article class="panel invoice-register-panel">${panelHeader("Invoice Register", "Billing")} ${registerColumnSettingsMarkup("invoice", "Invoice Register columns", defaultColumnLayouts().invoice)} ${table("invoice", rows, invoiceColumns(), false, "invoice")}</article>
     </section>
     ${adminDeletePanel("invoice", "Invoice")}`;
 }
