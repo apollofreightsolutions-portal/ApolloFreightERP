@@ -954,7 +954,12 @@ function additionalCharge(
 
 function invoiceDialogBody(record = {}) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === record.shipmentNo) || null;
-  const tariffItem = assignedTariffForShipment(shipmentItem) || state.tariffs.find((row) => row.tariffNo === record.tariffNo) || null;
+  // A tariff is optional for invoices. Only use a tariff when the user selected or
+  // previously saved one; an assigned shipment tariff must not be applied silently.
+  const selectedTariffNo = String(record.tariffNo || '').trim().toLowerCase();
+  const tariffItem = selectedTariffNo
+    ? state.tariffs.find((row) => String(row.tariffNo || '').trim().toLowerCase() === selectedTariffNo) || null
+    : null;
   const customerName = record.customer || shipmentItem?.customer || record.customerName || shipmentItem?.customerName || '';
   let snapshot = {};
   try { snapshot = JSON.parse(record.invoiceSnapshotJson || '{}'); } catch {}
@@ -4471,21 +4476,29 @@ function renderInvoices() {
     <section class="split-grid wide-left">
       <article class="panel">${panelHeader("Invoice Register", "Billing")} ${registerColumnSettingsMarkup("invoice", "Invoice Register columns", defaultColumnLayouts().invoice)} ${table("invoice", rows, invoiceColumns(), false, "invoice")}</article>
       ${canEnterBilling
-        ? moduleActionPanel("Invoice Actions", "invoice", "Keep invoice creation and load/update in separate popup windows.", quickOpenInvoiceMarkup() + documentActionControls("invoice", "Bill"))
+        ? invoiceActionPanelMarkup()
         : `<article class="panel">${panelHeader("Invoice Actions", "Restricted")}${empty("Your account has view-only access to billing.")}</article>`}
     </section>
     ${adminDeletePanel("invoice", "Invoice")}`;
 }
 
-function quickOpenInvoiceMarkup() {
-  return `<div class="action-stack">
-    <label>Open by Invoice No / Shipment No
-      <input type="text" id="quickOpenInvoiceInput" placeholder="Enter number and click Open" />
-    </label>
-    <div class="action-row">
-      <button type="button" class="secondary-button" data-action="quick-open-invoice">Open Invoice</button>
+function invoiceActionPanelMarkup() {
+  return `<article class="panel invoice-actions-panel">${panelHeader("Invoice Actions", "New / Load")}
+    <div class="action-stack">
+      <div class="action-row">
+        <button type="button" class="primary-button" data-action="new-record" data-type="invoice">New</button>
+        <button type="button" class="secondary-button" data-action="export-list" data-type="invoice">Export Excel</button>
+      </div>
+      ${loadSelectorMarkup("invoice", "Saved Records")}
+      <div class="action-row">
+        <button type="button" class="secondary-button" data-action="load-record" data-type="invoice">Load</button>
+      </div>
+      <div class="action-row">
+        <button type="button" class="secondary-button" data-action="generate-document" data-type="invoice">Generate Bill</button>
+        <button type="button" class="secondary-button" data-action="export-document" data-type="invoice">Save / Export</button>
+      </div>
     </div>
-  </div>`;
+  </article>`;
 }
 
 function renderPod() {
@@ -6285,27 +6298,6 @@ function openQuotationByNumber(rawQuery) {
   openRecord("quotation", rowId("quotation", match));
 }
 
-function openInvoiceByNumber(rawQuery) {
-  const query = String(rawQuery || "").trim().toLowerCase();
-  if (!query) {
-    notifyDenied("Invoice not opened", "Enter an Invoice No or Shipment No first.");
-    return;
-  }
-
-  const match = visibleRows(state.invoices).find((row) => {
-    const invoiceNo = String(row.invoiceNo || "").trim().toLowerCase();
-    const shipmentNo = String(row.shipmentNo || "").trim().toLowerCase();
-    return invoiceNo === query || shipmentNo === query;
-  });
-
-  if (!match) {
-    notifyDenied("Invoice not found", `No invoice found matching "${rawQuery}". You may not have access to view this record.`);
-    return;
-  }
-
-  openRecord("invoice", rowId("invoice", match));
-}
-
 function openShipmentByNumber(rawQuery) {
   const query = String(rawQuery || "").trim().toLowerCase();
   if (!query) {
@@ -6541,11 +6533,6 @@ async function handleModuleClick(event) {
 
   if (action === "quick-open-quotation") {
     openQuotationByNumber(document.querySelector("#quickOpenQuotationInput")?.value || "");
-    return;
-  }
-
-  if (action === "quick-open-invoice") {
-    openInvoiceByNumber(document.querySelector("#quickOpenInvoiceInput")?.value || "");
     return;
   }
 
@@ -6930,11 +6917,6 @@ function handleModuleKeydown(event) {
     openQuotationByNumber(event.target.value);
     return;
   }
-  if (event.key === "Enter" && event.target.id === "quickOpenInvoiceInput") {
-    event.preventDefault();
-    openInvoiceByNumber(event.target.value);
-    return;
-  }
   if (event.key === "Enter" && event.target.id === "quickOpenShipmentInput") {
     event.preventDefault();
     openShipmentByNumber(event.target.value);
@@ -7244,8 +7226,8 @@ function openRecord(type, id, presetRecord) {
           ...record,
           customer: data.customer || record.customer || "",
           shipmentNo: data.shipmentNo || record.shipmentNo || "",
-          tariffNo: data.tariffNo || record.tariffNo || "",
-          tariffName: data.tariffName || record.tariffName || "",
+          tariffNo: data.tariffNo || "",
+          tariffName: data.tariffNo ? (data.tariffName || "") : "",
           chargeableWeight: Number(data.chargeableWeight || record.chargeableWeight || 0),
           grossWeight: Number(data.grossWeight || record.grossWeight || 0),
           volumeWeight: Number(data.volumeWeight || record.volumeWeight || 0),
@@ -10431,7 +10413,12 @@ function bindInvoiceShipmentTariff() {
   let lines = parseInvoiceLineItems(invoiceLinesField?.value || '[]');
 
   const selectedShipment = () => state.shipments.find((row) => String(row.jobNo || '').trim().toLowerCase() === String(shipmentField?.value || '').trim().toLowerCase()) || null;
-  const selectedTariff = () => state.tariffs.find((row) => String(row.tariffNo || '').trim().toLowerCase() === String(tariffField?.value || '').trim().toLowerCase()) || assignedTariffForShipment(selectedShipment()) || null;
+  const selectedTariff = () => {
+    const tariffNo = String(tariffField?.value || '').trim().toLowerCase();
+    return tariffNo
+      ? state.tariffs.find((row) => String(row.tariffNo || '').trim().toLowerCase() === tariffNo) || null
+      : null;
+  };
 
   const syncDatalist = () => {
     if (shipmentDatalist) {
