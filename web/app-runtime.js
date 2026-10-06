@@ -5118,17 +5118,25 @@ function dashboardStatusAllowedBranches() {
   if (!access || ["both", "all"].includes(access.toLowerCase())) return CANONICAL_BRANCHES.slice();
   return access.split(",").map(normalizeBranchName).filter((branch) => CANONICAL_BRANCHES.includes(branch));
 }
+function dashboardStatusEntryDate(value) {
+  const timestamp = String(value || "").trim();
+  if (!timestamp) return "";
+  // Date-only values are intentionally preserved: the status form allows a user to enter the
+  // business date manually, so converting those through a timezone can move them to the prior day.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(timestamp)) return timestamp;
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? timestamp.slice(0, 10) : localDate(parsed);
+}
 function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
   const selectedBranches = new Set(branches);
   const visibleJobNos = new Set(visibleRows(state.shipments)
     .filter((row) => selectedBranches.has(normalizeBranchName(row.branch)))
-    .map((row) => String(row.jobNo || "").trim()).filter(Boolean));
+    .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();
   (state.shipmentStatusHistory || []).forEach((entry) => {
-    const jobNo = String(entry.jobNo || "").trim();
-    const timestamp = String(entry.updatedAt || "").trim();
-    const entryDate = /^\d{4}-\d{2}-\d{2}/.test(timestamp) ? timestamp.slice(0, 10) : localDate(new Date(timestamp));
+    const jobNo = String(entry.jobNo || "").trim().toLowerCase();
+    const entryDate = dashboardStatusEntryDate(entry.updatedAt);
     const status = dashboardStatusCountLabel(entry.status);
     if (jobNo && visibleJobNos.has(jobNo) && entryDate === todayKey && status) counts[status] += 1;
   });
