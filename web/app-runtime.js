@@ -5131,6 +5131,17 @@ function dashboardStatusEntryDate(value) {
   const parsed = new Date(timestamp);
   return Number.isNaN(parsed.getTime()) ? timestamp.slice(0, 10) : localDate(parsed);
 }
+function dashboardStatusEntryIsLater(candidate, current) {
+  const candidateId = Number(candidate?.id);
+  const currentId = Number(current?.id);
+  // Database status-history IDs are monotonic and remain the reliable ordering source when the
+  // user-entered status date has no time component (for example, two updates both dated today).
+  if (Number.isFinite(candidateId) && Number.isFinite(currentId) && candidateId !== currentId) return candidateId > currentId;
+  const candidateTime = Date.parse(String(candidate?.updatedAt || ""));
+  const currentTime = Date.parse(String(current?.updatedAt || ""));
+  if (Number.isFinite(candidateTime) && Number.isFinite(currentTime) && candidateTime !== currentTime) return candidateTime > currentTime;
+  return false;
+}
 function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
   const selectedBranches = new Set(branches);
   const visibleJobNos = new Set(visibleRows(state.shipments)
@@ -5138,12 +5149,16 @@ function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()
     .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();
+  const latestTodayByJob = new Map();
   (state.shipmentStatusHistory || []).forEach((entry) => {
     const jobNo = String(entry.jobNo || "").trim().toLowerCase();
     const entryDate = dashboardStatusEntryDate(entry.updatedAt);
     const status = dashboardStatusCountLabel(entry.status);
-    if (jobNo && visibleJobNos.has(jobNo) && entryDate === todayKey && status) counts[status] += 1;
+    if (!jobNo || !visibleJobNos.has(jobNo) || entryDate !== todayKey || !status) return;
+    const current = latestTodayByJob.get(jobNo);
+    if (!current || dashboardStatusEntryIsLater(entry, current)) latestTodayByJob.set(jobNo, { ...entry, status });
   });
+  latestTodayByJob.forEach((entry) => { counts[entry.status] += 1; });
   return counts;
 }
 function dashboardStatusUpdatesToolbox() {
