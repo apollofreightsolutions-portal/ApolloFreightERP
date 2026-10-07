@@ -2218,6 +2218,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
   }
 
   try {
+    await startupReadyPromise;
     const row = await loginUser(identifier, password);
 
     if (!row) {
@@ -2364,6 +2365,7 @@ function mfaSession(row, targetPortal = "company") {
 
 app.post("/api/mfa/enroll", async (request, response, next) => {
   try {
+    await startupReadyPromise;
     const challenge = mfaChallengePayload(request);
     const session = request.appSession || appAuthFromRequest(request);
     const userName = String(session?.userName || challenge?.userName || "").trim();
@@ -2380,6 +2382,7 @@ app.post("/api/mfa/enroll", async (request, response, next) => {
 
 app.post("/api/mfa/enroll/verify", async (request, response, next) => {
   try {
+    await startupReadyPromise;
     const challenge = mfaChallengePayload(request);
     const session = request.appSession || appAuthFromRequest(request);
     const userName = String(session?.userName || challenge?.userName || "").trim();
@@ -2396,6 +2399,7 @@ app.post("/api/mfa/enroll/verify", async (request, response, next) => {
 
 app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => {
   try {
+    await startupReadyPromise;
     const challenge = mfaChallengePayload(request);
     if (!challenge) return response.status(401).json({ ok: false, error: "The MFA login challenge is invalid or expired." });
     const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [challenge.userName])).rows[0];
