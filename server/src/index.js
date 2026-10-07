@@ -2384,13 +2384,13 @@ app.post("/api/mfa/enroll/verify", async (request, response, next) => {
     const session = request.appSession || appAuthFromRequest(request);
     const userName = String(session?.userName || challenge?.userName || "").trim();
     if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
-    const row = (await query("select mfa_secret_enc, mfa_enrolled_at from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
+    const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
     if (!row?.mfa_secret_enc || row.mfa_enrolled_at) return response.status(400).json({ ok: false, error: "Start a new MFA enrollment first." });
     const secret = decryptMfaSecret(row.mfa_secret_enc, customerPortalSecret);
     if (!verifyTotp(secret, request.body?.code)) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid or expired." });
     const recoveryCodes = createRecoveryCodes();
     await query("update app_users set mfa_recovery_codes=$1, mfa_enrolled_at=now() where lower(user_name)=lower($2)", [JSON.stringify(recoveryCodes.map(recoveryCodeHash)), userName]);
-    return response.json({ ok: true, recoveryCodes });
+    return response.json({ ok: true, recoveryCodes, session: mfaSession(row, challenge.targetPortal) });
   } catch (error) { return next(error); }
 });
 

@@ -2545,12 +2545,13 @@ async function attemptApiLogin(userName, password, loginMode = "company") {
       secret: enrollment.secret,
       enrollment: true
     });
-    verifiedCode = code;
-    await fetchJson("/api/mfa/enroll/verify", {
+    const enrolled = await fetchJson("/api/mfa/enroll/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ challenge: result.mfaChallenge, code })
     });
+    if (enrolled.session) return enrolled.session;
+    verifiedCode = code;
   }
   const verifyLoginCode = async (code) => {
     const verified = await fetchJson("/api/mfa/login", {
