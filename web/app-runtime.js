@@ -2480,25 +2480,54 @@ function openMfaCodeWindow({ qrDataUrl = "", secret = "", title, instructions, e
       reject(new Error("The MFA verification window was blocked. Allow popups for this portal and try again."));
       return;
     }
+    // A popup can lose its opener reference in some browser/privacy configurations.
+    // Use a one-time, same-origin storage signal as a fallback to postMessage so a
+    // successfully entered code never becomes a false "cancelled" login.
+    const signalId = `mfa-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const signalKey = `apollo-mfa-code:${signalId}`;
     let settled = false;
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
       window.removeEventListener("message", onMessage);
+      window.removeEventListener("storage", onStorage);
       if (closeTimer) window.clearInterval(closeTimer);
+      if (signalTimer) window.clearInterval(signalTimer);
+      try { window.localStorage.removeItem(signalKey); } catch {}
       try { popup.close(); } catch {}
       callback(value);
     };
-    const onMessage = (event) => {
-      if (event.source !== popup || event.data?.type !== "apollo-mfa-code") return;
-      const code = String(event.data.code || "").trim();
+    const receiveCode = (data, requirePopupSource = false, source = null) => {
+      if (requirePopupSource && source !== popup) return;
+      if (data?.type !== "apollo-mfa-code" || (data.signalId && data.signalId !== signalId)) return;
+      const code = String(data.code || "").trim();
       if (!code) return;
       finish(resolve, code);
     };
+    const onMessage = (event) => receiveCode(event.data, true, event.source);
+    const onStorage = (event) => {
+      if (event.key !== signalKey || !event.newValue) return;
+      try { receiveCode(JSON.parse(event.newValue)); } catch {}
+    };
+    const readStorageSignal = () => {
+      try {
+        const saved = window.localStorage.getItem(signalKey);
+        if (saved) receiveCode(JSON.parse(saved));
+      } catch {}
+    };
     window.addEventListener("message", onMessage);
+    window.addEventListener("storage", onStorage);
     let closeTimer = window.setInterval(() => {
-      if (popup.closed) finish(reject, new Error("MFA verification was cancelled."));
+      if (!popup.closed) return;
+      window.clearInterval(closeTimer);
+      // Let a just-submitted storage/postMessage signal reach this page before
+      // treating a closed verification window as a user cancellation.
+      window.setTimeout(() => {
+        readStorageSignal();
+        if (!settled) finish(reject, new Error("MFA verification was cancelled."));
+      }, 350);
     }, 500);
+    const signalTimer = window.setInterval(readStorageSignal, 150);
     const qrMarkup = qrDataUrl
       ? `<img alt="Microsoft Authenticator registration QR code" style="display:block;width:260px;height:260px;margin:18px auto;image-rendering:auto" src="${escapeHtml(qrDataUrl)}">`
       : "";
@@ -2516,6 +2545,15 @@ function openMfaCodeWindow({ qrDataUrl = "", secret = "", title, instructions, e
       form.addEventListener('submit',function(event){event.preventDefault();const code=field.value.trim();if(!code)return;button.disabled=true;button.textContent='Verifying…';window.opener.postMessage({type:'apollo-mfa-code',code:code},'*');});
     </script></body></html>`);
     popup.document.close();
+    // Keep a same-origin fallback copy of the code. This runs alongside the
+    // popup's normal postMessage handler and covers browsers that discard the
+    // popup opener before the parent receives the message.
+    try {
+      popup.document.getElementById("mfa-form")?.addEventListener("submit", () => {
+        const code = String(popup.document.getElementById("mfa-code")?.value || "").trim();
+        if (code) window.localStorage.setItem(signalKey, JSON.stringify({ type: "apollo-mfa-code", signalId, code }));
+      });
+    } catch {}
     popup.focus();
   });
 }
