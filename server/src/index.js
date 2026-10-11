@@ -3957,6 +3957,56 @@ app.get("/api/hr/admin/policies", requireHrAdmin, async (request,response,next)=
   }catch(error){return next(error);}
 });
 
+app.get("/api/hr/admin/policies/:id/attachment", requireHrAdmin, async (request,response,next)=>{
+  try {
+    const id=Number(request.params.id);
+    if(!Number.isInteger(id)||id<=0) return response.status(400).json({ok:false,error:"Invalid policy record."});
+    const policy=(await query("select id,attachment_name,attachment_mime_type,attachment_url from hr_employee_leave_policies where id=$1 limit 1",[id])).rows[0];
+    if(!policy) return response.status(404).json({ok:false,error:"Leave policy not found."});
+    if(!policy.attachment_url) return response.status(404).json({ok:false,error:"No document is attached to this policy."});
+    let metadata={}; try{metadata=JSON.parse(policy.attachment_url||"{}");}catch{}
+    if(metadata.storageProvider!=="gcs"||!metadata.objectName) return response.status(404).json({ok:false,error:"The policy document details are incomplete."});
+    const storage=googleCloudStorageConfig();
+    if(!storage) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server."});
+    return response.json({ok:true,url:await googleCloudStorageSignedUrl(storage.bucket,metadata.objectName),fileName:policy.attachment_name,mimeType:policy.attachment_mime_type});
+  } catch(error) {
+    if(error.code==="42703") return response.status(503).json({ok:false,error:"Policy document storage is not available until migration 044 is applied."});
+    return next(error);
+  }
+});
+
+app.post("/api/hr/admin/policies/:id/attachment", requireHrAdmin, async (request,response,next)=>{
+  const id=Number(request.params.id);
+  if(!Number.isInteger(id)||id<=0) return response.status(400).json({ok:false,error:"Invalid policy record."});
+  const fileName=String(request.body?.fileName||"").trim();
+  const mimeType=String(request.body?.mimeType||"").toLowerCase().trim();
+  const contentBase64=String(request.body?.contentBase64||"").replace(/^data:[^,]+,/i,"").trim();
+  const allowed=new Set(["application/pdf","image/jpeg","image/png"]);
+  if(!fileName||!contentBase64||!allowed.has(mimeType)) return response.status(400).json({ok:false,error:"Policy document must be a PDF, JPG or PNG file."});
+  try {
+    const policy=(await query("select id,user_name,leave_type_code,year from hr_employee_leave_policies where id=$1 limit 1",[id])).rows[0];
+    if(!policy) return response.status(404).json({ok:false,error:"Leave policy not found."});
+    const fileBuffer=Buffer.from(contentBase64,"base64");
+    if(!fileBuffer.length||fileBuffer.length>10*1024*1024) return response.status(400).json({ok:false,error:"Policy document must be 10 MB or smaller."});
+    const storage=googleCloudStorageConfig();
+    if(!storage) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server. New uploads are disabled until GCS is available."});
+    const objectName=`${storage.prefix}/hr-policy-private/${safeEmployeeDocumentPart(policy.user_name)}/${policy.year}-${safeEmployeeDocumentPart(policy.leave_type_code)}-${id}-${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
+    const object=storage.bucket.file(objectName);
+    await object.save(fileBuffer,{resumable:false,validation:"crc32c",metadata:{contentType:mimeType,contentDisposition:`inline; filename="${fileName.replace(/["\\\r\n]/g,"_")}"`}});
+    const metadata=JSON.stringify({storageProvider:"gcs",bucket:storage.bucket.name,objectName,bytes:fileBuffer.length});
+    try {
+      const saved=await query("update hr_employee_leave_policies set attachment_name=$1,attachment_mime_type=$2,attachment_url=$3,updated_at=now() where id=$4 returning id,attachment_name,attachment_mime_type,attachment_url",[fileName,mimeType,metadata,id]);
+      return response.status(201).json({ok:true,row:saved.rows[0]});
+    } catch(error) {
+      await object.delete().catch(()=>{});
+      throw error;
+    }
+  } catch(error) {
+    if(error.code==="42703") return response.status(503).json({ok:false,error:"Policy document storage is not available until migration 044 is applied."});
+    return next(error);
+  }
+});
+
 app.put("/api/hr/admin/adjustment-audit/:id", requireHrAdmin, async (request,response,next)=>{
   try {
     const id=Number(request.params.id);
