@@ -4466,8 +4466,13 @@ app.post("/api/shipments", requireErpPortalAuth, async (request, response, next)
     const row = await insertRow(resources.shipments, request.body || {});
     let relatedRows = [row];
     try {
+      // When a new job is created from an existing AWB, the status selected in the
+      // form is the user's intentional update. Do not join the group by copying
+      // the previous latest status back onto the new job; propagate the new job's
+      // status to every shipment sharing the AWB instead.
       relatedRows = await synchronizeShipmentAirwayBill(row, {
-        joinExistingGroup: true,
+        syncStatus: true,
+        status: row.status,
         updatedBy: request.appSession?.userName || "system",
         notes: `AWB group synchronization after shipment creation for ${row.airway_bill_no || ""}`
       });
