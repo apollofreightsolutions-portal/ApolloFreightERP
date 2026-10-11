@@ -301,7 +301,9 @@ function seedState() {
       dashboardShipmentColumns: null,
       openColumnSettings: "",
       customerActivityFilter: "All",
-      customerRequestEditNo: ""
+      customerRequestEditNo: "",
+      dashboardFromDate: "",
+      dashboardToDate: ""
     },
     dropdownOptions: {}
   };
@@ -3917,9 +3919,33 @@ function portalCustomerCount() {
   return Array.isArray(state.customerUsers) ? state.customerUsers.length : 0;
 }
 
+function dashboardDefaultDateRange() {
+  const now = new Date();
+  return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`, to: localDate(now) };
+}
+function dashboardDateRange() {
+  const defaults = dashboardDefaultDateRange();
+  return { from: state.ui.dashboardFromDate || defaults.from, to: state.ui.dashboardToDate || defaults.to };
+}
+function dashboardScopedRows(rows) {
+  const query = globalSearch.value.trim().toLowerCase();
+  const { from, to } = dashboardDateRange();
+  return rows.filter((row) => {
+    const date = recordDate(row);
+    const derivedSearchText = row?.type === "POD" ? documentLinkedToText(row) : "";
+    const textMatch = !query || `${Object.values(row).join(" ")} ${derivedSearchText}`.toLowerCase().includes(query);
+    const fromMatch = !from || !date || date >= from;
+    const toMatch = !to || !date || date <= to;
+    return textMatch && fromMatch && toMatch && adminBranchFilterMatch(row);
+  });
+}
+function dashboardDateControls() {
+  const range = dashboardDateRange();
+  return `<section class="panel dashboard-date-range-panel"><div class="panel-header"><div><h3>Dashboard Date Range</h3><small>Defaults to the current month. This filter affects dashboard cards only.</small></div></div><form class="date-filter-panel dashboard-date-range-form" data-form="dashboard-date-range"><label>From<input name="dashboardFromDate" type="date" value="${escapeHtml(range.from)}" required></label><label>To<input name="dashboardToDate" type="date" value="${escapeHtml(range.to)}" required></label><button type="submit" class="blue-button">Apply</button><button type="button" class="secondary-button" data-action="reset-dashboard-range">This Month</button></form><p class="filter-status">Showing dashboard data from ${escapeHtml(range.from)} to ${escapeHtml(range.to)}. Other modules use their existing filters.</p></section>`;
+}
 function dashboardInvoiceRows() {
   const completedStatuses = new Set(["approved", "sent", "paid", "overdue", "issued", "completed"]);
-  return filteredRows(visibleRows(state.invoices)).filter((row) => completedStatuses.has(String(row.status || "").trim().toLowerCase()));
+  return dashboardScopedRows(visibleRows(state.invoices)).filter((row) => completedStatuses.has(String(row.status || "").trim().toLowerCase()));
 }
 
 function dashboardBranchKpi(title, invoiceRows, metric, valueForRow, caption) {
@@ -3937,7 +3963,7 @@ function dashboardBranchKpi(title, invoiceRows, metric, valueForRow, caption) {
 }
 
 function renderDashboard() {
-  const rows = filteredRows(visibleRows(state.shipments));
+  const rows = dashboardScopedRows(visibleRows(state.shipments));
   const invoiceRows = dashboardInvoiceRows();
   const open = liveShipmentDataReady ? rows.filter(shipmentIsOpen).length : "—";
   const transit = liveShipmentDataReady ? rows.filter(shipmentIsInTransit).length : "—";
@@ -3948,13 +3974,11 @@ function renderDashboard() {
   const pendingPodCaption = liveShipmentDataReady ? "Delivered but POD not uploaded" : "Waiting for live data";
   const unbilledCaption = liveShipmentDataReady ? "Invoice not completed" : "Waiting for live data";
   const closedJobsCaption = liveShipmentDataReady ? "Delivered + live POD uploaded" : "Waiting for live data";
-  const pendingRequests = pendingRequestCount();
-  const pendingCustomerRequests = state.shipmentRequests.filter((row) => ["SUBMITTED", "PENDING_REVIEW"].includes(String(row.status || "").toUpperCase())).length;
+  const pendingRequests = dashboardScopedRows(allUserRequests()).filter((row) => String(row.status || "").toLowerCase() === "pending").length;
+  const pendingCustomerRequests = dashboardScopedRows(state.shipmentRequests).filter((row) => ["SUBMITTED", "PENDING_REVIEW"].includes(String(row.status || "").toUpperCase())).length;
   const pendingCharges = state.additionalCharges.filter((row) => row.status === "Pending Approval").length;
-  // The KPI counts above still reflect every shipment, but the table itself only needs to show a
-  // recent slice - rendering the full register here (potentially thousands of rows, on every
-  // render, which happens on nearly every click anywhere in the app) was the main cause of the
-  // dashboard feeling slow. The full list is one click away on the Shipment Register.
+  // The dashboard cards use the selected dashboard date range, while the table only renders a
+  // recent slice of that same scoped set. The full unfiltered list remains in Shipment Register.
   const recentRows = [...rows].sort((left, right) => String(right.bookingDate || "").localeCompare(String(left.bookingDate || ""))).slice(0, 50);
   const dashboardTableNote = rows.length > recentRows.length
     ? `<p class="empty-state">Showing the most recent ${recentRows.length} of ${rows.length} shipments. Open Shipment Register for the full list.</p>`
@@ -3962,6 +3986,7 @@ function renderDashboard() {
   if (!isAdminSession()) {
     return `
       ${postLoginAnnouncementNotice()}
+      ${dashboardDateControls()}
       ${dashboardStatusUpdatesToolbox()}
       <section class="kpi-grid">
         ${kpi("Open Shipments", open, liveShipmentCaption, "open-shipments")}
@@ -3977,6 +4002,7 @@ function renderDashboard() {
   }
   return `
     ${postLoginAnnouncementNotice()}
+    ${dashboardDateControls()}
     ${dashboardStatusUpdatesToolbox()}
     <section class="kpi-grid">
       ${kpi("Open Shipments", open, liveShipmentCaption, "open-shipments")}
@@ -4013,7 +4039,7 @@ function dashboardMetricConfig(metric) {
     return {
       title: "Customer Requests",
       summary: "Shipment requests waiting on your review",
-      rows: state.shipmentRequests.filter((row) => ["SUBMITTED", "PENDING_REVIEW"].includes(String(row.status || "").toUpperCase())),
+      rows: dashboardScopedRows(state.shipmentRequests).filter((row) => ["SUBMITTED", "PENDING_REVIEW"].includes(String(row.status || "").toUpperCase())),
       columns: shipmentRequestColumns()
     };
   }
@@ -4063,7 +4089,7 @@ function dashboardMetricConfig(metric) {
     };
   }
 
-  const rows = filteredRows(visibleRows(state.shipments));
+  const rows = dashboardScopedRows(visibleRows(state.shipments));
   if (metric === "open-shipments") {
     const selected = liveShipmentDataReady ? rows.filter(shipmentIsOpen) : [];
     return {
@@ -4115,7 +4141,7 @@ function dashboardMetricConfig(metric) {
   }
 
   if (metric === "pending-requests") {
-    const selected = allUserRequests().filter((row) => String(row.status || "").toLowerCase() === "pending");
+    const selected = dashboardScopedRows(allUserRequests()).filter((row) => String(row.status || "").toLowerCase() === "pending");
     return {
       title: "Pending Requests",
       summary: "User and admin requests waiting for review",
@@ -6512,6 +6538,13 @@ async function handleModuleClick(event) {
 
   if (action === "open-dashboard-status-updates") {
     await openDashboardStatusUpdates();
+    return;
+  }
+  if (action === "reset-dashboard-range") {
+    state.ui.dashboardFromDate = "";
+    state.ui.dashboardToDate = "";
+    saveState();
+    render();
     return;
   }
 
@@ -12483,6 +12516,18 @@ async function approveLoadManifest(loadNo) {
   generateRecordDocument("load", loadNo);
 }
 
+function applyDashboardDateRange(data) {
+  const from = String(data.dashboardFromDate || "").trim();
+  const to = String(data.dashboardToDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+    notifyDenied("Invalid dashboard date range", "Choose a valid From and To date.");
+    return false;
+  }
+  state.ui.dashboardFromDate = from;
+  state.ui.dashboardToDate = to;
+  notifySuccess("Dashboard range applied", `${from} to ${to}`);
+  return true;
+}
 async function handleModuleSubmit(event) {
   event.preventDefault();
   const form = event.target.closest("form[data-form]");
@@ -12505,7 +12550,8 @@ async function handleModuleSubmit(event) {
     settings: () => updateSettings(data),
     "customer-shipment-request": () => submitCustomerShipmentRequest(data, form),
     "customer-profile": () => updateCustomerProfile(data),
-    "employee-profile": () => updateEmployeeProfile(data)
+    "employee-profile": () => updateEmployeeProfile(data),
+    "dashboard-date-range": () => applyDashboardDateRange(data)
   };
   const saved = await handlers[type]?.();
   if (saved === false) {
