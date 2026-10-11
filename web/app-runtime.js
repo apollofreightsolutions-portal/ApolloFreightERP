@@ -301,9 +301,7 @@ function seedState() {
       dashboardShipmentColumns: null,
       openColumnSettings: "",
       customerActivityFilter: "All",
-      customerRequestEditNo: "",
-      dashboardFromDate: "",
-      dashboardToDate: ""
+      customerRequestEditNo: ""
     },
     dropdownOptions: {}
   };
@@ -3638,6 +3636,11 @@ function updateUserContext() {
 
 function updateDateFilterStatus() {
   const branchText = adminBranchFilterSummary();
+  if (!fromDate.value && !toDate.value && activeModule === "Dashboard") {
+    const range = dashboardDefaultDateRange();
+    dateFilterStatusText.textContent = `Dashboard: showing ${range.from} to ${range.to}${branchText}`;
+    return;
+  }
   if (!fromDate.value && !toDate.value) {
     dateFilterStatusText.textContent = `Showing all records${branchText}`;
     return;
@@ -3924,8 +3927,8 @@ function dashboardDefaultDateRange() {
   return { from: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`, to: localDate(now) };
 }
 function dashboardDateRange() {
-  const defaults = dashboardDefaultDateRange();
-  return { from: state.ui.dashboardFromDate || defaults.from, to: state.ui.dashboardToDate || defaults.to };
+  if (fromDate.value || toDate.value) return { from: fromDate.value, to: toDate.value };
+  return dashboardDefaultDateRange();
 }
 function dashboardScopedRows(rows) {
   const query = globalSearch.value.trim().toLowerCase();
@@ -3938,10 +3941,6 @@ function dashboardScopedRows(rows) {
     const toMatch = !to || !date || date <= to;
     return textMatch && fromMatch && toMatch && adminBranchFilterMatch(row);
   });
-}
-function dashboardDateControls() {
-  const range = dashboardDateRange();
-  return `<section class="panel dashboard-date-range-panel"><div class="panel-header"><div><h3>Dashboard Date Range</h3><small>Defaults to the current month. This filter affects dashboard cards only.</small></div></div><form class="date-filter-panel dashboard-date-range-form" data-form="dashboard-date-range"><label>From<input name="dashboardFromDate" type="date" value="${escapeHtml(range.from)}" required></label><label>To<input name="dashboardToDate" type="date" value="${escapeHtml(range.to)}" required></label><button type="submit" class="blue-button">Apply</button><button type="button" class="secondary-button" data-action="reset-dashboard-range">This Month</button></form><p class="filter-status">Showing dashboard data from ${escapeHtml(range.from)} to ${escapeHtml(range.to)}. Other modules use their existing filters.</p></section>`;
 }
 function dashboardInvoiceRows() {
   const completedStatuses = new Set(["approved", "sent", "paid", "overdue", "issued", "completed"]);
@@ -3986,7 +3985,6 @@ function renderDashboard() {
   if (!isAdminSession()) {
     return `
       ${postLoginAnnouncementNotice()}
-      ${dashboardDateControls()}
       ${dashboardStatusUpdatesToolbox()}
       <section class="kpi-grid">
         ${kpi("Open Shipments", open, liveShipmentCaption, "open-shipments")}
@@ -4002,7 +4000,6 @@ function renderDashboard() {
   }
   return `
     ${postLoginAnnouncementNotice()}
-    ${dashboardDateControls()}
     ${dashboardStatusUpdatesToolbox()}
     <section class="kpi-grid">
       ${kpi("Open Shipments", open, liveShipmentCaption, "open-shipments")}
@@ -6538,13 +6535,6 @@ async function handleModuleClick(event) {
 
   if (action === "open-dashboard-status-updates") {
     await openDashboardStatusUpdates();
-    return;
-  }
-  if (action === "reset-dashboard-range") {
-    state.ui.dashboardFromDate = "";
-    state.ui.dashboardToDate = "";
-    saveState();
-    render();
     return;
   }
 
@@ -12516,18 +12506,6 @@ async function approveLoadManifest(loadNo) {
   generateRecordDocument("load", loadNo);
 }
 
-function applyDashboardDateRange(data) {
-  const from = String(data.dashboardFromDate || "").trim();
-  const to = String(data.dashboardToDate || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
-    notifyDenied("Invalid dashboard date range", "Choose a valid From and To date.");
-    return false;
-  }
-  state.ui.dashboardFromDate = from;
-  state.ui.dashboardToDate = to;
-  notifySuccess("Dashboard range applied", `${from} to ${to}`);
-  return true;
-}
 async function handleModuleSubmit(event) {
   event.preventDefault();
   const form = event.target.closest("form[data-form]");
@@ -12550,8 +12528,7 @@ async function handleModuleSubmit(event) {
     settings: () => updateSettings(data),
     "customer-shipment-request": () => submitCustomerShipmentRequest(data, form),
     "customer-profile": () => updateCustomerProfile(data),
-    "employee-profile": () => updateEmployeeProfile(data),
-    "dashboard-date-range": () => applyDashboardDateRange(data)
+    "employee-profile": () => updateEmployeeProfile(data)
   };
   const saved = await handlers[type]?.();
   if (saved === false) {
