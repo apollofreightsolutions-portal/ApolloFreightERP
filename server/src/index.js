@@ -712,17 +712,23 @@ async function loginCustomer(identifier, password) {
 }
 
 async function nextShipmentRequestNo() {
+  const year = String(new Date().getFullYear()).slice(-2);
+  // Only valid SRQ-YYNNNN values participate in numbering. This prevents an
+  // older malformed value such as SRQ-2626260003 from duplicating the year
+  // prefix into the next request number. Existing rows are left untouched.
   const result = await query(
     `select request_no
      from shipment_requests
-     order by id desc
-     limit 1`
+     where request_no ~ $1
+     order by id desc`,
+    [`^SRQ-${year}\\d{4}$`]
   );
-  const last = String(result.rows[0]?.request_no || "");
-  const match = last.match(/(\d+)$/);
-  const nextNumber = match ? Number(match[1]) + 1 : 1;
-  const year = String(new Date().getFullYear()).slice(-2);
-  return "SRQ-" + year + String(nextNumber).padStart(4, "0");
+  let highest = 0;
+  for (const row of result.rows) {
+    const match = String(row.request_no || "").match(new RegExp(`^SRQ-${year}(\\d{4})$`));
+    if (match) highest = Math.max(highest, Number(match[1]) || 0);
+  }
+  return "SRQ-" + year + String(highest + 1).padStart(4, "0");
 }
 
 async function customerPortalSnapshot(customerSession) {
