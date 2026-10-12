@@ -1108,6 +1108,8 @@ function loadState() {
 let saveStateTimer = null;
 let columnLayoutHydrated = false;
 let lastPersistedColumnLayoutJson = "";
+let columnLayoutUserKey = "";
+let columnLayoutLoadedFromLocal = false;
 const SAVE_STATE_DEBOUNCE_MS = 200;
 const SAVE_STATE_MAX_AUDIT_ROWS = 500;
 
@@ -1139,6 +1141,31 @@ function columnLayoutScopes() {
 }
 
 const DASHBOARD_LAYOUT_STORAGE_KEY = "apollo.dashboard.columns.v3";
+
+function userColumnLayoutStorageKey(userName = currentUserName()) {
+  const normalized = String(userName || "").trim().toLowerCase();
+  return normalized ? `apollo.user-columns.v1.${encodeURIComponent(normalized)}` : "";
+}
+
+function prepareColumnLayoutForCurrentUser() {
+  const userKey = String(currentUserName() || "").trim().toLowerCase();
+  if (!userKey || userKey === columnLayoutUserKey) return;
+  columnLayoutUserKey = userKey;
+  columnLayoutHydrated = false;
+  columnLayoutLoadedFromLocal = false;
+  lastPersistedColumnLayoutJson = "";
+  columnLayoutScopes().forEach((key) => { delete state.ui[key]; });
+  delete state.ui.columnWidths;
+  delete state.ui.columnWidthsLocked;
+  try {
+    localStorage.removeItem(DASHBOARD_LAYOUT_STORAGE_KEY);
+    const saved = localStorage.getItem(userColumnLayoutStorageKey(userKey));
+    if (saved) {
+      hydrateColumnLayoutFromServer(saved);
+      columnLayoutLoadedFromLocal = true;
+    }
+  } catch {}
+}
 
 function readDashboardLayoutSnapshot() {
   try {
@@ -1197,19 +1224,20 @@ function hydrateColumnLayoutFromServer(value) {
 }
 
 function persistColumnLayoutToServer() {
-  if (!columnLayoutHydrated || !state.settings?.settingsKey) return;
+  if (!columnLayoutHydrated || !columnLayoutUserKey || isCustomerSession() || isHrSession() || isCrmSession()) return;
   const columnLayoutJson = serializeColumnLayout();
   if (columnLayoutJson === lastPersistedColumnLayoutJson) return;
-  state.settings.columnLayoutJson = columnLayoutJson;
   lastPersistedColumnLayoutJson = columnLayoutJson;
-  persistRecord("settings", {
-    settingsKey: state.settings.settingsKey || "default",
-    columnLayoutJson
+  try { localStorage.setItem(userColumnLayoutStorageKey(columnLayoutUserKey), columnLayoutJson); } catch {}
+  fetchJson("/api/user-column-preferences", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ columnLayoutJson })
   }).then((saved) => {
-    if (!saved) lastPersistedColumnLayoutJson = "";
+    if (!saved?.ok) lastPersistedColumnLayoutJson = "";
   }).catch((error) => {
     lastPersistedColumnLayoutJson = "";
-    console.warn("Could not persist register column settings", error);
+    console.warn("Could not persist user column settings", error);
   });
 }
 
@@ -2798,11 +2826,12 @@ async function syncFromApi() {
       await syncCustomerPortal();
       return;
     }
+    prepareColumnLayoutForCurrentUser();
     const requestNames = [
       "health", "shipments", "consolidations", "customers", "suppliers", "tariffs", "documents",
       "additionalCharges", "invoices", "quotations", "shipmentRequests", "shipmentStatusHistory",
       "users", "customerUsers", "unblockRequests", "adminRequests", "audit", "settings", "employees",
-      "leaveRequests", "payslips", "hrAnnouncements", "employeeProfileDocuments"
+      "leaveRequests", "payslips", "hrAnnouncements", "employeeProfileDocuments", "userColumnPreferences"
     ];
     const results = await Promise.allSettled([
       fetchJson("/api/health"),
@@ -2827,7 +2856,8 @@ async function syncFromApi() {
       fetchJson("/api/leave-requests"),
       fetchJson("/api/payslips"),
       fetchJson("/api/hr-announcements"),
-      isHrSession() ? fetchJson("/api/employee-profile-documents") : Promise.resolve({ rows: [] })
+      isHrSession() ? fetchJson("/api/employee-profile-documents") : Promise.resolve({ rows: [] }),
+      (!isHrSession() && !isCrmSession()) ? fetchJson("/api/user-column-preferences") : Promise.resolve({ row: null })
     ]);
     const valueAt = (index) => results[index]?.status === "fulfilled" ? results[index].value : null;
     const health = valueAt(0);
@@ -2870,7 +2900,14 @@ async function syncFromApi() {
       const settingsRows = rowsAt(17);
       if (settingsRows?.length) {
         state.settings = apiSettings(settingsRows[0]);
-        hydrateColumnLayoutFromServer(state.settings.columnLayoutJson);
+        const preference = valueAt(23)?.row;
+        // Existing shared layout is only a fallback for users without a personal
+        // preference. New changes are never written to the shared settings row.
+        if (preference?.column_layout_json) {
+          hydrateColumnLayoutFromServer(preference.column_layout_json);
+        } else if (!columnLayoutLoadedFromLocal) {
+          hydrateColumnLayoutFromServer(state.settings.columnLayoutJson);
+        }
         columnLayoutHydrated = true;
         state.dropdownOptions = { ...state.dropdownOptions, ...parseDropdownOptions(state.settings.dropdownOptionsJson) };
       }

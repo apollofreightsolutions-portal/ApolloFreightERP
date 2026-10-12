@@ -2080,6 +2080,51 @@ app.get("/api/health", async (_request, response) => {
   }
 });
 
+// Column layouts are personal UI preferences. They must never be saved in the
+// shared app_settings row, because that row contains company-wide settings.
+app.get("/api/user-column-preferences", requireErpPortalAuth, async (request, response, next) => {
+  const userName = String(request.appSession?.userName || "").trim().toLowerCase();
+  if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+  try {
+    const result = await query(
+      "select user_name, column_layout_json, updated_at from user_column_preferences where user_name = $1 limit 1",
+      [userName]
+    );
+    return response.json({ ok: true, row: result.rows[0] || null });
+  } catch (error) {
+    // Keep rolling deployments safe before migration 045 is applied.
+    if (error?.code === "42P01") return response.json({ ok: true, row: null, storageAvailable: false });
+    return next(error);
+  }
+});
+
+app.put("/api/user-column-preferences", requireErpPortalAuth, async (request, response, next) => {
+  const userName = String(request.appSession?.userName || "").trim().toLowerCase();
+  if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+  try {
+    const raw = String(request.body?.columnLayoutJson || "{}");
+    if (raw.length > 250000) return response.status(413).json({ ok: false, error: "Column preferences are too large." });
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return response.status(400).json({ ok: false, error: "Invalid column preferences." });
+    }
+    const columnLayoutJson = JSON.stringify(parsed);
+    const result = await query(
+      `insert into user_column_preferences (user_name, column_layout_json, created_at, updated_at)
+       values ($1, $2, now(), now())
+       on conflict (user_name) do update
+       set column_layout_json = excluded.column_layout_json, updated_at = now()
+       returning user_name, column_layout_json, updated_at`,
+      [userName, columnLayoutJson]
+    );
+    return response.json({ ok: true, row: result.rows[0] });
+  } catch (error) {
+    if (error?.code === "42P01") return response.json({ ok: true, storageAvailable: false });
+    if (error instanceof SyntaxError) return response.status(400).json({ ok: false, error: "Invalid column preferences." });
+    return next(error);
+  }
+});
+
 // Public customer tracking is intentionally separate from the authenticated shipment API.
 // It returns an allowlisted timeline only; no customer, billing, POD, notes, or internal-user data.
 app.get("/api/public/tracking/:trackingReference", publicTrackingRateLimiter, async (request, response, next) => {
