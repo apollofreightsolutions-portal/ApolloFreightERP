@@ -13118,7 +13118,8 @@ async function createShipment(data) {
   );
   const saved = await postRecord("shipment", record);
   if (!saved) {
-    notifyDenied("Shipment not saved", "The shipment could not be saved. Check the connection and try again before generating a TCN.");
+    const apiError = String(state.api?.error || "").trim();
+    notifyDenied("Shipment not saved", apiError || "The shipment could not be saved. Check the connection and try again before generating a TCN.");
     return false;
   }
   const finalRecord = typeof saved === "object" ? apiShipment(saved) : record;
