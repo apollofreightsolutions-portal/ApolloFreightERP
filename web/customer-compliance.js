@@ -143,9 +143,9 @@ function syncEffectiveHsToForm(form, result) {
 }
 async function analyze(form, panel, button) {
   const files = Array.from(form.querySelector("input[name='attachments']")?.files || []);
-  const supported = files.filter((file) => ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(String(file.type || "").toLowerCase()));
+  const supported = files.filter((file) => ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"].includes(String(file.type || "").toLowerCase()) || /\.(xlsx?|xls)$/i.test(file.name || ""));
   if (!files.length) throw new Error("Select the invoice and/or packing list first.");
-  if (!supported.length) throw new Error("AI analysis currently reads PDF, JPG, PNG and WebP. DOCX/XLSX may still be attached to the booking, but use a PDF/image copy for automatic checking.");
+  if (!supported.length) throw new Error("AI analysis reads PDF, JPG, PNG, WebP and Excel (.xls/.xlsx) files.");
   if (supported.length > 3) throw new Error("Select up to 3 documents for one compliance analysis.");
   const destination = String(form.querySelector("[name='destination']")?.value || "").trim();
   if (!/\bkuwait\b|\bkwi\b/i.test(destination)) throw new Error("The current compliance master is for Kuwait. Set Destination to Kuwait before running the check.");
@@ -157,7 +157,12 @@ async function analyze(form, panel, button) {
   panel.innerHTML = `<div class="apollo-compliance-working">Apollo AI is reading the documents, extracting shipment details and cross-checking the Kuwait HS master…</div>`;
   try {
     const payloadFiles = [];
-    for (const file of supported) payloadFiles.push({ fileName: file.name, mimeType: file.type, contentBase64: await readBase64(file) });
+    for (const file of supported) {
+      const lowerName = String(file.name || "").toLowerCase();
+      const suppliedMime = String(file.type || "").toLowerCase();
+      const mimeType = /\.xlsx$/i.test(lowerName) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : /\.xls$/i.test(lowerName) ? "application/vnd.ms-excel" : suppliedMime;
+      payloadFiles.push({ fileName: file.name, mimeType, contentBase64: await readBase64(file) });
+    }
     const response = await api("/api/customer/compliance/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, files: payloadFiles }), timeoutMs: 45000 });
     const hidden = form.querySelector("input[name='complianceAnalysisId']");
     if (hidden) hidden.value = response.analysisId || "";

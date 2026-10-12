@@ -712,17 +712,23 @@ async function loginCustomer(identifier, password) {
 }
 
 async function nextShipmentRequestNo() {
+  const year = String(new Date().getFullYear()).slice(-2);
+  // Only valid SRQ-YYNNNN values participate in numbering. This prevents an
+  // older malformed value such as SRQ-2626260003 from duplicating the year
+  // prefix into the next request number. Existing rows are left untouched.
   const result = await query(
     `select request_no
      from shipment_requests
-     order by id desc
-     limit 1`
+     where request_no ~ $1
+     order by id desc`,
+    [`^SRQ-${year}\\d{4}$`]
   );
-  const last = String(result.rows[0]?.request_no || "");
-  const match = last.match(/(\d+)$/);
-  const nextNumber = match ? Number(match[1]) + 1 : 1;
-  const year = String(new Date().getFullYear()).slice(-2);
-  return "SRQ-" + year + String(nextNumber).padStart(4, "0");
+  let highest = 0;
+  for (const row of result.rows) {
+    const match = String(row.request_no || "").match(new RegExp(`^SRQ-${year}(\\d{4})$`));
+    if (match) highest = Math.max(highest, Number(match[1]) || 0);
+  }
+  return "SRQ-" + year + String(highest + 1).padStart(4, "0");
 }
 
 async function customerPortalSnapshot(customerSession) {
@@ -2074,6 +2080,51 @@ app.get("/api/health", async (_request, response) => {
   }
 });
 
+// Column layouts are personal UI preferences. They must never be saved in the
+// shared app_settings row, because that row contains company-wide settings.
+app.get("/api/user-column-preferences", requireErpPortalAuth, async (request, response, next) => {
+  const userName = String(request.appSession?.userName || "").trim().toLowerCase();
+  if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+  try {
+    const result = await query(
+      "select user_name, column_layout_json, updated_at from user_column_preferences where user_name = $1 limit 1",
+      [userName]
+    );
+    return response.json({ ok: true, row: result.rows[0] || null });
+  } catch (error) {
+    // Keep rolling deployments safe before migration 045 is applied.
+    if (error?.code === "42P01") return response.json({ ok: true, row: null, storageAvailable: false });
+    return next(error);
+  }
+});
+
+app.put("/api/user-column-preferences", requireErpPortalAuth, async (request, response, next) => {
+  const userName = String(request.appSession?.userName || "").trim().toLowerCase();
+  if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+  try {
+    const raw = String(request.body?.columnLayoutJson || "{}");
+    if (raw.length > 250000) return response.status(413).json({ ok: false, error: "Column preferences are too large." });
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return response.status(400).json({ ok: false, error: "Invalid column preferences." });
+    }
+    const columnLayoutJson = JSON.stringify(parsed);
+    const result = await query(
+      `insert into user_column_preferences (user_name, column_layout_json, created_at, updated_at)
+       values ($1, $2, now(), now())
+       on conflict (user_name) do update
+       set column_layout_json = excluded.column_layout_json, updated_at = now()
+       returning user_name, column_layout_json, updated_at`,
+      [userName, columnLayoutJson]
+    );
+    return response.json({ ok: true, row: result.rows[0] });
+  } catch (error) {
+    if (error?.code === "42P01") return response.json({ ok: true, storageAvailable: false });
+    if (error instanceof SyntaxError) return response.status(400).json({ ok: false, error: "Invalid column preferences." });
+    return next(error);
+  }
+});
+
 // Public customer tracking is intentionally separate from the authenticated shipment API.
 // It returns an allowlisted timeline only; no customer, billing, POD, notes, or internal-user data.
 app.get("/api/public/tracking/:trackingReference", publicTrackingRateLimiter, async (request, response, next) => {
@@ -2787,9 +2838,10 @@ app.post("/api/customer/shipment-requests/:requestNo/documents", requireCustomer
     const allowedTypes = new Set([
       "application/pdf", "image/jpeg", "image/png", "image/webp",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel"
     ]);
-    if (!requestNo || !fileName || !contentBase64 || !allowedTypes.has(mimeType)) return response.status(400).json({ ok: false, error: "Shipment document must be PDF, JPG, PNG, WebP, DOCX, or XLSX." });
+    if (!requestNo || !fileName || !contentBase64 || !allowedTypes.has(mimeType)) return response.status(400).json({ ok: false, error: "Shipment document must be PDF, JPG, PNG, WebP, DOCX, XLS, or XLSX." });
     const shipmentRequest = (await query(`select request_no,customer_code,attachments_json from shipment_requests where request_no=$1 and lower(customer_code)=lower($2) limit 1`, [requestNo, String(request.customerSession.customerCode || "")])).rows[0];
     if (!shipmentRequest) return response.status(404).json({ ok: false, error: "Shipment request not found." });
     const fileBuffer = Buffer.from(contentBase64, "base64");
@@ -4836,6 +4888,26 @@ app.use((error, _request, response, _next) => {
   response.status(error.status || 500).json(payload);
 });
 
+async function removeObsoleteAirwayBillIndex() {
+  const maxAttempts = 8;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      // This is idempotent and runs outside a transaction. CONCURRENTLY avoids blocking
+      // shipment reads/writes while removing the legacy index that incorrectly made AWBs unique.
+      await query("drop index concurrently if exists shipments_branch_airway_bill_no_unique");
+      console.log("Verified obsolete shared-AWB unique index is absent.");
+      return;
+    } catch (error) {
+      const retryable = error?.code === "55P03" || error?.code === "57014" || /lock timeout|canceling statement due to lock timeout/i.test(String(error?.message || ""));
+      if (!retryable || attempt === maxAttempts) {
+        console.warn(`Could not remove obsolete shared-AWB unique index: ${error.message}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
+    }
+  }
+}
+
 function start() {
   // Bind before migrations. Render's port scanner has a short startup window and will terminate a
   // process that does not listen while a slow or locked database migration is being applied.
@@ -4862,6 +4934,9 @@ function start() {
     // Resolve the stable shared secret after migrations. Login requests wait for this promise,
     // preventing token signing races while still allowing Render to detect the open port.
     await ensurePortalSecret();
+    // Production intentionally keeps automatic migrations disabled. This narrowly-scoped,
+    // idempotent repair protects the shared-AWB rule even when the isolated migration job is not run.
+    await removeObsoleteAirwayBillIndex();
     startupReady = true;
   })().catch((error) => {
     runtimeStatus.startupError = error.message;
