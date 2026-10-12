@@ -2787,9 +2787,10 @@ app.post("/api/customer/shipment-requests/:requestNo/documents", requireCustomer
     const allowedTypes = new Set([
       "application/pdf", "image/jpeg", "image/png", "image/webp",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel"
     ]);
-    if (!requestNo || !fileName || !contentBase64 || !allowedTypes.has(mimeType)) return response.status(400).json({ ok: false, error: "Shipment document must be PDF, JPG, PNG, WebP, DOCX, or XLSX." });
+    if (!requestNo || !fileName || !contentBase64 || !allowedTypes.has(mimeType)) return response.status(400).json({ ok: false, error: "Shipment document must be PDF, JPG, PNG, WebP, DOCX, XLS, or XLSX." });
     const shipmentRequest = (await query(`select request_no,customer_code,attachments_json from shipment_requests where request_no=$1 and lower(customer_code)=lower($2) limit 1`, [requestNo, String(request.customerSession.customerCode || "")])).rows[0];
     if (!shipmentRequest) return response.status(404).json({ ok: false, error: "Shipment request not found." });
     const fileBuffer = Buffer.from(contentBase64, "base64");

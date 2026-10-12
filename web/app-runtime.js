@@ -3678,7 +3678,7 @@ function renderCustomerNewShipment() {
         </div>
       </section>
       <section class="customer-booking-step customer-document-step"><span class="customer-step-number">2</span><div><h3>Upload Shipment Documents</h3><p>Upload invoice, packing list, or other supporting files first. This unlocks item and HS-code selection.</p></div>
-        <label class="customer-file-picker">Shipment Documents <input name="attachments" type="file" multiple ${resubmitting ? "" : "required"} accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx" /><small data-customer-document-status>${resubmitting ? "Existing documents are retained. Add replacement files only if needed." : "Select at least one file. Maximum 5 files, 10 MB each."}</small></label>
+        <label class="customer-file-picker">Shipment Documents <input name="attachments" type="file" multiple ${resubmitting ? "" : "required"} accept=".pdf,.jpg,.jpeg,.png,.docx,.xls,.xlsx" /><small data-customer-document-status>${resubmitting ? "Existing documents are retained. Add replacement files only if needed." : "Select at least one file. Maximum 5 files, 10 MB each."}</small></label>
       </section>
       <section class="customer-booking-step" data-customer-hs-step hidden><span class="customer-step-number">3</span><div><h3>Item & Customs Information</h3><p>Select the item from the approved item list. Its HS code is filled automatically.</p></div>
         <div class="form-section-grid">
@@ -13538,6 +13538,18 @@ async function removeJobFromLoad(loadNo, jobNo) {
   render();
 }
 
+function customerShipmentFileMimeType(file) {
+  const supplied = String(file?.type || "").toLowerCase().trim();
+  const name = String(file?.name || "").toLowerCase();
+  if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (name.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (supplied) return supplied;
+  if (name.endsWith(".pdf")) return "application/pdf";
+  if (/\.(jpe?g)$/.test(name)) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  return "application/octet-stream";
+}
 async function submitCustomerShipmentRequest(data, form) {
   const session = currentSession();
   if (!session?.token) { notifyDenied("Login required", "Please login again."); return false; }
@@ -13578,7 +13590,7 @@ async function submitCustomerShipmentRequest(data, form) {
     await fetchJson(`/api/customer/shipment-requests/${encodeURIComponent(savedRequestNo)}/documents`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token },
-      body: JSON.stringify({ fileName: file.name, mimeType: file.type, contentBase64 })
+      body: JSON.stringify({ fileName: file.name, mimeType: customerShipmentFileMimeType(file), contentBase64 })
     });
   }
   state.ui.customerRequestEditNo = "";
