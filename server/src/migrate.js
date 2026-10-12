@@ -7,8 +7,6 @@ const sqlDir = path.resolve(__dirname, "..", "sql");
 const MIGRATION_LOCK_KEY = "apollo_freight_schema_migration";
 const MIGRATION_LOCK_TIMEOUT_MS = Number(process.env.MIGRATION_LOCK_TIMEOUT_MS || 10000);
 const MIGRATION_STATEMENT_TIMEOUT_MS = Number(process.env.MIGRATION_STATEMENT_TIMEOUT_MS || 600000);
-const MIGRATION_LOCK_RETRIES = Number(process.env.MIGRATION_LOCK_RETRIES || 8);
-const MIGRATION_LOCK_RETRY_DELAY_MS = Number(process.env.MIGRATION_LOCK_RETRY_DELAY_MS || 5000);
 
 function listSqlFiles() {
   return fs
@@ -26,28 +24,6 @@ function normalizeSql(sql) {
 
 function isProductionMigrationApproved() {
   return String(process.env.ALLOW_PRODUCTION_MIGRATIONS || "").trim().toLowerCase() === "true";
-}
-
-function isRetryableLockError(error) {
-  return error?.code === "55P03" || error?.code === "57014" || /lock timeout|canceling statement due to lock timeout/i.test(String(error?.message || ""));
-}
-
-function sleep(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function applyMigration(client, fileName, sql, logger) {
-  for (let attempt = 1; attempt <= MIGRATION_LOCK_RETRIES + 1; attempt += 1) {
-    try {
-      await client.query(sql);
-      return;
-    } catch (error) {
-      if (!isRetryableLockError(error) || attempt > MIGRATION_LOCK_RETRIES) throw error;
-      const delay = MIGRATION_LOCK_RETRY_DELAY_MS * attempt;
-      logger.warn(`${fileName} is waiting for a database lock; retry ${attempt}/${MIGRATION_LOCK_RETRIES} in ${delay}ms.`);
-      await sleep(delay);
-    }
-  }
 }
 
 async function runMigrations({ logger = console } = {}) {
@@ -83,7 +59,7 @@ async function runMigrations({ logger = console } = {}) {
 
     const sql = normalizeSql(fs.readFileSync(path.join(sqlDir, fileName), "utf8"));
     logger.log(`Applying ${fileName}`);
-    await applyMigration(client, fileName, sql, logger);
+    await client.query(sql);
   }
 
   logger.log(`Database ready: ${files.length} SQL file(s) applied.`);

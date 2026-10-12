@@ -3,7 +3,6 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const { GoogleAuth } = require("google-auth-library");
-const { unzipSync, strFromU8 } = require("fflate");
 
 const MASTER_PATH = path.join(__dirname, "..", "data", "kuwait-hs-master-2025.json");
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
@@ -13,15 +12,7 @@ const MAX_FILES = 3;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_LINE_ITEMS = 60;
 const ANALYSIS_TTL_HOURS = 24;
-const SUPPORTED_MIME = new Set([
-  "application/pdf", "image/jpeg", "image/png", "image/webp",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel"
-]);
-const SPREADSHEET_MIME = new Set([
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel"
-]);
+const SUPPORTED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 const STOP_WORDS = new Set([
   "a","an","and","as","at","by","for","from","in","into","is","of","on","or","the","to","with","without",
   "other","others","item","items","product","products","goods","new","brand","model","type","types","pcs","piece","pieces",
@@ -241,55 +232,7 @@ function extractJson(text) {
   if (first >= 0 && last > first) return JSON.parse(raw.slice(first, last + 1));
   throw new Error("Document AI did not return valid structured data.");
 }
-function xmlEntities(value) {
-  return String(value || "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
-}
-function xlsxPartText(zip, partName) {
-  const bytes = zip[partName];
-  return bytes ? strFromU8(bytes) : "";
-}
-function xlsxRelationshipTarget(target) {
-  const clean = String(target || "").replace(/^\//, "");
-  return clean.startsWith("xl/") ? clean : `xl/${clean.replace(/^\.\//, "")}`;
-}
-function spreadsheetText(file) {
-  const zip = unzipSync(Buffer.from(file.contentBase64, "base64"));
-  const sharedXml = xlsxPartText(zip, "xl/sharedStrings.xml");
-  const sharedStrings = [...sharedXml.matchAll(/<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g)].map((match) =>
-    [...match[1].matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((part) => xmlEntities(part[1])).join("")
-  );
-  const relsXml = xlsxPartText(zip, "xl/_rels/workbook.xml.rels");
-  const relTargets = new Map([...relsXml.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"[^>]*\/?>/g)].map((match) => [match[1], xlsxRelationshipTarget(match[2])]));
-  const workbookXml = xlsxPartText(zip, "xl/workbook.xml");
-  const sheets = [...workbookXml.matchAll(/<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/?>/g)].slice(0, 10);
-  const sections = [];
-  let totalChars = 0;
-  for (const sheet of sheets) {
-    const sheetXml = xlsxPartText(zip, relTargets.get(sheet[2]) || "");
-    const rows = [];
-    for (const rowMatch of sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-      const cells = [];
-      for (const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
-        const attrs = cellMatch[1];
-        const body = cellMatch[2];
-        const type = attrs.match(/\bt="([^"]+)"/)?.[1] || "";
-        const inline = [...body.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((part) => xmlEntities(part[1])).join("");
-        const raw = body.match(/<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/)?.[1] || inline;
-        const value = type === "s" ? sharedStrings[Number(raw)] || "" : xmlEntities(raw);
-        cells.push(cleanText(value, 300));
-      }
-      const line = cells.join(" | ").trim();
-      if (line) rows.push(line);
-      if (rows.length >= 500) break;
-    }
-    if (!rows.length) continue;
-    const section = `Sheet: ${xmlEntities(sheet[1])}\n${rows.join("\n")}`.slice(0, 50000);
-    sections.push(section);
-    totalChars += section.length;
-    if (totalChars >= 120000) break;
-  }
-  return sections.join("\n\n").slice(0, 120000);
-}
+
 async function providerRequest({ files, destination }) {
   const model = cleanText(process.env.APOLLO_COMPLIANCE_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL, 120) || DEFAULT_MODEL;
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -321,10 +264,7 @@ async function providerRequest({ files, destination }) {
     "warnings": []
   }`;
   const parts = [{ text: prompt }];
-  for (const file of files) {
-    if (file.text) parts.push({ text: `Spreadsheet file: ${file.fileName}\n${file.text}` });
-    else parts.push({ inlineData: { mimeType: file.mimeType, data: file.contentBase64 } });
-  }
+  for (const file of files) parts.push({ inlineData: { mimeType: file.mimeType, data: file.contentBase64 } });
 
   const headers = { "Content-Type": "application/json" };
   let endpoint;
@@ -445,14 +385,9 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
       const normalizedFiles = files.map((file) => {
         const mimeType = cleanText(file?.mimeType, 120).toLowerCase();
         const contentBase64 = String(file?.contentBase64 || "").replace(/^data:[^,]+,/, "");
-        if (!SUPPORTED_MIME.has(mimeType)) { const error = new Error(`AI document analysis currently supports PDF, JPG, PNG, WebP and Excel (.xls/.xlsx). ${cleanText(file?.fileName, 120) || "One file"} is not a supported document type.`); error.status = 415; throw error; }
+        if (!SUPPORTED_MIME.has(mimeType)) { const error = new Error(`AI document analysis currently supports PDF, JPG, PNG and WebP. ${cleanText(file?.fileName, 120) || "One file"} can still be attached to the booking, but it cannot be auto-read.`); error.status = 415; throw error; }
         const bytes = Buffer.byteLength(contentBase64, "base64"); totalBytes += bytes;
-        const normalized = { fileName: cleanText(file?.fileName, 180), mimeType, contentBase64 };
-        if (SPREADSHEET_MIME.has(mimeType)) {
-          normalized.text = spreadsheetText(normalized);
-          if (!normalized.text) { const error = new Error(`${normalized.fileName || "The Excel file"} does not contain readable worksheet data.`); error.status = 422; throw error; }
-        }
-        return normalized;
+        return { fileName: cleanText(file?.fileName, 180), mimeType, contentBase64 };
       });
       if (totalBytes > MAX_TOTAL_BYTES) return response.status(413).json({ ok: false, error: "For AI analysis, keep the selected documents to 10 MB total. Larger files can still be attached after the check." });
 
@@ -526,4 +461,4 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
   return router;
 }
 
-module.exports = { createCustomerComplianceRouter, isKuwaitDestination, READY_THRESHOLD, spreadsheetText };
+module.exports = { createCustomerComplianceRouter, isKuwaitDestination, READY_THRESHOLD };

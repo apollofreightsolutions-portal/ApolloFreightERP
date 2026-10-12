@@ -1108,8 +1108,6 @@ function loadState() {
 let saveStateTimer = null;
 let columnLayoutHydrated = false;
 let lastPersistedColumnLayoutJson = "";
-let columnLayoutUserKey = "";
-let columnLayoutLoadedFromLocal = false;
 const SAVE_STATE_DEBOUNCE_MS = 200;
 const SAVE_STATE_MAX_AUDIT_ROWS = 500;
 
@@ -1141,31 +1139,6 @@ function columnLayoutScopes() {
 }
 
 const DASHBOARD_LAYOUT_STORAGE_KEY = "apollo.dashboard.columns.v3";
-
-function userColumnLayoutStorageKey(userName = currentUserName()) {
-  const normalized = String(userName || "").trim().toLowerCase();
-  return normalized ? `apollo.user-columns.v1.${encodeURIComponent(normalized)}` : "";
-}
-
-function prepareColumnLayoutForCurrentUser() {
-  const userKey = String(currentUserName() || "").trim().toLowerCase();
-  if (!userKey || userKey === columnLayoutUserKey) return;
-  columnLayoutUserKey = userKey;
-  columnLayoutHydrated = false;
-  columnLayoutLoadedFromLocal = false;
-  lastPersistedColumnLayoutJson = "";
-  columnLayoutScopes().forEach((key) => { delete state.ui[key]; });
-  delete state.ui.columnWidths;
-  delete state.ui.columnWidthsLocked;
-  try {
-    localStorage.removeItem(DASHBOARD_LAYOUT_STORAGE_KEY);
-    const saved = localStorage.getItem(userColumnLayoutStorageKey(userKey));
-    if (saved) {
-      hydrateColumnLayoutFromServer(saved);
-      columnLayoutLoadedFromLocal = true;
-    }
-  } catch {}
-}
 
 function readDashboardLayoutSnapshot() {
   try {
@@ -1224,20 +1197,19 @@ function hydrateColumnLayoutFromServer(value) {
 }
 
 function persistColumnLayoutToServer() {
-  if (!columnLayoutHydrated || !columnLayoutUserKey || isCustomerSession() || isHrSession() || isCrmSession()) return;
+  if (!columnLayoutHydrated || !state.settings?.settingsKey) return;
   const columnLayoutJson = serializeColumnLayout();
   if (columnLayoutJson === lastPersistedColumnLayoutJson) return;
+  state.settings.columnLayoutJson = columnLayoutJson;
   lastPersistedColumnLayoutJson = columnLayoutJson;
-  try { localStorage.setItem(userColumnLayoutStorageKey(columnLayoutUserKey), columnLayoutJson); } catch {}
-  fetchJson("/api/user-column-preferences", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ columnLayoutJson })
+  persistRecord("settings", {
+    settingsKey: state.settings.settingsKey || "default",
+    columnLayoutJson
   }).then((saved) => {
-    if (!saved?.ok) lastPersistedColumnLayoutJson = "";
+    if (!saved) lastPersistedColumnLayoutJson = "";
   }).catch((error) => {
     lastPersistedColumnLayoutJson = "";
-    console.warn("Could not persist user column settings", error);
+    console.warn("Could not persist register column settings", error);
   });
 }
 
@@ -2826,12 +2798,11 @@ async function syncFromApi() {
       await syncCustomerPortal();
       return;
     }
-    prepareColumnLayoutForCurrentUser();
     const requestNames = [
       "health", "shipments", "consolidations", "customers", "suppliers", "tariffs", "documents",
       "additionalCharges", "invoices", "quotations", "shipmentRequests", "shipmentStatusHistory",
       "users", "customerUsers", "unblockRequests", "adminRequests", "audit", "settings", "employees",
-      "leaveRequests", "payslips", "hrAnnouncements", "employeeProfileDocuments", "userColumnPreferences"
+      "leaveRequests", "payslips", "hrAnnouncements", "employeeProfileDocuments"
     ];
     const results = await Promise.allSettled([
       fetchJson("/api/health"),
@@ -2856,8 +2827,7 @@ async function syncFromApi() {
       fetchJson("/api/leave-requests"),
       fetchJson("/api/payslips"),
       fetchJson("/api/hr-announcements"),
-      isHrSession() ? fetchJson("/api/employee-profile-documents") : Promise.resolve({ rows: [] }),
-      (!isHrSession() && !isCrmSession()) ? fetchJson("/api/user-column-preferences") : Promise.resolve({ row: null })
+      isHrSession() ? fetchJson("/api/employee-profile-documents") : Promise.resolve({ rows: [] })
     ]);
     const valueAt = (index) => results[index]?.status === "fulfilled" ? results[index].value : null;
     const health = valueAt(0);
@@ -2900,14 +2870,7 @@ async function syncFromApi() {
       const settingsRows = rowsAt(17);
       if (settingsRows?.length) {
         state.settings = apiSettings(settingsRows[0]);
-        const preference = valueAt(23)?.row;
-        // Existing shared layout is only a fallback for users without a personal
-        // preference. New changes are never written to the shared settings row.
-        if (preference?.column_layout_json) {
-          hydrateColumnLayoutFromServer(preference.column_layout_json);
-        } else if (!columnLayoutLoadedFromLocal) {
-          hydrateColumnLayoutFromServer(state.settings.columnLayoutJson);
-        }
+        hydrateColumnLayoutFromServer(state.settings.columnLayoutJson);
         columnLayoutHydrated = true;
         state.dropdownOptions = { ...state.dropdownOptions, ...parseDropdownOptions(state.settings.dropdownOptionsJson) };
       }
@@ -3715,7 +3678,7 @@ function renderCustomerNewShipment() {
         </div>
       </section>
       <section class="customer-booking-step customer-document-step"><span class="customer-step-number">2</span><div><h3>Upload Shipment Documents</h3><p>Upload invoice, packing list, or other supporting files first. This unlocks item and HS-code selection.</p></div>
-        <label class="customer-file-picker">Shipment Documents <input name="attachments" type="file" multiple ${resubmitting ? "" : "required"} accept=".pdf,.jpg,.jpeg,.png,.docx,.xls,.xlsx" /><small data-customer-document-status>${resubmitting ? "Existing documents are retained. Add replacement files only if needed." : "Select at least one file. Maximum 5 files, 10 MB each."}</small></label>
+        <label class="customer-file-picker">Shipment Documents <input name="attachments" type="file" multiple ${resubmitting ? "" : "required"} accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx" /><small data-customer-document-status>${resubmitting ? "Existing documents are retained. Add replacement files only if needed." : "Select at least one file. Maximum 5 files, 10 MB each."}</small></label>
       </section>
       <section class="customer-booking-step" data-customer-hs-step hidden><span class="customer-step-number">3</span><div><h3>Item & Customs Information</h3><p>Select the item from the approved item list. Its HS code is filled automatically.</p></div>
         <div class="form-section-grid">
@@ -13118,8 +13081,7 @@ async function createShipment(data) {
   );
   const saved = await postRecord("shipment", record);
   if (!saved) {
-    const apiError = String(state.api?.error || "").trim();
-    notifyDenied("Shipment not saved", apiError || "The shipment could not be saved. Check the connection and try again before generating a TCN.");
+    notifyDenied("Shipment not saved", "The shipment could not be saved. Check the connection and try again before generating a TCN.");
     return false;
   }
   const finalRecord = typeof saved === "object" ? apiShipment(saved) : record;
@@ -13576,18 +13538,6 @@ async function removeJobFromLoad(loadNo, jobNo) {
   render();
 }
 
-function customerShipmentFileMimeType(file) {
-  const supplied = String(file?.type || "").toLowerCase().trim();
-  const name = String(file?.name || "").toLowerCase();
-  if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  if (name.endsWith(".xls")) return "application/vnd.ms-excel";
-  if (supplied) return supplied;
-  if (name.endsWith(".pdf")) return "application/pdf";
-  if (/\.(jpe?g)$/.test(name)) return "image/jpeg";
-  if (name.endsWith(".png")) return "image/png";
-  if (name.endsWith(".webp")) return "image/webp";
-  return "application/octet-stream";
-}
 async function submitCustomerShipmentRequest(data, form) {
   const session = currentSession();
   if (!session?.token) { notifyDenied("Login required", "Please login again."); return false; }
@@ -13628,7 +13578,7 @@ async function submitCustomerShipmentRequest(data, form) {
     await fetchJson(`/api/customer/shipment-requests/${encodeURIComponent(savedRequestNo)}/documents`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token },
-      body: JSON.stringify({ fileName: file.name, mimeType: customerShipmentFileMimeType(file), contentBase64 })
+      body: JSON.stringify({ fileName: file.name, mimeType: file.type, contentBase64 })
     });
   }
   state.ui.customerRequestEditNo = "";
