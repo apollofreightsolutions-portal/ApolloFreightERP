@@ -4888,6 +4888,26 @@ app.use((error, _request, response, _next) => {
   response.status(error.status || 500).json(payload);
 });
 
+async function removeObsoleteAirwayBillIndex() {
+  const maxAttempts = 8;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      // This is idempotent and runs outside a transaction. CONCURRENTLY avoids blocking
+      // shipment reads/writes while removing the legacy index that incorrectly made AWBs unique.
+      await query("drop index concurrently if exists shipments_branch_airway_bill_no_unique");
+      console.log("Verified obsolete shared-AWB unique index is absent.");
+      return;
+    } catch (error) {
+      const retryable = error?.code === "55P03" || error?.code === "57014" || /lock timeout|canceling statement due to lock timeout/i.test(String(error?.message || ""));
+      if (!retryable || attempt === maxAttempts) {
+        console.warn(`Could not remove obsolete shared-AWB unique index: ${error.message}`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
+    }
+  }
+}
+
 function start() {
   // Bind before migrations. Render's port scanner has a short startup window and will terminate a
   // process that does not listen while a slow or locked database migration is being applied.
@@ -4914,6 +4934,9 @@ function start() {
     // Resolve the stable shared secret after migrations. Login requests wait for this promise,
     // preventing token signing races while still allowing Render to detect the open port.
     await ensurePortalSecret();
+    // Production intentionally keeps automatic migrations disabled. This narrowly-scoped,
+    // idempotent repair protects the shared-AWB rule even when the isolated migration job is not run.
+    await removeObsoleteAirwayBillIndex();
     startupReady = true;
   })().catch((error) => {
     runtimeStatus.startupError = error.message;
