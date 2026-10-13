@@ -1,0 +1,24 @@
+V23 changes against IT live V22 ZIP
+
+CHANGED
+ApolloFreightERP-main/server/package-lock.json
+ApolloFreightERP-main/server/package.json
+ApolloFreightERP-main/server/src/customer-compliance.js
+ApolloFreightERP-main/server/src/index.js
+ApolloFreightERP-main/web/app-runtime.js
+ApolloFreightERP-main/web/app.js
+ApolloFreightERP-main/web/hr-portal.js
+
+NEW
+ApolloFreightERP-main/V23-IT-SETUP.md
+ApolloFreightERP-main/V23-VALIDATION.md
+ApolloFreightERP-main/server/sql/047_hr_approval_workflow.sql
+ApolloFreightERP-main/server/src/hr-approval-workflow.js
+ApolloFreightERP-main/server/src/migrate-hr-approvals.js
+ApolloFreightERP-main/web/hr-approvals.css
+ApolloFreightERP-main/web/hr-approvals.html
+ApolloFreightERP-main/web/hr-approvals.js
+ApolloFreightERP-main/web/hr-workflow-links.js
+ApolloFreightERP-main/V23-CHANGED-FILES.txt
+
+No original files removed. IT AWB SQL and migration runner preserved.

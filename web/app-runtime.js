@@ -8939,6 +8939,7 @@ function employeeDialogBody(record) {
     ${input("personalEmail", "Personal Email", fieldValue("personalEmail"), false, "email")}
     ${strictSelect("employmentStatus", "Employment Status", ["Active", "On Leave", "Inactive"], fieldValue("employmentStatus", "Active"))}
     ${input("reportingManager", "Reporting Manager", fieldValue("reportingManager"))}
+    <p><a href="/hr-approvals.html?settings=1&user=${encodeURIComponent(fieldValue('userName'))}">Assign this employee’s leave supervisor (administrator)</a><br><small>The reporting-manager text above is descriptive. Leave routing uses the assigned account in Leave permissions.</small></p>
     ${textarea("notes", "Notes", fieldValue("notes"), false, 3)}
     ${loaded ? "" : `<p class="empty-state">Tip: turn on this user's HR Portal access from Settings &gt; User Management so they can log in with Employee Login.</p>`}
   `;
@@ -8989,6 +8990,7 @@ function userDialogBody(record) {
   const loaded = Boolean(record);
   const checkedSections = sectionAccessSet(fieldValue("sectionAccess", "Dashboard, Shipment / Airway, Reports"));
   return `
+    <fieldset><legend>Leave approval permissions</legend><p><a href="/hr-approvals.html?settings=1&user=${encodeURIComponent(fieldValue('userName'))}">Configure Leave Approver, Management Final Approver and assigned supervisor</a></p><small>Save a new user first. Leave permissions do not require HR Admin access.</small></fieldset>
     ${input("userName", "User Name", fieldValue("userName"), loaded)}
     ${passwordField("password", loaded ? "Reset Password (leave blank to keep current)" : "Password", "")}
     ${input("email", "Email", fieldValue("email"), false, "email")}

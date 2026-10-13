@@ -20,6 +20,7 @@ const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
 const { graphMailStatus, sendMicrosoftGraphMail } = require("./microsoft-graph-mail");
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
+const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const {
   normalizePolicy: normalizeMfaPolicy,
   encryptSecret: encryptMfaSecret,
@@ -3359,6 +3360,12 @@ app.get("/api/documents/:documentNo/view", requireErpPortalAuth, async (request,
 
 
 // --- HR Leave Management ----------------------------------------------------
+const hrWorkflow = createHrApprovalWorkflow({ query, getPool, requireAppAuth, requireEmployeePortalAuth,
+  balanceForUser: hrBalanceForUser, sendMail: sendMicrosoftGraphMail, mailStatus: graphMailStatus });
+app.use('/api/hr/workflow', hrWorkflow.router);
+// Replace the old unrestricted single-stage decision endpoint. Never fall through.
+app.put('/api/hr/leave-requests/:requestNo/decision', requireEmployeePortalAuth, hrWorkflow.decide);
+
 function isHrAdminSession(session) {
   const role = String(session?.role || "").toLowerCase();
   return Boolean(session?.employeePortal && (["admin", "hr"].includes(role) || session?.isHrAdmin === true));
@@ -3495,18 +3502,18 @@ async function calculateHrLeave(startDate, endDate, branch = "Kuwait HO") {
   };
 }
 
-async function hrBalanceForUser(userName, year, leaveTypeCode) {
-  const type = (await query("select * from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1", [leaveTypeCode])).rows[0];
+async function hrBalanceForUser(userName, year, leaveTypeCode, dbQuery = query) {
+  const type = (await dbQuery("select * from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1", [leaveTypeCode])).rows[0];
   if (!type) throw new Error("Leave type not found.");
   const normalizedLeaveTypeCode = String(type.code || leaveTypeCode).trim().toUpperCase();
-  const policy = (await query(
+  const policy = (await dbQuery(
     "select * from hr_employee_leave_policies where lower(user_name)=lower($1) and year=$2 and leave_type_code=$3 order by case when user_name=$1 then 0 else 1 end, updated_at desc nulls last, id desc limit 1",
     [userName, year, normalizedLeaveTypeCode]
   )).rows[0];
   const entitlement = Number(policy?.entitlement ?? type.annual_entitlement ?? 0);
   let carryForward = Number(policy?.carry_forward ?? 0);
   if (!policy && type.allow_carry_forward && year > 1) {
-    const previous = (await query(`select greatest(0, least($1, coalesce(b.available_days,0))) as days from hr_leave_balances b where lower(b.user_name)=lower($2) and b.year=$3 and b.leave_type_code=$4 limit 1`, [Number(type.max_carry_forward || 0), userName, year - 1, normalizedLeaveTypeCode])).rows[0];
+    const previous = (await dbQuery(`select greatest(0, least($1, coalesce(b.available_days,0))) as days from hr_leave_balances b where lower(b.user_name)=lower($2) and b.year=$3 and b.leave_type_code=$4 limit 1`, [Number(type.max_carry_forward || 0), userName, year - 1, normalizedLeaveTypeCode])).rows[0];
     carryForward = Number(previous?.days || 0);
     if (type.carry_forward_expiry_month && type.carry_forward_expiry_day) {
       const expiry = new Date(Date.UTC(year, Number(type.carry_forward_expiry_month) - 1, Number(type.carry_forward_expiry_day)));
@@ -3515,18 +3522,18 @@ async function hrBalanceForUser(userName, year, leaveTypeCode) {
   }
   const adjustment = Number(policy?.adjustment ?? 0);
   const previousUsed = Number(policy?.previous_used_days ?? 0);
-  const approvedUsed = Number((await query(
+  const approvedUsed = Number((await dbQuery(
     "select coalesce(sum(coalesce(actual_leave_days,total_days)+coalesce(late_return_days,0)),0) as days from leave_requests where lower(user_name)=lower($1) and status='Approved' and (upper(leave_type)=upper($2) or lower(leave_type)=lower((select name from hr_leave_types where code=$2))) and extract(year from start_date)=$3",
     [userName, normalizedLeaveTypeCode, year]
   )).rows[0]?.days || 0);
   const used = previousUsed + approvedUsed;
-  const pending = Number((await query(
+  const pending = Number((await dbQuery(
     "select coalesce(sum(coalesce(actual_leave_days,total_days)),0) as days from leave_requests where lower(user_name)=lower($1) and status='Pending' and (upper(leave_type)=upper($2) or lower(leave_type)=lower((select name from hr_leave_types where code=$2))) and extract(year from start_date)=$3",
     [userName, normalizedLeaveTypeCode, year]
   )).rows[0]?.days || 0);
   const available = entitlement + carryForward + adjustment - used;
   const projected = available - pending;
-  await query(
+  await dbQuery(
     `insert into hr_leave_balances (user_name, year, leave_type_code, entitlement, carry_forward, adjustment, used_days, pending_days, available_days, projected_days, updated_at)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
      on conflict (user_name,year,leave_type_code) do update set entitlement=excluded.entitlement,carry_forward=excluded.carry_forward,adjustment=excluded.adjustment,used_days=excluded.used_days,pending_days=excluded.pending_days,available_days=excluded.available_days,projected_days=excluded.projected_days,updated_at=now()`,
@@ -3611,52 +3618,6 @@ function emailHtml(value) {
   return String(value ?? "").replace(/[&<>\"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;", "'":"&#39;"}[character]));
 }
 
-async function notifyHrAdminsOfLeaveSubmission({ row, employee, branch }) {
-  const smtpHost = String(process.env.SMTP_HOST || "").trim();
-  const smtpPort = Number(process.env.SMTP_PORT || 587);
-  const smtpUser = String(process.env.SMTP_USER || "").trim();
-  const smtpPassword = String(process.env.SMTP_PASSWORD || "");
-  const from = String(process.env.SMTP_FROM || process.env.EMAIL_FROM || "").trim();
-  const smtpEnabled = String(process.env.SMTP_ENABLED || "false").toLowerCase() === "true";
-  if (!smtpEnabled || !smtpHost || !smtpUser || !smtpPassword || !from) {
-    console.warn("Leave email notification skipped: SMTP_ENABLED, SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM are required.");
-    return false;
-  }
-  const recipients = (await query(
-    `select distinct lower(trim(email)) as email
-       from app_users
-      where account_status='Active'
-        and nullif(trim(email),'') is not null
-        and (coalesce(is_hr_admin,false)=true or lower(trim(role)) in ('admin','hr'))`
-  )).rows.map(item => item.email).filter(Boolean);
-  if (!recipients.length) {
-    console.warn("Leave email notification skipped: no active HR/admin email address is registered.");
-    return false;
-  }
-  const employeeName = employee.full_name || row.employee_name || row.user_name;
-  const subject = `New leave request ${row.request_no} — ${employeeName}`;
-  const html = `<h2>New Leave Request</h2>
-    <p>A new leave request was submitted from the HR portal and is waiting for HR/admin review.</p>
-    <table cellpadding="6" cellspacing="0" border="0">
-      <tr><td><strong>Request No.</strong></td><td>${emailHtml(row.request_no)}</td></tr>
-      <tr><td><strong>Employee</strong></td><td>${emailHtml(employeeName)} (${emailHtml(row.user_name)})</td></tr>
-      <tr><td><strong>Branch</strong></td><td>${emailHtml(branch)}</td></tr>
-      <tr><td><strong>Leave Type</strong></td><td>${emailHtml(row.leave_type)}</td></tr>
-      <tr><td><strong>Dates</strong></td><td>${emailHtml(row.start_date)} to ${emailHtml(row.end_date)}</td></tr>
-      <tr><td><strong>Actual Leave Days</strong></td><td>${emailHtml(row.actual_leave_days)}</td></tr>
-      <tr><td><strong>Reason</strong></td><td>${emailHtml(row.reason)}</td></tr>
-    </table>
-    <p>Please open the HR portal to review and approve or reject this request.</p>`;
-  const transporter = nodemailer.createTransport({
-    host: smtpHost,
-    port: smtpPort,
-    secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
-    auth: { user: smtpUser, pass: smtpPassword },
-    requireTLS: smtpPort === 587
-  });
-  await transporter.sendMail({ from, to: recipients, subject, html });
-  return true;
-}
 
 app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, response, next) => {
   try {
@@ -3722,13 +3683,6 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
     const saved = await query(`insert into leave_requests (request_no,user_name,employee_name,leave_type,start_date,end_date,total_days,calendar_days,weekend_days,public_holiday_days,actual_leave_days,half_day_type,reason,rejoining_date,contact_during_leave,leave_address,emergency_contact,declaration_accepted,declaration_accepted_at,status,applied_at,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,now(),'Pending',now(),now(),now()) returning *`,
       [requestNo,userName,employee.full_name || userName,leaveType, startDate,endDate,calculation.actualLeaveDays,calculation.calendarDays,calculation.weekendDays,calculation.publicHolidayDays,calculation.actualLeaveDays,halfDayType,reason,rejoiningDate,contactDuringLeave,leaveAddress,String(data.emergencyContact||"").trim()]);
-    try {
-      await notifyHrAdminsOfLeaveSubmission({row:saved.rows[0], employee, branch});
-    } catch (emailError) {
-      // The leave record is already committed. Never turn a successful leave submission into a
-      // failed request just because an external email provider is unavailable.
-      console.error("Leave request saved, but HR email notification failed:", emailError.message);
-    }
     return response.status(201).json({ok:true,row:saved.rows[0],calculation,balance,staffingWarning});
   } catch(error){ return next(error); }
 });
@@ -3778,10 +3732,10 @@ app.post("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAu
 app.get("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAuth, async (request,response,next)=>{
   try{
     const requestNo=String(request.params.requestNo||"").trim();
-    const existing=(await query("select request_no,user_name,attachment_url from leave_requests where request_no=$1 limit 1",[requestNo])).rows[0];
+    const existing=(await query("select * from leave_requests where request_no=$1 limit 1",[requestNo])).rows[0];
     if(!existing?.attachment_url) return response.status(404).json({ok:false,error:"No supporting document is attached."});
     const admin=isHrAdminSession(request.appSession);
-    if(!admin && String(existing.user_name).toLowerCase()!==String(request.appSession.userName).toLowerCase()) return response.status(403).json({ok:false,error:"You can only view your own leave document."});
+    if(!admin && !await hrWorkflow.canRead(request.appSession,existing)) return response.status(403).json({ok:false,error:"This leave document is not assigned to you."});
     let metadata={}; try{metadata=JSON.parse(existing.attachment_url||"{}");}catch{}
     if (metadata.storageProvider === "gcs" && metadata.objectName) {
       const storage = googleCloudStorageConfig();
@@ -3795,34 +3749,6 @@ app.get("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAut
   }catch(error){return next(error);}
 });
 
-app.put("/api/hr/leave-requests/:requestNo/decision", requireEmployeePortalAuth, async (request, response, next) => {
-  try {
-    const authority = await canApproveLeave(request.appSession);
-    if (!authority.allowed) return response.status(403).json({ok:false,error:"HR approval authority or an active delegation is required."});
-    const requestNo = String(request.params.requestNo || "").trim();
-    const decision = String(request.body?.decision || "").toLowerCase();
-    if (!["approve","reject","sendback"].includes(decision)) return response.status(400).json({ok:false,error:"Decision must be approve, reject, or sendback."});
-    const existing = (await query("select * from leave_requests where request_no=$1 limit 1",[requestNo])).rows[0];
-    if (!existing) return response.status(404).json({ok:false,error:"Leave request not found."});
-    if (existing.status !== "Pending") return response.status(400).json({ok:false,error:`This request is already ${existing.status}.`});
-    const status = decision === "approve" ? "Approved" : decision === "reject" ? "Rejected" : "Sent Back";
-    const comment = String(request.body?.reason || "").trim();
-    if (decision !== "approve" && !comment) return response.status(400).json({ok:false,error:`A ${decision === "reject" ? "rejection" : "send-back"} reason is required.`});
-    let approvalBalance = null;
-    if (decision === "approve") {
-      approvalBalance = await hrBalanceForUser(existing.user_name, Number(String(existing.start_date).slice(0,4)), existing.leave_type);
-      const approvalType = (await query("select allow_negative_balance,require_attachment,attachment_after_days from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1", [existing.leave_type])).rows[0];
-      const requestedDays = Number(existing.actual_leave_days || existing.total_days || 0);
-      if (requestedDays > approvalBalance.available && !approvalType?.allow_negative_balance) return response.status(400).json({ok:false,error:`Insufficient leave balance to approve this request. Available: ${approvalBalance.available} day(s), requested: ${requestedDays}.`});
-      if (approvalType?.require_attachment && !existing.attachment_url && requestedDays >= Number(approvalType.attachment_after_days || 0)) return response.status(400).json({ok:false,error:"A supporting document is required before this leave request can be approved."});
-    }
-    const saved = await query("update leave_requests set status=$1,approved_by=$2,approved_at=now(),rejection_reason=$3,approved_by_delegate=$4,updated_at=now() where request_no=$5 and status='Pending' returning *",[status,request.appSession.userName,comment,authority.delegated,requestNo]);
-    if (!saved.rows[0]) return response.status(409).json({ok:false,error:"This leave request was already updated by another reviewer."});
-    const balance = approvalBalance || await hrBalanceForUser(existing.user_name, Number(String(existing.start_date).slice(0,4)), existing.leave_type);
-    if (status === "Approved") await query("insert into hr_leave_ledger(user_name,year,leave_type_code,transaction_type,reference_no,days,balance_after,reason,created_by) values($1,$2,$3,'APPROVED_LEAVE',$4,$5,$6,$7,$8)",[existing.user_name,balance.year,existing.leave_type,requestNo,-Number(existing.actual_leave_days||existing.total_days||0),balance.available,"Leave approved",request.appSession.userName]);
-    return response.json({ok:true,row:saved.rows[0]});
-  } catch(error){ return next(error); }
-});
 
 app.post("/api/hr/leave-requests/:requestNo/cancel", requireEmployeePortalAuth, async (request, response, next) => {
   try {
@@ -4617,7 +4543,7 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
 
   try {
     const result = await getRows(resourceName, config);
-    if (request.appSession?.employeePortal && !isHrAdminSession(request.appSession) && (resourceName === "leave-requests" || resourceName === "payslips")) {
+    if (request.appSession?.employeePortal && !isHrAdminSession(request.appSession) && (resourceName === "leave-requests" || resourceName === "payslips" || resourceName === "employees")) {
       const userName = String(request.appSession.userName || "").trim().toLowerCase();
       result.rows = result.rows.filter((row) => String(row.user_name || "").trim().toLowerCase() === userName);
     }
@@ -4635,6 +4561,7 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
 });
 
 app.post("/api/:resource", requireErpOrHrResourceAuth, async (request, response, next) => {
+  if (request.params.resource === "leave-requests") return response.status(403).json({ok:false,error:"Use the HR leave workflow for leave changes."});
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -4785,6 +4712,7 @@ app.put("/api/shipments/:id", requireErpPortalAuth, async (request, response, ne
 });
 
 app.put("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, response, next) => {
+  if (request.params.resource === "leave-requests") return response.status(403).json({ok:false,error:"Use the HR leave workflow for leave changes."});
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -4845,6 +4773,7 @@ app.delete("/api/audit", requireErpPortalAuth, async (_request, response, next) 
 });
 
 app.delete("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, response, next) => {
+  if (request.params.resource === "leave-requests") return response.status(403).json({ok:false,error:"Use the HR leave workflow for leave changes."});
   const resourceName = request.params.resource;
   const config = resources[resourceName];
 
@@ -4938,6 +4867,9 @@ function start() {
     // idempotent repair protects the shared-AWB rule even when the isolated migration job is not run.
     await removeObsoleteAirwayBillIndex();
     startupReady = true;
+    // Cloud Scheduler also calls the drain endpoint on request-based Cloud Run.
+    const mailTimer = setInterval(() => hrWorkflow.drain().catch(e => console.warn("HR notification queue:", e.message)), 60000);
+    mailTimer.unref();
   })().catch((error) => {
     runtimeStatus.startupError = error.message;
     console.error(`Startup initialization failed: ${error.message}`);

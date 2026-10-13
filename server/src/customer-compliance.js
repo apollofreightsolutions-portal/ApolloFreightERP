@@ -3,7 +3,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const { GoogleAuth } = require("google-auth-library");
-const { unzipSync, strFromU8 } = require("fflate");
+const XLSX = require("xlsx");
 
 const MASTER_PATH = path.join(__dirname, "..", "data", "kuwait-hs-master-2025.json");
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
@@ -241,54 +241,46 @@ function extractJson(text) {
   if (first >= 0 && last > first) return JSON.parse(raw.slice(first, last + 1));
   throw new Error("Document AI did not return valid structured data.");
 }
-function xmlEntities(value) {
-  return String(value || "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
-}
-function xlsxPartText(zip, partName) {
-  const bytes = zip[partName];
-  return bytes ? strFromU8(bytes) : "";
-}
-function xlsxRelationshipTarget(target) {
-  const clean = String(target || "").replace(/^\//, "");
-  return clean.startsWith("xl/") ? clean : `xl/${clean.replace(/^\.\//, "")}`;
-}
 function spreadsheetText(file) {
-  const zip = unzipSync(Buffer.from(file.contentBase64, "base64"));
-  const sharedXml = xlsxPartText(zip, "xl/sharedStrings.xml");
-  const sharedStrings = [...sharedXml.matchAll(/<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g)].map((match) =>
-    [...match[1].matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((part) => xmlEntities(part[1])).join("")
-  );
-  const relsXml = xlsxPartText(zip, "xl/_rels/workbook.xml.rels");
-  const relTargets = new Map([...relsXml.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"[^>]*\/?>/g)].map((match) => [match[1], xlsxRelationshipTarget(match[2])]));
-  const workbookXml = xlsxPartText(zip, "xl/workbook.xml");
-  const sheets = [...workbookXml.matchAll(/<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/?>/g)].slice(0, 10);
+  let workbook;
+  try {
+    const bytes = Buffer.from(file.contentBase64, "base64");
+    // Reject arbitrary text renamed as Excel instead of interpreting it as CSV.
+    const isXlsx = bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    const isXls = bytes.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    if (!isXlsx && !isXls) throw new Error("Invalid Excel container");
+    workbook = XLSX.read(bytes, { type: "buffer", sheetRows: 501, cellFormula: false, cellHTML: false });
+  } catch {
+    const error = new Error(`${file.fileName || "The Excel file"} could not be read. Upload a valid, unprotected .xls or .xlsx workbook.`);
+    error.status = 422;
+    throw error;
+  }
   const sections = [];
   let totalChars = 0;
-  for (const sheet of sheets) {
-    const sheetXml = xlsxPartText(zip, relTargets.get(sheet[2]) || "");
-    const rows = [];
-    for (const rowMatch of sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-      const cells = [];
-      for (const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
-        const attrs = cellMatch[1];
-        const body = cellMatch[2];
-        const type = attrs.match(/\bt="([^"]+)"/)?.[1] || "";
-        const inline = [...body.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((part) => xmlEntities(part[1])).join("");
-        const raw = body.match(/<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/)?.[1] || inline;
-        const value = type === "s" ? sharedStrings[Number(raw)] || "" : xmlEntities(raw);
-        cells.push(cleanText(value, 300));
-      }
-      const line = cells.join(" | ").trim();
-      if (line) rows.push(line);
-      if (rows.length >= 500) break;
+  for (const name of workbook.SheetNames.slice(0, 10)) {
+    const sheet = workbook.Sheets[name];
+    if (!sheet || !sheet["!ref"]) continue;
+    // Formatted values preserve leading zeros in HS codes and cached formula results.
+    // Keep empty columns so descriptions, codes and quantities remain aligned.
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+    if (range.e.c > 255 || (sheet["!fullref"] && XLSX.utils.decode_range(sheet["!fullref"]).e.r > 500)) {
+      const error = new Error(`${file.fileName || "The Excel file"} has a worksheet larger than the analysis limit. Upload a copy with up to 500 rows and 256 columns per sheet.`);
+      error.status = 422;
+      throw error;
     }
-    if (!rows.length) continue;
-    const section = `Sheet: ${xmlEntities(sheet[1])}\n${rows.join("\n")}`.slice(0, 50000);
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "", blankrows: false });
+    const lines = rows.map((row) => row.map((value) => cleanText(value, 300)).join(" | ")).filter((line) => line.replace(/[ |]/g, ""));
+    if (!lines.length) continue;
+    const section = `Sheet: ${cleanText(name, 200)}\n${lines.join("\n")}`;
+    if (section.length > 50000 || totalChars + section.length > 120000 || workbook.SheetNames.length > 10 || rows.length > 500) {
+      const error = new Error(`${file.fileName || "The Excel file"} contains too much worksheet data for one analysis. Split it into smaller workbooks and try again.`);
+      error.status = 422;
+      throw error;
+    }
     sections.push(section);
     totalChars += section.length;
-    if (totalChars >= 120000) break;
   }
-  return sections.join("\n\n").slice(0, 120000);
+  return sections.join("\n\n");
 }
 async function providerRequest({ files, destination }) {
   const model = cleanText(process.env.APOLLO_COMPLIANCE_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL, 120) || DEFAULT_MODEL;
@@ -443,11 +435,14 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
       if (!files.length) return response.status(400).json({ ok: false, error: "Upload at least one invoice or packing-list document to analyze." });
       let totalBytes = 0;
       const normalizedFiles = files.map((file) => {
-        const mimeType = cleanText(file?.mimeType, 120).toLowerCase();
+        const fileName = cleanText(file?.fileName, 180);
+        const mimeType = /\.xlsx$/i.test(fileName) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : /\.xls$/i.test(fileName) ? "application/vnd.ms-excel" : cleanText(file?.mimeType, 120).toLowerCase();
         const contentBase64 = String(file?.contentBase64 || "").replace(/^data:[^,]+,/, "");
         if (!SUPPORTED_MIME.has(mimeType)) { const error = new Error(`AI document analysis currently supports PDF, JPG, PNG, WebP and Excel (.xls/.xlsx). ${cleanText(file?.fileName, 120) || "One file"} is not a supported document type.`); error.status = 415; throw error; }
         const bytes = Buffer.byteLength(contentBase64, "base64"); totalBytes += bytes;
-        const normalized = { fileName: cleanText(file?.fileName, 180), mimeType, contentBase64 };
+        if (totalBytes > MAX_TOTAL_BYTES) { const error = new Error("For AI analysis, keep the selected documents to 10 MB total. Larger files can still be attached after the check."); error.status = 413; throw error; }
+        const normalized = { fileName, mimeType, contentBase64 };
         if (SPREADSHEET_MIME.has(mimeType)) {
           normalized.text = spreadsheetText(normalized);
           if (!normalized.text) { const error = new Error(`${normalized.fileName || "The Excel file"} does not contain readable worksheet data.`); error.status = 422; throw error; }

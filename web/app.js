@@ -1,4 +1,5 @@
 import "./app-runtime.js";
+import "./hr-workflow-links.js";
 
 import("./hr-portal.js").catch((error) => {
   console.warn("HR Leave Portal is unavailable.", error);
