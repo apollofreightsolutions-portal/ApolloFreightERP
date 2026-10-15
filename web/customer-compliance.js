@@ -197,14 +197,31 @@ function enhance(form) {
   const panel = document.createElement("div"); panel.className = "apollo-compliance-panel"; panel.hidden = true;
   docStep.appendChild(tools); docStep.appendChild(panel);
   tools.querySelector("[data-compliance-analyze]")?.addEventListener("click", async (event) => {
-    try { await analyze(form, panel, event.currentTarget); }
-    catch (error) { panel.hidden = false; panel.innerHTML = `<div class="apollo-compliance-error">${esc(error.message || "Compliance analysis failed.")}</div>`; }
+    try {
+      await analyze(form, panel, event.currentTarget);
+      window.notifySuccess?.("Compliance analysis complete", "Review the extracted shipment details and HS recommendations.");
+    } catch (error) {
+      const detail = error.message || "Compliance analysis failed.";
+      panel.hidden = false;
+      panel.innerHTML = `<div class="apollo-compliance-error">${esc(detail)}</div>`;
+      window.notifyFailed?.("Compliance analysis failed", detail);
+    }
   });
   panel.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-compliance-accept]");
     if (!button) return;
-    try { await confirmSuggestion(form, panel, button); }
-    catch (error) { button.disabled = false; const note = document.createElement("div"); note.className = "apollo-compliance-error"; note.textContent = error.message || "Could not apply the suggestion."; button.parentElement?.appendChild(note); }
+    try {
+      await confirmSuggestion(form, panel, button);
+      window.notifySuccess?.("HS suggestion applied", "The accepted HS code is now reflected in this shipment request.");
+    } catch (error) {
+      button.disabled = false;
+      const detail = error.message || "Could not apply the suggestion.";
+      const note = document.createElement("div");
+      note.className = "apollo-compliance-error";
+      note.textContent = detail;
+      button.parentElement?.appendChild(note);
+      window.notifyFailed?.("HS suggestion not applied", detail);
+    }
   });
   form.querySelector("[name='attachments']")?.addEventListener("change", () => {
     hidden.value = ""; panel.hidden = true; panel.innerHTML = ""; panel.dataset.analysisId = ""; panel.dataset.status = "";

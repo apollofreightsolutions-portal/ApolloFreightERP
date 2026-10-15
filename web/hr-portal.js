@@ -22,14 +22,37 @@ const hrFetch = async (path, options = {}) => {
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
 };
+const hrToastFallback = (status, title, detail = "") => {
+  let host = document.getElementById("toastStack") || document.querySelector(".toast-stack");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toastStack";
+    host.className = "toast-stack";
+    host.setAttribute("role", "status");
+    host.setAttribute("aria-live", status === "failed" ? "assertive" : "polite");
+    document.body.appendChild(host);
+  }
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${status}`;
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  toast.appendChild(heading);
+  if (detail) {
+    const message = document.createElement("span");
+    message.textContent = detail;
+    toast.appendChild(message);
+  }
+  host.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
+};
 const hrSuccess = (title, detail = "") => {
   if (typeof window.notifySuccess === "function") return window.notifySuccess(title, detail);
-  if (detail) window.alert(`${title}\n${detail}`); else window.alert(title);
+  hrToastFallback("success", title, detail);
 };
 const hrFailed = (title, detail = "") => {
   if (typeof window.notifyFailed === "function") return window.notifyFailed(title, detail);
   if (typeof window.notifyDenied === "function") return window.notifyDenied(title, detail);
-  if (detail) window.alert(`${title}\n${detail}`); else window.alert(title);
+  hrToastFallback("failed", title, detail);
 };
 const today = () => new Date().toISOString().slice(0, 10);
 const year = () => new Date().getFullYear();
@@ -235,16 +258,58 @@ function renderDelegations(){ if(cache.delegations===null) loadDelegations().the
 function renderRequestUploadStatus(){ return ""; }
 function readFileBase64(file){ return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||""));r.onerror=()=>reject(new Error("The selected file could not be read."));r.readAsDataURL(file);}); }
 async function submitLeave(form){
-  const data=Object.fromEntries(new FormData(form).entries()); data.declarationAccepted=form.querySelector("[name=declarationAccepted]")?.checked===true;
-  const file=form.querySelector("[name=attachment]")?.files?.[0]; const msg=form.querySelector("[data-hr-message]");
+  const data=Object.fromEntries(new FormData(form).entries());
+  data.declarationAccepted=form.querySelector("[name=declarationAccepted]")?.checked===true;
+  const file=form.querySelector("[name=attachment]")?.files?.[0];
+  const msg=form.querySelector("[data-hr-message]");
+  const submitButton=form.querySelector("button[type=submit]");
   const selectedType=(cache.config?.leaveTypes||[]).find(t=>String(t.code)===String(data.leaveType));
+  if(submitButton?.disabled)return;
+  if(submitButton)submitButton.disabled=true;
+  let fileBase64="";
+  let createdRequestNo="";
   try{
-    if(selectedType?.require_attachment && file==null){ const start=data.startDate,end=data.endDate; const calc=await hrFetch(`/api/hr/calendar?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}`); const s=new Date(`${start}T00:00:00Z`),e=new Date(`${end}T00:00:00Z`); let working=0; const hs=new Map((calc.holidays||[]).map(h=>[String(h.holiday_date).slice(0,10),h])); for(let d=new Date(s);d<=e;d.setUTCDate(d.getUTCDate()+1)){const k=d.toISOString().slice(0,10);if(hs.get(k)?.day_type!=="PUBLIC_HOLIDAY")working++;} if(working>=Number(selectedType.attachment_after_days||0)) throw new Error(`${selectedType.name} requires a supporting document for this leave period.`); }
+    if(selectedType?.require_attachment && file==null){
+      const start=data.startDate,end=data.endDate;
+      const calc=await hrFetch(`/api/hr/calendar?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}`);
+      const s=new Date(`${start}T00:00:00Z`),e=new Date(`${end}T00:00:00Z`);
+      let working=0;
+      const hs=new Map((calc.holidays||[]).map(h=>[String(h.holiday_date).slice(0,10),h]));
+      for(let d=new Date(s);d<=e;d.setUTCDate(d.getUTCDate()+1)){
+        const k=d.toISOString().slice(0,10);
+        if(hs.get(k)?.day_type!=="PUBLIC_HOLIDAY")working++;
+      }
+      if(working>=Number(selectedType.attachment_after_days||0))throw new Error(`${selectedType.name} requires a supporting document for this leave period.`);
+    }
+    if(file){
+      if(file.size>10*1024*1024)throw new Error("Supporting document must be 10 MB or smaller.");
+      fileBase64=await readFileBase64(file);
+    }
     const result=await hrFetch("/api/hr/leave-requests",{method:"POST",body:JSON.stringify(data)});
-    if(file){ if(file.size>10*1024*1024) throw new Error("Supporting document must be 10 MB or smaller."); const base64=await readFileBase64(file); await hrFetch(`/api/hr/leave-requests/${encodeURIComponent(result.row.request_no)}/attachment`,{method:"POST",body:JSON.stringify({fileName:file.name,mimeType:file.type,contentBase64:base64})}); }
-    if(msg) msg.textContent=`Submitted ${result.row.request_no}. Actual leave days: ${result.calculation.actualLeaveDays}.`;
-    await loadConfig(); await loadRequests(); hrSuccess("Leave request submitted",`${result.row.request_no} was submitted successfully.`); setTimeout(()=>document.querySelector("[data-hr-modal]")?.remove(),700); requestCoreRender();
-  }catch(e){if(msg) msg.textContent=e.message;hrFailed("Leave request not submitted", e.message);}
+    createdRequestNo=result.row.request_no;
+    if(file)await hrFetch(`/api/hr/leave-requests/${encodeURIComponent(createdRequestNo)}/attachment`,{method:"POST",body:JSON.stringify({fileName:file.name,mimeType:file.type,contentBase64:fileBase64})});
+  }catch(e){
+    if(msg)msg.textContent=e.message;
+    if(createdRequestNo){
+      form.closest("[data-hr-modal]")?.remove();
+      cache.requests=null;
+      try{await loadRequests();}catch{}
+      requestCoreRender();
+      hrFailed("Request submitted; attachment incomplete",`${createdRequestNo} was created, but its supporting document could not be attached. ${e.message}`);
+    }else{
+      if(submitButton)submitButton.disabled=false;
+      hrFailed("Leave request not submitted",e.message);
+    }
+    return;
+  }
+
+  if(msg)msg.textContent=`Submitted ${createdRequestNo}.`;
+  let refreshError="";
+  try{await loadConfig();await loadRequests();}catch(e){refreshError=e.message||String(e);}
+  form.closest("[data-hr-modal]")?.remove();
+  requestCoreRender();
+  if(refreshError)hrFailed("Request submitted; list refresh failed",`${createdRequestNo} was submitted, but the leave list could not be refreshed. ${refreshError}`);
+  else hrSuccess("Leave request submitted",`${createdRequestNo} was submitted successfully.`);
 }
 async function decide(no,decision,reasonOverride){
   location.assign(`/hr-approvals.html?request=${encodeURIComponent(no)}&action=${encodeURIComponent(decision)}`);
@@ -255,10 +320,99 @@ async function rejoin(no,actualReturnDate){try{const r=await hrFetch(`/api/hr/le
 function rejoinForm(r){return `<div class="hr-modal-backdrop" data-hr-modal><div class="hr-modal"><div class="hr-modal-head"><h2>Rejoining Form — ${esc(r.request_no)}</h2><button type="button" class="secondary-button" data-hr-action="close-modal">Close</button></div><form data-hr-form="rejoin" data-id="${esc(r.request_no)}" class="hr-form"><p class="form-help">Complete this form after you return to work. Planned return date: <strong>${fmtDate(r.rejoining_date)}</strong>. You may submit the same date or a later date. If you return later, the extra paid-leave days will be recorded.</p><label>Actual Return Date<input type="date" name="actualReturnDate" min="${esc(r.rejoining_date||"")}" required></label><div class="dialog-actions"><button type="button" class="secondary-button" data-hr-action="close-modal">Cancel</button><button type="submit" class="secondary-button">Submit Rejoining Form</button></div></form></div></div>`;}
 async function viewAttachment(no){try{const r=await hrFetch(`/api/hr/leave-requests/${encodeURIComponent(no)}/attachment`);window.open(r.url,"_blank","noopener");}catch(e){hrFailed("Action failed", e.message);}}
 async function saveHoliday(form){try{const data=Object.fromEntries(new FormData(form).entries());await hrFetch("/api/hr/calendar/holiday",{method:"POST",body:JSON.stringify(data)});await loadConfig();form.reset();window.__APOLLO_AUDIT__?.("Saved public holiday / calendar date",`${data.startDate}${data.endDate&&data.endDate!==data.startDate?`–${data.endDate}`:""} — ${data.title}`,`${data.dayType} (${data.branch})`);hrSuccess("Calendar rule saved",`${data.title} was saved for ${data.branch}.`);requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}}
-async function saveWeekends(form){try{const weekdays=Array.from(form.querySelectorAll("[name=weekday]:checked")).map(x=>Number(x.value));const branch=form.querySelector("[name=branch]")?.value||activeCalendarBranch();await hrFetch("/api/hr/calendar/weekends",{method:"POST",body:JSON.stringify({weekdays,branch})});await loadConfig();window.__APOLLO_AUDIT__?.("Updated weekend rules",branch,`Weekdays: ${weekdays.join(", ")}`);hrSuccess("Weekend rules saved",`${branch} weekend rules were saved.`);requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}}
+async function saveWeekends(form){
+  const weekdays=[...new Set(Array.from(form.querySelectorAll("[name=weekday]:checked")).map(x=>Number(x.value)))].sort((a,b)=>a-b);
+  const branch=form.querySelector("[name=branch]")?.value||activeCalendarBranch();
+  const previousWeekdays=[...new Set((cache.config?.weekends||[]).map(Number))].sort((a,b)=>a-b);
+  const changed=JSON.stringify(previousWeekdays)!==JSON.stringify(weekdays);
+  const submitButton=form.querySelector("button[type=submit]");
+  if(submitButton?.disabled)return;
+  if(!changed){hrSuccess("No changes",`${branch} already uses these weekend rules.`);return;}
+  if(submitButton)submitButton.disabled=true;
+  let saved=false;
+  try{
+    await hrFetch("/api/hr/calendar/weekends",{method:"POST",body:JSON.stringify({weekdays,branch})});
+    saved=true;
+    let refreshError="";
+    try{await loadConfig();}catch(error){refreshError=error.message||String(error);}
+    if(changed)window.__APOLLO_AUDIT__?.("Updated weekend rules",branch,`weekdays: ${previousWeekdays.join(", ")||"-"} -> ${weekdays.join(", ")||"-"}`);
+    requestCoreRender();
+    if(refreshError)hrFailed("Weekend rules saved; refresh failed",`${branch} rules were saved, but the calendar did not refresh. ${refreshError}`);
+    else if(changed)hrSuccess("Weekend rules saved",`${branch} weekend rules were updated.`);
+    else hrSuccess("No changes",`${branch} already uses these weekend rules.`);
+  }catch(error){
+    if(saved)hrFailed("Weekend rules saved; refresh failed",`${branch} rules were saved, but a follow-up step failed. ${error.message}`);
+    else hrFailed("Action failed",error.message);
+  }finally{
+    if(submitButton?.isConnected)submitButton.disabled=false;
+  }
+}
 async function deleteCalendar(id){if(!window.confirm("Remove this calendar rule?"))return;try{await hrFetch(`/api/hr/calendar/holiday/${encodeURIComponent(id)}`,{method:"DELETE"});await loadConfig();window.__APOLLO_AUDIT__?.("Deleted public holiday / calendar date",String(id),"");hrSuccess("Calendar rule removed","The selected calendar rule was removed.");requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}}
 async function viewPolicyAttachment(id){try{const r=await hrFetch(`/api/hr/admin/policies/${encodeURIComponent(id)}/attachment`);window.open(r.url,"_blank","noopener");}catch(e){hrFailed("Document could not be opened",e.message);}}
-async function savePolicy(form){try{const data=Object.fromEntries(new FormData(form).entries());const file=form.querySelector("[name=policyAttachment]")?.files?.[0];if(file&&file.size>10*1024*1024)throw new Error("Policy document must be 10 MB or smaller.");const result=await hrFetch("/api/hr/admin/policies",{method:"PUT",body:JSON.stringify(data)});let attachmentMessage="";if(file){const base64=await readFileBase64(file);try{await hrFetch(`/api/hr/admin/policies/${encodeURIComponent(result.row.id)}/attachment`,{method:"POST",body:JSON.stringify({fileName:file.name,mimeType:file.type,contentBase64:base64})});}catch(error){attachmentMessage=` The policy was saved, but the document was not attached: ${error.message}`;}}cache.policies=null;cache.adminBalances=null;await loadPolicies();if(balanceFilter.employee){try{await loadAdminBalances(balanceFilter.employee);await loadAdminLedger(balanceFilter.employee);}catch(e){hrFailed("Balance refresh failed",e.message);}}window.__APOLLO_AUDIT__?.("Updated employee leave policy / balance",`${data.userName} — ${data.leaveTypeCode}`,`Entitlement ${data.entitlement}, Carry ${data.carryForward}, Adjustment ${data.adjustment}`);form.closest("[data-hr-modal]")?.remove();hrSuccess(attachmentMessage?"Leave policy saved with document warning":"Leave policy saved",`${data.userName} — ${data.leaveTypeCode} was saved successfully.${attachmentMessage}`);requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}}
+function policyChangeSummary(previous,data,file){
+  if(!previous)return "";
+  const fields=[
+    ["year","year"],
+    ["adjustment_start_date","adjustmentStartDate"],
+    ["adjustment_end_date","adjustmentEndDate"],
+    ["branch","branch"],
+    ["entitlement","entitlement"],
+    ["carry_forward","carryForward"],
+    ["adjustment","adjustment"],
+    ["previous_used_days","previousUsedDays"],
+    ["notes","notes"]
+  ];
+  const changes=fields
+    .filter(([oldKey,newKey])=>String(previous[oldKey]??"")!==String(data[newKey]??""))
+    .map(([oldKey,newKey])=>`${oldKey}: ${previous[oldKey]??"-"} -> ${data[newKey]??"-"}`);
+  if(file&&String(previous.attachment_name||"")!==String(file.name||""))changes.push(`attachment_name: ${previous.attachment_name||"-"} -> ${file.name||"-"}`);
+  return changes.join(" | ");
+}
+async function savePolicy(form){
+  const data=Object.fromEntries(new FormData(form).entries());
+  const file=form.querySelector("[name=policyAttachment]")?.files?.[0];
+  const previous=(cache.policies?.policies||[]).find(p=>String(p.id)===String(data.id))||null;
+  const changeSummary=policyChangeSummary(previous,data,file);
+  const submitButton=form.querySelector("button[type=submit]");
+  if(submitButton?.disabled)return;
+  if(file&&file.size>10*1024*1024){hrFailed("Action failed","Policy document must be 10 MB or smaller.");return;}
+  if(previous&&!changeSummary&&!file){form.closest("[data-hr-modal]")?.remove();requestCoreRender();hrSuccess("No changes",`${data.userName} — ${data.leaveTypeCode} had no changed fields.`);return;}
+  if(submitButton)submitButton.disabled=true;
+  let saved=false;
+  const warnings=[];
+  try{
+    const result=await hrFetch("/api/hr/admin/policies",{method:"PUT",body:JSON.stringify(data)});
+    saved=true;
+    if(file){
+      try{
+        const base64=await readFileBase64(file);
+        await hrFetch(`/api/hr/admin/policies/${encodeURIComponent(result.row.id)}/attachment`,{method:"POST",body:JSON.stringify({fileName:file.name,mimeType:file.type,contentBase64:base64})});
+      }catch(error){warnings.push(`The policy was saved, but the document was not attached: ${error.message}`);}
+    }
+    cache.policies=null;
+    cache.adminBalances=null;
+    try{await loadPolicies();}catch(error){warnings.push(`The policy was saved, but the policy list could not refresh: ${error.message}`);}
+    if(balanceFilter.employee){
+      try{await loadAdminBalances(balanceFilter.employee);await loadAdminLedger(balanceFilter.employee);}
+      catch(error){warnings.push(`The policy was saved, but the balance refresh failed: ${error.message}`);}
+    }
+    if(!previous)window.__APOLLO_AUDIT__?.("Created employee leave policy / balance",`${data.userName} — ${data.leaveTypeCode}`);
+    else if(changeSummary)window.__APOLLO_AUDIT__?.("Updated employee leave policy / balance",`${data.userName} — ${data.leaveTypeCode}`,changeSummary);
+    form.closest("[data-hr-modal]")?.remove();
+    requestCoreRender();
+    if(warnings.length)hrFailed("Policy saved with warning",`${data.userName} — ${data.leaveTypeCode}. ${warnings.join(" ")}`);
+    else hrSuccess("Leave policy saved",`${data.userName} — ${data.leaveTypeCode} was saved successfully.`);
+  }catch(error){
+    if(saved){
+      form.closest("[data-hr-modal]")?.remove();
+      requestCoreRender();
+      hrFailed("Policy saved; refresh incomplete",`${data.userName} — ${data.leaveTypeCode} was saved, but a follow-up step failed: ${error.message}`);
+    }else{
+      hrFailed("Action failed",error.message);
+      if(submitButton?.isConnected)submitButton.disabled=false;
+    }
+  }
+}
 async function deleteCancelledLeave(no){
   if(!hrAdmin()||!window.confirm(`Delete cancelled request ${no}? This cannot be undone.`))return;
   try{await hrFetch(`/api/hr/leave-requests/${encodeURIComponent(no)}`,{method:"DELETE"});cache.requests=null;await loadRequests();window.__APOLLO_AUDIT__?.("Deleted cancelled leave request",no,"");hrSuccess("Cancelled leave deleted",`${no} was deleted successfully.`);requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}
@@ -273,7 +427,46 @@ function policyEditForm(p){
 async function deletePolicy(id){if(!hrAdmin()||!window.confirm("Delete this employee-specific leave policy?"))return;try{await hrFetch(`/api/hr/admin/policies/${encodeURIComponent(id)}`,{method:"DELETE"});cache.policies=null;cache.adminBalances=null;await loadPolicies();window.__APOLLO_AUDIT__?.("Deleted employee leave policy",String(id),"");hrSuccess("Leave policy deleted","The employee leave policy was deleted successfully.");requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}}
 function leaveTypeEditForm(t){return `<div class="hr-modal-backdrop" data-hr-modal><div class="hr-modal"><div class="hr-modal-head"><h2>Edit Leave Type</h2><button type="button" class="secondary-button" data-hr-action="close-modal">Close</button></div><form data-hr-form="leave-type" class="hr-form"><div class="hr-form-grid"><label>Code<input name="code" value="${esc(t.code)}" readonly></label><label>Name<input name="name" value="${esc(t.name)}" required></label><label>Annual Entitlement<input name="annualEntitlement" type="number" min="0" step="0.5" value="${esc(t.annual_entitlement)}"></label><label>Paid<select name="paid"><option value="true" ${t.paid?"selected":""}>Paid</option><option value="false" ${!t.paid?"selected":""}>Unpaid</option></select></label><label>Half Day<select name="allowHalfDay"><option value="true" ${t.allow_half_day?"selected":""}>Allowed</option><option value="false" ${!t.allow_half_day?"selected":""}>Not Allowed</option></select></label><label>Hourly<select name="allowHourly"><option value="true" ${t.allow_hourly?"selected":""}>Allowed</option><option value="false" ${!t.allow_hourly?"selected":""}>Not Allowed</option></select></label><label>Require Attachment<select name="requireAttachment"><option value="true" ${t.require_attachment?"selected":""}>Yes</option><option value="false" ${!t.require_attachment?"selected":""}>No</option></select></label><label>Attachment After Days<input name="attachmentAfterDays" type="number" min="0" step="0.5" value="${esc(t.attachment_after_days||0)}"></label><label>During Probation<select name="allowDuringProbation"><option value="true" ${t.allow_during_probation?"selected":""}>Allowed</option><option value="false" ${!t.allow_during_probation?"selected":""}>Restricted</option></select></label><label>Carry Forward<select name="allowCarryForward"><option value="true" ${t.allow_carry_forward?"selected":""}>Yes</option><option value="false" ${!t.allow_carry_forward?"selected":""}>No</option></select></label><label>Maximum Carry Forward<input name="maxCarryForward" type="number" min="0" step="0.5" value="${esc(t.max_carry_forward||0)}"></label><label>Allow Negative Balance<select name="allowNegativeBalance"><option value="true" ${t.allow_negative_balance?"selected":""}>Yes</option><option value="false" ${!t.allow_negative_balance?"selected":""}>No</option></select></label><label>Allow Encashment<select name="allowEncashment"><option value="true" ${t.allow_encashment?"selected":""}>Yes</option><option value="false" ${!t.allow_encashment?"selected":""}>No</option></select></label><label>Active<select name="active"><option value="true" ${t.active!==false?"selected":""}>Active</option><option value="false" ${t.active===false?"selected":""}>Inactive</option></select></label></div><button type="submit">Save Leave Type</button></form></div></div>`;}
 async function deleteLeaveType(code){if(!hrAdmin()||!window.confirm(`Deactivate leave type ${code}?`))return;try{await hrFetch(`/api/hr/admin/leave-types/${encodeURIComponent(code)}`,{method:"DELETE"});cache.config=null;cache.policies=null;cache.leaveTypes=null;await loadConfig();await loadPolicies();await loadLeaveTypes();window.__APOLLO_AUDIT__?.("Deactivated leave type",code,"");hrSuccess("Leave type deactivated",`${code} was deactivated.`);requestCoreRender();}catch(e){hrFailed("Action failed", e.message);}}
-async function saveLeaveType(form){try{const data=Object.fromEntries(new FormData(form).entries());await hrFetch("/api/hr/admin/leave-types",{method:"PUT",body:JSON.stringify(data)});cache.config=null;cache.policies=null;cache.leaveTypes=null;await loadConfig();await loadPolicies();await loadLeaveTypes();window.__APOLLO_AUDIT__?.("Updated company-wide leave type",data.code,data.name);hrSuccess("Leave type saved",`${data.code} was updated successfully.`);requestCoreRender();form.reset();}catch(e){hrFailed("Action failed", e.message);}}
+async function saveLeaveType(form){
+  const data=Object.fromEntries(new FormData(form).entries());
+  const previous=(cache.policies?.types||cache.config?.leaveTypes||[]).find(type=>String(type.code)===String(data.code))||null;
+  const fields=[
+    ["name","name"],["annual_entitlement","annualEntitlement"],["paid","paid"],
+    ["allow_half_day","allowHalfDay"],["allow_hourly","allowHourly"],["require_attachment","requireAttachment"],
+    ["attachment_after_days","attachmentAfterDays"],["allow_during_probation","allowDuringProbation"],
+    ["allow_carry_forward","allowCarryForward"],["max_carry_forward","maxCarryForward"],
+    ["allow_negative_balance","allowNegativeBalance"],["allow_encashment","allowEncashment"],["active","active"]
+  ];
+  const changeSummary=previous?fields
+    .filter(([oldKey,newKey])=>String(previous[oldKey]??"")!==String(data[newKey]??""))
+    .map(([oldKey,newKey])=>`${oldKey}: ${previous[oldKey]??"-"} -> ${data[newKey]??"-"}`)
+    .join(" | "):"";
+  const submitButton=form.querySelector("button[type=submit]");
+  if(submitButton?.disabled)return;
+  if(previous&&!changeSummary){hrSuccess("No changes",`${data.code} had no field changes.`);return;}
+  if(submitButton)submitButton.disabled=true;
+  let saved=false;
+  const warnings=[];
+  try{
+    await hrFetch("/api/hr/admin/leave-types",{method:"PUT",body:JSON.stringify(data)});
+    saved=true;
+    cache.config=null;cache.policies=null;cache.leaveTypes=null;
+    for(const refresh of [loadConfig,loadPolicies,loadLeaveTypes]){
+      try{await refresh();}catch(error){warnings.push(error.message||String(error));}
+    }
+    if(previous&&changeSummary)window.__APOLLO_AUDIT__?.("Updated company-wide leave type",data.code,changeSummary);
+    form.reset();
+    requestCoreRender();
+    if(warnings.length)hrFailed("Leave type saved; refresh incomplete",`${data.code} was saved, but a view refresh failed: ${warnings.join(" ")}`);
+    else if(changeSummary)hrSuccess("Leave type saved",`${data.code} was updated successfully.`);
+    else hrSuccess("No changes",`${data.code} had no field changes.`);
+  }catch(error){
+    if(saved){form.reset();requestCoreRender();hrFailed("Leave type saved; refresh incomplete",`${data.code} was saved, but a follow-up step failed: ${error.message}`);}
+    else hrFailed("Action failed",error.message);
+  }finally{
+    if(submitButton?.isConnected)submitButton.disabled=false;
+  }
+}
 function openModal(html){document.querySelector("[data-hr-modal]")?.remove();document.body.insertAdjacentHTML("beforeend",html);bindHrEvents();}
 function bindHrEvents(){if(bound)return;bound=true;
   document.addEventListener("click",async e=>{const b=e.target.closest("[data-hr-action]");if(!b)return;const a=b.dataset.hrAction,id=b.dataset.id;if(a==="retry-admin-balance"){cache.adminBalancesError="";try{await loadAdminBalances(balanceFilter.employee);await loadAdminLedger(balanceFilter.employee);hrSuccess("Balances refreshed","The selected employee balance was loaded successfully.");}catch(e){hrFailed("Balance load failed",e.message);}requestCoreRender();return;}if(a==="open-leave-form")openModal(leaveForm());else if(a==="close-modal")b.closest("[data-hr-modal]")?.remove();else if(a==="review-decide"){const modal=b.closest("[data-hr-modal]");const comment=modal?.querySelector("[data-hr-review-comment]")?.value||"";const ok=await decide(id,b.dataset.decision,comment);if(ok)modal?.remove();}else if(a==="cancel-leave")await cancel(id);else if(a==="rejoin"){const r=(cache.requests||[]).find(x=>x.request_no===id);if(r)openModal(rejoinForm(r));}else if(a==="view-request"){const r=(cache.requests||[]).find(x=>x.request_no===id);if(r)openModal(renderRequestDetails(r));}else if(a==="view-attachment")await viewAttachment(id);else if(a==="view-policy-attachment")await viewPolicyAttachment(id);else if(a==="delete-cancelled-leave")await deleteCancelledLeave(id);else if(a==="add-policy")openModal(policyEditForm({}));else if(a==="edit-policy"){const p=(cache.policies?.policies||[]).find(x=>String(x.id)===String(id));if(p)openModal(policyEditForm(p));}else if(a==="delete-policy")await deletePolicy(id);else if(a==="edit-leave-type"){const t=(cache.policies?.types||[]).find(x=>String(x.code)===String(id));if(t)openModal(leaveTypeEditForm(t));}else if(a==="delete-leave-type")await deleteLeaveType(id);else if(a==="delete-calendar")await deleteCalendar(id);else if(a==="refresh"){cache.config=null;cache.requests=null;cache.adminBalances=null;cache.adminBalancesError="";cache.policies=null;cache.leaveTypes=null;cache.ledger=null;await ensureLoaded();if(hrAdmin())await ensureAdminData();}});

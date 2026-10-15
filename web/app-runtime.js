@@ -118,7 +118,7 @@ const dialogHeaderVerified = document.querySelector("#dialogHeaderVerified");
 const dialogMinimize = document.querySelector("#recordDialogMinimize");
 const dialogMaximize = document.querySelector("#recordDialogMaximize");
 const dialogClose = document.querySelector("#recordDialogClose");
-const toastStack = document.querySelector("#toastStack");
+let toastStack = document.querySelector("#toastStack");
 const CANONICAL_BRANCHES = ["Kuwait HO", "Dubai", "Both"];
 
 function currentSession() {
@@ -2345,10 +2345,32 @@ function branchValuesForRecord(row) {
   return [...branches];
 }
 
+const notificationDialogsBound = new WeakSet();
+
 function notificationHost() {
-  if (!toastStack || !document.body) return null;
-  const target = recordDialog?.open ? recordDialog : document.body;
+  if (!document.body) return null;
+  if (!toastStack) {
+    toastStack = document.createElement("div");
+    toastStack.id = "toastStack";
+    toastStack.className = "toast-stack";
+    toastStack.setAttribute("role", "status");
+    toastStack.setAttribute("aria-live", "polite");
+    document.body.appendChild(toastStack);
+  }
+  const openDialogs = [...document.querySelectorAll("dialog[open]")];
+  const activeDialog = document.activeElement?.closest?.("dialog[open]");
+  const target = activeDialog || openDialogs[openDialogs.length - 1] || document.body;
   if (toastStack.parentElement !== target) target.appendChild(toastStack);
+  if (target !== document.body && !notificationDialogsBound.has(target)) {
+    notificationDialogsBound.add(target);
+    target.addEventListener("close", () => {
+      if (!toastStack || !document.body) return;
+      const remainingDialogs = [...document.querySelectorAll("dialog[open]")];
+      const focusedDialog = document.activeElement?.closest?.("dialog[open]");
+      const nextTarget = focusedDialog || remainingDialogs[remainingDialogs.length - 1] || document.body;
+      if (toastStack.parentElement !== nextTarget) nextTarget.appendChild(toastStack);
+    });
+  }
   return toastStack;
 }
 
@@ -2356,11 +2378,7 @@ function notify(status, title, detail = "") {
   if (status === "success") playBeep();
   if (status === "failed" || status === "denied") playNotificationSound("failed");
   const host = notificationHost();
-  if (!host) {
-    if (detail) window.alert(`${title}\n${detail}`);
-    else window.alert(title);
-    return;
-  }
+  if (!host) return;
 
   const toast = document.createElement("div");
   toast.className = `toast toast-${status}`;
@@ -4401,13 +4419,19 @@ function openCustomerDetails(customerCode) {
         status: normalizedCustomerStatus(data.status),
         branch: normalizeBranchName(data.branch || defaultUserBranch())
       });
+      const changeSummary = summarizeChanges(originalSnapshot, customer);
+      if (!changeSummary) {
+        recordDialog.close();
+        notifySuccess("No changes", `${customer.code} had no changed fields.`);
+        return;
+      }
       const saved = await persistRecord("customers", customer);
       if (!saved) {
         Object.assign(customer, originalSnapshot);
         notifyDenied("Not saved", "This change could not be saved to the server. Please try again.");
         return;
       }
-      addHistory("Updated customer", customer.code);
+      if (changeSummary) addHistory("Updated customer", customer.code, changeSummary);
       saveState();
       recordDialog.close();
       notifySuccess("Customer updated", `${customer.code} was saved successfully.`);
@@ -5797,9 +5821,8 @@ function auditReferenceKey(reference) {
   return text.slice(0, cut).trim() || text;
 }
 
-// Audit "details" strings are written as "field: before -> after | field2: before2 -> after2".
-// The field names remain stored for audit integrity, but the UI intentionally displays only the
-// changed values so an update reads simply: "Before: old -> After: new".
+// Audit details are stored as "field: before -> after | field2: before2 -> after2".
+// Rendering keeps the field label and only the values that actually changed.
 function parseChangeDetailPairs(details) {
   return String(details || "")
     .split("|")
@@ -5831,11 +5854,40 @@ function auditHistoryForReference(referenceKey) {
 }
 
 function auditChangeValueText(details) {
-  const pairs = parseChangeDetailPairs(details);
+  const rawPairs = parseChangeDetailPairs(details);
+  const legacyRecordPair = rawPairs
+    .map((pair) => ({
+      previous: auditStructuredValue(pair.before),
+      next: auditStructuredValue(String(pair.after || "").replace(/^After:\s*/i, ""))
+    }))
+    .find((pair) => pair.previous && pair.next && typeof pair.previous === "object" && typeof pair.next === "object");
+  if (legacyRecordPair) {
+    const summary = summarizeChanges(legacyRecordPair.previous, legacyRecordPair.next);
+    const summaryPairs = parseChangeDetailPairs(summary);
+    const rendered = summaryPairs
+      .map((pair) => `${auditFieldLabel(pair.field)}: Before: ${auditDisplayValue(pair.before)} -> After: ${auditDisplayValue(pair.after)}`);
+    const legacyStatus = String(details || "").match(/\bstatus:\s*([^|]+?)\s*->\s*([^|]+?)(?=\s*\||$)/i);
+    if (legacyStatus && !/\bstatus:/i.test(summary)) {
+      rendered.unshift(`Status: Before: ${legacyStatus[1].trim()} -> After: ${legacyStatus[2].trim()}`);
+    }
+    if (rendered.length) return rendered.join(" | ");
+  }
+  const pairs = legacyRecordPair
+    ? rawPairs.filter((pair) => {
+      const previous = auditStructuredValue(pair.before);
+      const next = auditStructuredValue(String(pair.after || "").replace(/^After:\s*/i, ""));
+      return !(previous && next && typeof previous === "object" && typeof next === "object");
+    })
+    : rawPairs;
   if (!pairs.length) return String(details || "").trim();
   return pairs
-    .map((pair) => `Before: ${pair.before || "-"} -> After: ${pair.after || "-"}`)
+    .map((pair) => `${auditFieldLabel(pair.field)}: Before: ${auditDisplayValue(pair.before)} -> After: ${auditDisplayValue(pair.after)}`)
     .join(" | ");
+}
+
+function auditDisplayValue(value) {
+  const compact = String(value ?? "").replace(/\s+/g, " ").trim() || "-";
+  return compact.length > 220 ? `${compact.slice(0, 217)}...` : compact;
 }
 
 function auditDetailEntryMarkup(entry, position) {
@@ -7777,14 +7829,21 @@ async function saveDialogRecordInner() {
     recalculateLoad(updatedRecord);
   }
 
+  const changeSummary = summarizeChanges(editing.record, updatedRecord, Object.keys(data));
+  if (!changeSummary) {
+    notifySuccess("No changes", "No field values changed, so nothing needed to be saved.");
+    return;
+  }
+
   if (editing.type === "charge" && !isAdminSession()) {
-    await submitAdminRequest(
+    const request = await submitAdminRequest(
       "Additional Charges",
       editing.id,
       "Charge change request submitted by non-admin user.",
-      summarizeChanges(editing.record, updatedRecord, Object.keys(data)),
+      changeSummary,
       "Charge Change Request"
     );
+    if (!request) return;
     addHistory("Submitted charge change request", editing.id);
     saveState();
     resetDialogShell();
@@ -7804,12 +7863,26 @@ async function saveDialogRecordInner() {
       "Consolidation",
       editing.id,
       "Consolidation change request submitted by non-admin user.",
-      summarizeChanges(editing.record, updatedRecord, Object.keys(data)),
+      changeSummary,
       "Manifest Approval"
     );
+    if (!request) return;
+    const previousManifestStatus = editing.record.manifestStatus;
+    const previousRequestNo = editing.record.lastManifestRequestNo;
     editing.record.manifestStatus = "Pending Approval";
     editing.record.lastManifestRequestNo = request.requestNo;
-    await persistRecord("load", editing.record);
+    const loadSaved = await persistRecord("load", editing.record);
+    if (!loadSaved) {
+      editing.record.manifestStatus = previousManifestStatus;
+      editing.record.lastManifestRequestNo = previousRequestNo;
+      addHistory("Submitted consolidation change request", editing.id);
+      saveState();
+      notifyFailed("Request submitted; manifest status not updated", state.api?.error || `${request.requestNo} was sent to admin, but the manifest status could not be updated. Refresh before making another request.`);
+      resetDialogShell();
+      recordDialog.close();
+      render();
+      return;
+    }
     addHistory("Submitted consolidation change request", editing.id);
     saveState();
     resetDialogShell();
@@ -7819,7 +7892,6 @@ async function saveDialogRecordInner() {
     return;
   }
 
-  const changeSummary = summarizeChanges(editing.record, updatedRecord, Object.keys(data));
   const originalSnapshot = { ...editing.record };
   if (editing.type === "shipment" && updatedRecord.jobNo !== editing.record.jobNo) {
     const renamed = await renameShipmentJobNumber(editing.record.jobNo, updatedRecord.jobNo, "Shipment service type changed");
@@ -7947,7 +8019,7 @@ function openNewDialog(type, mode = "") {
 function openLoadDialog(type) {
   const collection = collectionFor(type);
   if (!collection.length) {
-    window.alert(`No ${type} records available yet.`);
+    notifyDenied("Nothing to load", `No ${type} records are available yet.`);
     return;
   }
   const firstId = rowId(type, collection[0] || {});
@@ -8075,6 +8147,9 @@ function podCargoSummary(shipmentItem = {}) {
   return `<section class="pod-cargo-summary"><strong>Cargo Details</strong><span>${escapeHtml(packages)}</span></section>`;
 }
 
+let podDialogClickHandlerBound = false;
+let podDialogSaveInProgress = false;
+
 function bindPodShipmentDialog() {
   const shipmentField = dialogBody.querySelector("[name='jobNo']");
   const details = dialogBody.querySelector("[data-pod-shipment-fields]");
@@ -8104,6 +8179,10 @@ function bindPodShipmentDialog() {
   // changes. Saves whatever is currently typed in the form first, then generates the POD from
   // that just-saved record - so edits made here always show up in the generated PDF, instead of
   // the separate panel-level "Generate POD" button silently using stale saved data.
+  // dialogBody is a single persistent element reused by every modal. Bind delegated POD actions
+  // once; adding this listener on each open caused one click to save/upload and audit repeatedly.
+  if (podDialogClickHandlerBound) return;
+  podDialogClickHandlerBound = true;
   dialogBody.addEventListener("click", async (event) => {
     const historyViewButton = event.target.closest("[data-pod-split-view]");
     if (historyViewButton) {
@@ -8151,26 +8230,41 @@ function bindPodShipmentDialog() {
     const trigger = event.target.closest("[data-dialog-action='save-and-generate-pod']");
     const finalizeTrigger = event.target.closest("[data-dialog-action='finalize-signed-pod']");
     if (!trigger && !finalizeTrigger) return;
-    const data = collectFormValues(dialogBody.closest("form"));
-    if (finalizeTrigger) {
-      const file = data.podFileUpload;
-      if (String(data.deliveryStatus || "").toLowerCase() !== "delivered") {
-        notifyDenied("Complete delivery first", "Select Delivered before closing the shipment as POD Uploaded.");
-        return;
+    if (podDialogSaveInProgress) return;
+    podDialogSaveInProgress = true;
+    const actionButtons = Array.from(dialogBody.querySelectorAll("[data-dialog-action='save-and-generate-pod'], [data-dialog-action='finalize-signed-pod']"));
+    actionButtons.forEach((button) => { button.disabled = true; });
+    try {
+      const data = collectFormValues(dialogBody.closest("form"));
+      if (finalizeTrigger) {
+        const file = data.podFileUpload;
+        const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
+        if (String(data.deliveryStatus || "").toLowerCase() !== "delivered") {
+          notifyDenied("Complete delivery first", "Select Delivered before closing the shipment as POD Uploaded.");
+          return;
+        }
+        if (!file || typeof file !== "object" || !file.name) {
+          notifyDenied("Signed POD required", "Choose the signed POD file before closing this shipment as POD Uploaded.");
+          return;
+        }
+        if (!allowedMimeTypes.includes(String(file.type || "").toLowerCase())) {
+          notifyDenied("POD not uploaded", "POD file must be a PDF, JPG, JPEG, or PNG file.");
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          notifyDenied("POD not uploaded", "POD file must be 10 MB or smaller.");
+          return;
+        }
       }
-      if (!file || typeof file !== "object" || !file.name) {
-        notifyDenied("Signed POD required", "Choose the signed POD file before closing this shipment as POD Uploaded.");
-        return;
-      }
-    }
-    const savedSplit = await savePodDelivery(data, { finalize: Boolean(finalizeTrigger) });
-    if (!savedSplit) return;
-    if (finalizeTrigger) {
-      const file = data.podFileUpload;
-      try {
+      const savedSplit = await savePodDelivery(data, { finalize: Boolean(finalizeTrigger) });
+      if (!savedSplit) return;
+      if (finalizeTrigger) {
+        const file = data.podFileUpload;
+        try {
         const documentItem = await uploadPodDocument(String(data.jobNo || "").trim(), file, savedSplit.splitNo);
         const shipmentItem = state.shipments.find((row) => row.jobNo === String(data.jobNo || "").trim());
         if (shipmentItem) {
+          const savedShipmentSnapshot = { ...shipmentItem };
           const splits = parsePodSplits(shipmentItem.podSplitsJson);
           const split = splits.find((item) => Number(item.splitNo) === Number(savedSplit.splitNo));
           if (split) {
@@ -8181,20 +8275,31 @@ function bindPodShipmentDialog() {
           shipmentItem.podStatus = "Uploaded";
           shipmentItem.status = "Delivered";
           shipmentItem.notes = shipmentMetaNotes(shipmentItem);
-          await persistRecord("shipment", shipmentItem);
+          const shipmentSaved = await persistRecord("shipment", shipmentItem);
+          if (!shipmentSaved) {
+            Object.assign(shipmentItem, savedShipmentSnapshot);
+            notifyFailed("POD uploaded; shipment not fully updated", "The file was uploaded, but the final POD details could not be saved. Refresh and verify this shipment before retrying.");
+            return;
+          }
         }
-      } catch (error) {
-        notifyDenied("POD not uploaded", error.message || "The signed POD could not be uploaded.");
-        return;
+        } catch (error) {
+          notifyFailed("Delivery saved; POD upload failed", `${data.jobNo} delivery details were saved, but the signed POD could not be uploaded. ${error.message || "Please try again after checking the shipment."}`);
+          return;
+        }
+        notifySuccess("POD uploaded", `${data.jobNo} is now closed as POD Uploaded.`);
       }
-      notifySuccess("POD uploaded", `${data.jobNo} is now closed as POD Uploaded.`);
+      saveState();
+      const jobNo = String(data.jobNo || "").trim();
+      const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
+      if (trigger) openPrintableDocument(podSplitDocumentHtml(shipmentItem, savedSplit));
+      recordDialog.close();
+      render();
+    } catch (error) {
+      notifyFailed("POD action failed", error.message || "The delivery could not be saved. Please try again.");
+    } finally {
+      podDialogSaveInProgress = false;
+      actionButtons.forEach((button) => { if (button.isConnected) button.disabled = false; });
     }
-    saveState();
-    const jobNo = String(data.jobNo || "").trim();
-    const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
-    if (trigger) openPrintableDocument(podSplitDocumentHtml(shipmentItem, savedSplit));
-    recordDialog.close();
-    render();
   });
 }
 
@@ -8326,18 +8431,12 @@ async function savePodDelivery(data, options = {}) {
     return false;
   }
 
-  // Compute the diff BEFORE shipmentItem gets overwritten below, using the exact same
-  // "field: before -> after" format the generic edit-save flow uses, so POD saves show up in the
-  // audit trail with proper before/after just like every other kind of edit.
+  // Compute only changed field paths before copying the persisted values to local state.
   const podChangeSummary = summarizeChanges(shipmentItem, updatedShipment);
   Object.assign(shipmentItem, updatedShipment);
 
   // Signed POD upload is intentionally handled only by the explicit final-close action.
-  addHistory(
-    isFullyDelivered ? "Saved POD / Delivery (complete)" : "Saved POD / Delivery (partial)",
-    jobNo,
-    totalPieces ? `Delivery ${splitNo}: ${newSplit.pieces} of ${totalPieces} pcs -> ${newSplit.deliveryLocation || "-"}. ${podChangeSummary}` : podChangeSummary
-  );
+  if (podChangeSummary) addHistory(isFullyDelivered ? "Saved POD / Delivery (complete)" : "Saved POD / Delivery (partial)", jobNo, podChangeSummary);
   if (!options.finalize) {
     notifySuccess(
       isFullyDelivered ? "Delivery complete" : "Partial delivery saved",
@@ -8379,6 +8478,7 @@ async function uploadPodFileForSelectedShipment(jobNo, targetSplitNo = null) {
     if (!file) return;
     try {
       const documentItem = await uploadPodDocument(shipmentItem.jobNo, file, targetSplit ? targetSplit.splitNo : "");
+      const savedShipmentSnapshot = { ...shipmentItem };
       if (targetSplit) {
         targetSplit.documentNo = documentItem.documentNo;
         targetSplit.fileName = documentItem.fileName;
@@ -8387,7 +8487,11 @@ async function uploadPodFileForSelectedShipment(jobNo, targetSplitNo = null) {
       const isFullyDelivered = statusKey === "delivered";
       if (isFullyDelivered) shipmentItem.podStatus = "Uploaded";
       const shipmentSaved = await persistRecord("shipment", shipmentItem);
-      if (!shipmentSaved) return;
+      if (!shipmentSaved) {
+        Object.assign(shipmentItem, savedShipmentSnapshot);
+        notifyFailed("POD uploaded; shipment not updated", "The file was uploaded, but the shipment details did not save. Refresh and check the shipment before retrying.");
+        return;
+      }
       addHistory("Uploaded signed POD", shipmentItem.jobNo, targetSplit ? `Delivery ${targetSplit.splitNo}: ${file.name}` : file.name);
       saveState();
       render();
@@ -8474,13 +8578,13 @@ function openAdminRequestDialog(record) {
     secondaryLabel: "Reject Request",
     async onSave() {
       const data = collectFormValues(dialogBody.closest("form"));
-      await approveAdminRequest(record, data.approvalNotes || "");
+      if (!await approveAdminRequest(record, data.approvalNotes || "")) return;
       recordDialog.close();
       render();
     },
     async onSecondary() {
       const data = collectFormValues(dialogBody.closest("form"));
-      await rejectAdminRequest(record, data.approvalNotes || "");
+      if (!await rejectAdminRequest(record, data.approvalNotes || "")) return;
       recordDialog.close();
       render();
     }
@@ -10824,12 +10928,91 @@ function dialogSafeValue(name, fallback = "") {
   return moduleContent.querySelector(`[name='${name}']`)?.value || fallback;
 }
 
-function summarizeChanges(previous, next, submittedKeys = null) {
-  const keys = Array.isArray(submittedKeys) ? submittedKeys : Object.keys(next);
-  return [...new Set(keys)]
-    .filter((key) => String(previous[key] ?? "") !== String(next[key] ?? ""))
-    .map((key) => `${key}: ${previous[key] ?? ""} -> ${next[key] ?? ""}`)
-    .join(" | ");
+function auditStructuredValue(value) {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (!text || !["{", "["].includes(text[0])) return value;
+  try { return JSON.parse(text); } catch { return value; }
+}
+
+function auditFieldLabel(path) {
+  return String(path || "Changed field")
+    .replace(/\[(\d+)\]/g, (_, index) => ` · Item ${Number(index) + 1}`)
+    .split(".")
+    .map((part) => part
+      .replace(/Json$/i, "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (letter) => letter.toUpperCase()))
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function auditValueText(value) {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return "-";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+function collectAuditDiff(path, previousValue, nextValue, changes, omitted) {
+  const previous = auditStructuredValue(previousValue);
+  const next = auditStructuredValue(nextValue);
+  const isObject = (value) => value && typeof value === "object";
+  if (isObject(previous) || isObject(next)) {
+    const previousArray = Array.isArray(previous);
+    const nextArray = Array.isArray(next);
+    if ((previousArray || nextArray) && (previousArray === nextArray || previous == null || next == null)) {
+      const before = previousArray ? previous : [];
+      const after = nextArray ? next : [];
+      for (let index = 0; index < Math.max(before.length, after.length); index += 1) {
+        collectAuditDiff(`${path}[${index}]`, before[index], after[index], changes, omitted);
+      }
+      return;
+    }
+    if ((!previousArray && !nextArray) || previous == null || next == null) {
+      const before = !previousArray && isObject(previous) ? previous : {};
+      const after = !nextArray && isObject(next) ? next : {};
+      const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+      for (const key of keys) {
+        collectAuditDiff(path ? `${path}.${key}` : key, before[key], after[key], changes, omitted);
+      }
+      return;
+    }
+  }
+
+  const previousEmpty = previous == null || (typeof previous === "string" && !previous.trim());
+  const nextEmpty = next == null || (typeof next === "string" && !next.trim());
+  if (previousEmpty && nextEmpty) return;
+  if (String(previous ?? "") === String(next ?? "")) return;
+  if (changes.length < 40) {
+    changes.push(`${path}: ${auditValueText(previous)} -> ${auditValueText(next)}`);
+  } else {
+    omitted.count += 1;
+  }
+}
+
+function summarizeChanges(previous = {}, next = {}, submittedKeys = null) {
+  const oldRecord = previous && typeof previous === "object" ? previous : {};
+  const newRecord = next && typeof next === "object" ? next : {};
+  const keys = Array.isArray(submittedKeys) ? submittedKeys : Object.keys(newRecord);
+  const changes = [];
+  const omitted = { count: 0 };
+  for (const key of [...new Set(keys.map(String))]) {
+    const oldValue = oldRecord[key];
+    const newValue = newRecord[key];
+    // Shipment `notes` is a serialized copy of many already-audited fields. Including it would
+    // dump the entire shipment JSON into the audit entry when only one POD field changed.
+    if (key === "notes") {
+      const oldNotes = auditStructuredValue(oldValue);
+      const newNotes = auditStructuredValue(newValue);
+      const oldMeta = oldNotes && typeof oldNotes === "object" && !Array.isArray(oldNotes) && Object.keys(oldNotes).length > 8;
+      const newMeta = newNotes && typeof newNotes === "object" && !Array.isArray(newNotes) && Object.keys(newNotes).length > 8;
+      if (oldMeta || newMeta) continue;
+    }
+    collectAuditDiff(key, oldValue, newValue, changes, omitted);
+  }
+  if (omitted.count) changes.push(`additionalChangedFields: ${omitted.count} more field(s) changed -> ${omitted.count} more field(s) changed`);
+  return changes.join(" | ");
 }
 
 function coerceValue(previous, next) {
@@ -10907,7 +11090,7 @@ function reportRows(reportType, reportFromDate = "", reportToDate = "") {
 function exportReport() {
   const preview = state.ui.reportPreview;
   if (!preview) {
-    window.alert("Preview the report first.");
+    notifyDenied("Preview required", "Preview the report before exporting it.");
     return;
   }
 
@@ -10918,7 +11101,7 @@ function exportReport() {
 
   const printWindow = window.open("", "_blank", "width=1080,height=760");
   if (!printWindow) {
-    window.alert("Allow popups to print the PDF preview.");
+    notifyDenied("Pop-up blocked", "Allow pop-ups for this site, then try printing the PDF preview again.");
     return;
   }
 
@@ -12009,7 +12192,7 @@ async function sendBackShipmentRequest(id, fromDialog = false) {
 function convertShipmentRequestToShipment(id) {
   const record = state.shipmentRequests.find((row) => row.requestNo === id);
   if (!record) {
-    window.alert("Shipment request not found.");
+    notifyDenied("Shipment request not found", "Refresh the page and try again.");
     return;
   }
   if (denyIfCustomerBlocked(record.customerName, currentBlockCheckBranch(record.branch))) return;
@@ -12081,7 +12264,7 @@ function convertShipmentRequestToShipment(id) {
 function printQuotation(id) {
   const record = state.quotations.find((row) => rowId("quotation", row) === id);
   if (!record) {
-    window.alert("Quotation not found.");
+    notifyDenied("Quotation not found", "Refresh the page and try again.");
     return;
   }
   const lines = parsePalletDimensions(record.cargoItemsJson || "[]");
@@ -12104,7 +12287,7 @@ function printQuotation(id) {
 function convertQuotationToShipment(id) {
   const record = state.quotations.find((row) => rowId("quotation", row) === id);
   if (!record) {
-    window.alert("Quotation not found.");
+    notifyDenied("Quotation not found", "Refresh the page and try again.");
     return;
   }
   if (denyIfCustomerBlocked(record.customerName, currentBlockCheckBranch(record.branch))) return;
@@ -12206,7 +12389,7 @@ async function submitAdminRequest(targetModule, referenceNo, details, proposedVa
     proposedValues
   );
   state.adminRequests.unshift(request);
-  await postRecord("adminRequest", request);
+  if (!await postNewRecord("adminRequest", request, "adminRequests", "requestNo", "Admin request")) return false;
   return request;
 }
 
@@ -12451,14 +12634,25 @@ async function applyBlockRequestToRecord(request) {
 }
 
 async function approveAdminRequest(request, approvalNotes = "") {
+  const previousRequest = {
+    status: request.status,
+    approvedBy: request.approvedBy,
+    approvalNotes: request.approvalNotes
+  };
   request.status = "Approved";
   request.approvedBy = currentSession()?.userName || "admin";
   request.approvalNotes = approvalNotes;
-  await persistRecord("adminRequest", request);
+  if (!await persistRecord("adminRequest", request)) {
+    Object.assign(request, previousRequest);
+    notifyFailed("Request not approved", state.api?.error || `${request.requestNo} could not be approved. Please try again.`);
+    return false;
+  }
+  let targetSaveFailures = 0;
 
   if (request.targetModule === "Additional Charges") {
     const charge = state.additionalCharges.find((row) => row.refNo === request.referenceNo);
     if (charge) {
+      const previousCharge = { ...charge };
       const changes = parseChangeSummary(request.proposedValues);
       Object.entries(changes).forEach(([key, value]) => {
         if (["amount", "taxPercent", "taxAmount", "totalAmount"].includes(key)) {
@@ -12487,13 +12681,17 @@ async function approveAdminRequest(request, approvalNotes = "") {
         approvalNotes
       );
       Object.assign(charge, refreshed);
-      await persistRecord("charge", charge);
+      if (!await persistRecord("charge", charge)) {
+        Object.assign(charge, previousCharge);
+        targetSaveFailures += 1;
+      }
     }
   }
 
   if (request.targetModule === "Consolidation") {
     const loadItem = state.loads.find((row) => row.loadNo === request.referenceNo);
     if (loadItem) {
+      const previousLoad = { ...loadItem };
       const changes = parseChangeSummary(request.proposedValues);
       Object.entries(changes).forEach(([key, value]) => {
         if (["pieces", "actualKg", "cbm", "chargeableKg"].includes(key)) {
@@ -12505,42 +12703,85 @@ async function approveAdminRequest(request, approvalNotes = "") {
       loadItem.manifestStatus = "Approved";
       loadItem.lastManifestRequestNo = request.requestNo;
       recalculateLoad(loadItem);
-      await persistRecord("load", loadItem);
-      await syncManifestShipmentStatuses(loadItem);
+      if (!await persistRecord("load", loadItem)) {
+        Object.assign(loadItem, previousLoad);
+        targetSaveFailures += 1;
+      } else {
+        await syncManifestShipmentStatuses(loadItem);
+      }
     }
   }
 
+  if (targetSaveFailures) {
+    Object.assign(request, previousRequest);
+    const requestRolledBack = await persistRecord("adminRequest", request);
+    notifyFailed(
+      "Approval incomplete",
+      requestRolledBack
+        ? `The target record could not be updated, so ${request.requestNo} was returned to its previous status. Refresh and try again.`
+        : `The target record and approval status could not be fully synchronized. Refresh and ask an admin to verify ${request.requestNo}.`
+    );
+    return false;
+  }
   addHistory("Approved admin request", request.requestNo);
   saveState();
+  notifySuccess("Request approved", `${request.requestNo} was approved successfully.`);
+  return true;
 }
 
 async function rejectAdminRequest(request, approvalNotes = "") {
+  const previousRequest = {
+    status: request.status,
+    approvedBy: request.approvedBy,
+    approvalNotes: request.approvalNotes
+  };
   request.status = "Rejected";
   request.approvedBy = currentSession()?.userName || "admin";
   request.approvalNotes = approvalNotes;
-  await persistRecord("adminRequest", request);
+  if (!await persistRecord("adminRequest", request)) {
+    Object.assign(request, previousRequest);
+    notifyFailed("Request not rejected", state.api?.error || `${request.requestNo} could not be rejected. Please try again.`);
+    return false;
+  }
+  let targetSaveFailures = 0;
 
   if (request.targetModule === "Additional Charges") {
     const charge = state.additionalCharges.find((row) => row.refNo === request.referenceNo && row.status === "Pending Approval");
     if (charge) {
+      const previousCharge = { ...charge };
       charge.status = "Rejected";
       charge.approvedBy = request.approvedBy;
       charge.approvalNotes = approvalNotes;
-      await persistRecord("charge", charge);
+      if (!await persistRecord("charge", charge)) {
+        Object.assign(charge, previousCharge);
+        targetSaveFailures += 1;
+      }
     }
   }
 
   if (request.targetModule === "Consolidation") {
     const loadItem = state.loads.find((row) => row.loadNo === request.referenceNo);
     if (loadItem) {
+      const previousStatus = loadItem.manifestStatus;
+      const previousRequestNo = loadItem.lastManifestRequestNo;
       loadItem.manifestStatus = "Rejected";
       loadItem.lastManifestRequestNo = request.requestNo;
-      await persistRecord("load", loadItem);
+      if (!await persistRecord("load", loadItem)) {
+        loadItem.manifestStatus = previousStatus;
+        loadItem.lastManifestRequestNo = previousRequestNo;
+        targetSaveFailures += 1;
+      }
     }
   }
 
   addHistory("Rejected admin request", request.requestNo);
   saveState();
+  if (targetSaveFailures) {
+    notifyFailed("Request rejected; target update incomplete", `${request.requestNo} was rejected, but ${targetSaveFailures} related record update(s) failed. Refresh and verify the target record.`);
+    return false;
+  }
+  notifySuccess("Request rejected", `${request.requestNo} was rejected successfully.`);
+  return true;
 }
 
 function manifestChangeSummary(loadItem) {
@@ -12616,6 +12857,16 @@ async function updateSettings(data) {
   return true;
 }
 
+async function postNewRecord(type, record, collectionKey, idKey, label) {
+  const saved = await postRecord(type, record);
+  if (saved) return saved;
+  if (Array.isArray(state[collectionKey])) {
+    state[collectionKey] = state[collectionKey].filter((item) => String(item?.[idKey]) !== String(record?.[idKey]));
+  }
+  notifyFailed(`${label} not saved`, state.api?.error || `The ${label.toLowerCase()} could not be saved. Check the connection and try again.`);
+  return false;
+}
+
 async function createTariff(data) {
   const tariffNo = String(data.tariffNo || nextNumber("TAR", state.tariffs, "tariffNo")).trim();
   if (duplicateRecordExists("tariff", tariffNo)) {
@@ -12624,7 +12875,7 @@ async function createTariff(data) {
   }
   const record = buildTariffRecord({ ...data, tariffNo });
   state.tariffs.unshift(record);
-  await postRecord("tariff", record);
+  if (!await postNewRecord("tariff", record, "tariffs", "tariffNo", "Tariff")) return false;
   addHistory("Created tariff", record.tariffNo);
   notifySuccess("Tariff created", record.tariffNo + " was saved successfully.");
   return true;
@@ -12656,7 +12907,7 @@ async function createLoad(data) {
   );
   recalculateLoad(record);
   state.loads.unshift(record);
-  await postRecord("load", record);
+  if (!await postNewRecord("load", record, "loads", "loadNo", "Manifest")) return false;
   addHistory("Created consolidation", loadNo);
   notifySuccess("Manifest created", loadNo + " was saved successfully.");
   return true;
@@ -12692,7 +12943,7 @@ async function createParty(key, data) {
     String(data.mobile || "").trim()
   );
   state[key].unshift(record);
-  await postRecord(key, record);
+  if (!await postNewRecord(key, record, key, "code", isCustomer ? "Customer" : "Supplier")) return false;
   addHistory("Created " + (isCustomer ? "customer" : "supplier"), code);
   notifySuccess((isCustomer ? "Customer" : "Supplier") + " created", code + " was saved successfully.");
   return true;
@@ -12719,7 +12970,7 @@ async function createDocument(data) {
   record.notes = String(data.notes || "").trim();
   record.storageUrl = String(data.storageUrl || "").trim();
   state.documents.unshift(record);
-  await postRecord("document", record);
+  if (!await postNewRecord("document", record, "documents", "documentNo", "Document")) return false;
   addHistory("Created document", documentNo);
   notifySuccess("Document saved", documentNo + " was saved successfully.");
   return true;
@@ -12770,8 +13021,22 @@ async function createCharge(data) {
     currentUserName()
   ));
   state.additionalCharges.unshift(...records);
-  await Promise.all(records.map((record) => postRecord("charge", record)));
-  addHistory("Created additional charge", baseRef);
+  const results = await Promise.all(records.map((record) => postRecord("charge", record)));
+  const savedRecords = records.filter((_, index) => Boolean(results[index]));
+  const failedRecords = records.filter((_, index) => !results[index]);
+  if (failedRecords.length) {
+    const failedRefs = new Set(failedRecords.map((record) => String(record.refNo)));
+    state.additionalCharges = state.additionalCharges.filter((record) => !failedRefs.has(String(record.refNo)));
+  }
+  if (!savedRecords.length) {
+    notifyFailed("Charge not saved", state.api?.error || "No charge lines could be saved. Check the connection and try again.");
+    return false;
+  }
+  addHistory(failedRecords.length ? "Partially created additional charge" : "Created additional charge", baseRef, failedRecords.length ? `${savedRecords.length} of ${records.length} lines saved.` : "");
+  if (failedRecords.length) {
+    notifyFailed("Charge partly saved", `${savedRecords.length} of ${records.length} charge lines were saved. Refresh and check the charge before retrying.`);
+    return false;
+  }
   notifySuccess("Additional charge created", baseRef + " was saved successfully.");
   return true;
 }
@@ -12805,7 +13070,7 @@ async function createCustomerUserAccount(data) {
     createdAt: today()
   };
   state.customerUsers.unshift(record);
-  await postRecord("customerUser", { ...record, password });
+  if (!await postNewRecord("customerUser", { ...record, password }, "customerUsers", "username", "Customer portal account")) return false;
   addHistory("Created customer portal account", username);
   notifySuccess("Account created", username + " can now log into the Customer Portal.");
   return true;
@@ -12895,7 +13160,7 @@ async function createEmployee(data) {
     notes: String(data.notes || "").trim()
   };
   state.employees.unshift(record);
-  await postRecord("employee", record);
+  if (!await postNewRecord("employee", record, "employees", "userName", "Employee")) return false;
   addHistory("Created employee profile", userName);
   notifySuccess("Employee saved", userName + " was saved successfully.");
   return true;
@@ -12926,7 +13191,7 @@ async function createLeaveRequest(data) {
     appliedAt: new Date().toISOString()
   };
   state.leaveRequests.unshift(record);
-  await postRecord("leaveRequest", record);
+  if (!await postNewRecord("leaveRequest", record, "leaveRequests", "requestNo", "Leave request")) return false;
   addHistory("Applied for leave", record.requestNo);
   notifySuccess("Leave request submitted", `${record.requestNo} was submitted for approval.`);
   return true;
@@ -12947,7 +13212,10 @@ async function decideLeaveRequest(requestNo, approved) {
     approvedAt: new Date().toISOString()
   };
   const saved = await persistRecord("leaveRequest", updated);
-  if (!saved) return;
+  if (!saved) {
+    notifyFailed("Leave decision not saved", state.api?.error || "The leave request could not be updated. Please try again.");
+    return;
+  }
   Object.assign(record, updated);
   addHistory(status === "Approved" ? "Approved leave request" : "Rejected leave request", requestNo);
   notifySuccess(`Leave ${status.toLowerCase()}`, `${requestNo} was ${status.toLowerCase()}.`);
@@ -12977,7 +13245,7 @@ async function createPayslip(data) {
     storageUrl: ""
   };
   state.payslips.unshift(record);
-  await postRecord("payslip", record);
+  if (!await postNewRecord("payslip", record, "payslips", "payslipNo", "Payslip")) return false;
   addHistory("Issued payslip", record.payslipNo);
   notifySuccess("Payslip issued", `${record.payslipNo} was issued to ${record.employeeName}.`);
   return true;
@@ -12999,7 +13267,8 @@ async function createHrAnnouncement(data) {
     postedAt: new Date().toISOString()
   };
   state.hrAnnouncements.unshift(record);
-  const saved = await postRecord("hrAnnouncement", record);
+  const saved = await postNewRecord("hrAnnouncement", record, "hrAnnouncements", "id", "Announcement");
+  if (!saved) return false;
   if (saved && typeof saved === "object" && saved.id !== undefined) {
     record.id = String(saved.id);
   }
@@ -13207,7 +13476,7 @@ async function createQuotation(data) {
     notes: data.notes || ""
   });
   state.quotations.unshift(record);
-  await postRecord("quotation", record);
+  if (!await postNewRecord("quotation", record, "quotations", "quotationNo", "Quotation")) return false;
   addHistory("Created quotation", quotationNo);
   notifySuccess("Quotation saved", quotationNo + " was saved successfully.");
   return true;
@@ -13462,12 +13731,20 @@ async function deleteSelectedRecord(type) {
     ? state.shipments.filter((shipmentItem) => shipmentItem.invoiceStatus === id)
     : [];
   const deleted = await deleteRecord(type, id);
-  if (!deleted) return;
+  if (!deleted) {
+    notifyFailed("Delete failed", state.api?.error || `${typeLabel(type)} ${id} could not be deleted. Please try again.`);
+    return;
+  }
   removeLocalRecord(type, id);
-  await Promise.all(affectedShipments.map((shipmentItem) => persistRecord("shipment", shipmentItem)));
+  const relatedSaveResults = await Promise.all(affectedShipments.map((shipmentItem) => persistRecord("shipment", shipmentItem)));
   addHistory(`Deleted ${typeLabel(type)}`, id);
   saveState();
-  notifySuccess("Record deleted", `${id} was deleted successfully.`);
+  const relatedSaveFailures = relatedSaveResults.filter((saved) => !saved).length;
+  if (relatedSaveFailures) {
+    notifyFailed("Record deleted; shipment update incomplete", `${id} was deleted, but ${relatedSaveFailures} linked shipment status update(s) did not save. Refresh and verify them.`);
+  } else {
+    notifySuccess("Record deleted", `${id} was deleted successfully.`);
+  }
   render();
 }
 
@@ -13482,7 +13759,10 @@ async function deleteRecordById(type, id) {
   }
   if (!window.confirm(`Delete ${typeLabel(type)} ${id}?`)) return;
   const deleted = await deleteRecord(type, id);
-  if (!deleted) return;
+  if (!deleted) {
+    notifyFailed("Delete failed", state.api?.error || `${typeLabel(type)} ${id} could not be deleted. Please try again.`);
+    return;
+  }
   removeLocalRecord(type, id);
   addHistory(`Deleted ${typeLabel(type)}`, id);
   saveState();
@@ -13517,11 +13797,14 @@ async function deleteSelectedAuditLogs() {
     state.audit = state.audit.filter((row) => !deletedIds.includes(String(rowId("audit", row))));
     saveState();
     const failedCount = ids.length - deletedIds.length;
-    notifySuccess(
-      "Audit logs deleted",
-      `${deletedIds.length} of ${ids.length} selected log(s) were deleted.${failedCount ? ` ${failedCount} failed - see the warning above.` : ""}${skipped ? ` ${skipped} were still saving and were skipped - refresh and try again for those.` : ""}`
+    const notifyOutcome = failedCount || skipped ? notifyFailed : notifySuccess;
+    notifyOutcome(
+      failedCount || skipped ? "Audit log deletion incomplete" : "Audit logs deleted",
+      `${deletedIds.length} of ${ids.length} selected log(s) were deleted.${failedCount ? ` ${failedCount} failed.` : ""}${skipped ? ` ${skipped} were still saving and were skipped - refresh and try again for those.` : ""}`
     );
     render();
+  } else {
+    notifyFailed("Audit logs not deleted", state.api?.error || "The selected audit logs could not be deleted. Please try again.");
   }
 }
 
@@ -13555,17 +13838,24 @@ async function deleteShipmentById(jobNo) {
   const linkedCharges = state.additionalCharges.filter((row) => row.shipmentNo === jobNo);
 
   const shipmentDeleted = await deleteRecord("shipment", jobNo);
-  if (!shipmentDeleted) return;
-  await Promise.all([
-    ...linkedDocuments.map((row) => deleteRecord("document", row.documentNo)),
-    ...linkedInvoices.map((row) => deleteRecord("invoice", row.invoiceNo)),
-    ...linkedCharges.map((row) => deleteRecord("charge", row.refNo))
+  if (!shipmentDeleted) {
+    notifyFailed("Shipment not deleted", state.api?.error || `${jobNo} could not be deleted. Please try again.`);
+    return;
+  }
+  const [documentResults, invoiceResults, chargeResults] = await Promise.all([
+    Promise.all(linkedDocuments.map((row) => deleteRecord("document", row.documentNo))),
+    Promise.all(linkedInvoices.map((row) => deleteRecord("invoice", row.invoiceNo))),
+    Promise.all(linkedCharges.map((row) => deleteRecord("charge", row.refNo)))
   ]);
+  const failedDocuments = new Set(linkedDocuments.filter((_, index) => !documentResults[index]).map((row) => String(row.documentNo)));
+  const failedInvoices = new Set(linkedInvoices.filter((_, index) => !invoiceResults[index]).map((row) => String(row.invoiceNo)));
+  const failedCharges = new Set(linkedCharges.filter((_, index) => !chargeResults[index]).map((row) => String(row.refNo)));
+  let cleanupFailures = failedDocuments.size + failedInvoices.size + failedCharges.size;
 
   state.shipments = state.shipments.filter((row) => row.jobNo !== jobNo);
-  state.documents = state.documents.filter((row) => row.linkedNo !== jobNo);
-  state.invoices = state.invoices.filter((row) => row.shipmentNo !== jobNo);
-  state.additionalCharges = state.additionalCharges.filter((row) => row.shipmentNo !== jobNo);
+  state.documents = state.documents.filter((row) => row.linkedNo !== jobNo || failedDocuments.has(String(row.documentNo)));
+  state.invoices = state.invoices.filter((row) => row.shipmentNo !== jobNo || failedInvoices.has(String(row.invoiceNo)));
+  state.additionalCharges = state.additionalCharges.filter((row) => row.shipmentNo !== jobNo || failedCharges.has(String(row.refNo)));
 
   for (const loadItem of state.loads) {
     const jobs = String(loadItem.jobNumbers || "")
@@ -13573,14 +13863,28 @@ async function deleteShipmentById(jobNo) {
       .map((item) => item.trim())
       .filter(Boolean)
       .filter((item) => item !== jobNo);
+    const previousLoad = {
+      jobNumbers: loadItem.jobNumbers,
+      pieces: loadItem.pieces,
+      actualKg: loadItem.actualKg,
+      cbm: loadItem.cbm,
+      chargeableKg: loadItem.chargeableKg
+    };
     loadItem.jobNumbers = jobs.join(", ");
     recalculateLoad(loadItem);
-    await persistRecord("load", loadItem);
+    if (!await persistRecord("load", loadItem)) {
+      Object.assign(loadItem, previousLoad);
+      cleanupFailures += 1;
+    }
   }
 
   addHistory("Deleted shipment", jobNo);
   saveState();
-  notifySuccess("Shipment deleted", `${jobNo} and linked records were deleted successfully.`);
+  if (cleanupFailures) {
+    notifyFailed("Shipment deleted; cleanup incomplete", `${jobNo} was deleted, but ${cleanupFailures} linked record or consolidation update(s) failed. Refresh and reconcile before retrying.`);
+  } else {
+    notifySuccess("Shipment deleted", `${jobNo} and linked records were deleted successfully.`);
+  }
   render();
 }
 
@@ -13591,8 +13895,18 @@ async function removeJobFromLoad(loadNo, jobNo) {
   }
 
   const loadItem = state.loads.find((row) => row.loadNo === loadNo);
-  if (!loadItem) return;
+  if (!loadItem) {
+    notifyFailed("Shipment not removed", `Consolidation ${loadNo} could not be found. Refresh and try again.`);
+    return;
+  }
 
+  const previousLoad = {
+    jobNumbers: loadItem.jobNumbers,
+    pieces: loadItem.pieces,
+    actualKg: loadItem.actualKg,
+    cbm: loadItem.cbm,
+    chargeableKg: loadItem.chargeableKg
+  };
   loadItem.jobNumbers = String(loadItem.jobNumbers || "")
     .split(",")
     .map((item) => item.trim())
@@ -13601,7 +13915,11 @@ async function removeJobFromLoad(loadNo, jobNo) {
     .join(", ");
 
   recalculateLoad(loadItem);
-  await persistRecord("load", loadItem);
+  if (!await persistRecord("load", loadItem)) {
+    Object.assign(loadItem, previousLoad);
+    notifyFailed("Shipment not removed", state.api?.error || `${jobNo} could not be removed from ${loadNo}.`);
+    return;
+  }
   addHistory("Removed shipment from consolidation", `${loadNo} - ${jobNo}`);
   saveState();
   notifySuccess("Shipment removed", `${jobNo} was removed from ${loadNo}.`);
@@ -13973,6 +14291,11 @@ async function updateEmployeeProfile(data) {
     notifyDenied("Profile not saved", "Enter your full name first.");
     return false;
   }
+  const changeSummary = existing ? summarizeChanges(existing, record) : "";
+  if (existing && !changeSummary) {
+    notifySuccess("No changes", "No employee profile fields changed.");
+    return true;
+  }
   const saved = existing ? await persistRecord("employee", record) : await postRecord("employee", record);
   if (!saved) {
     notifyDenied("Profile not saved", "Could not save your profile. Please try again.");
@@ -13980,8 +14303,8 @@ async function updateEmployeeProfile(data) {
   }
   if (existing) Object.assign(existing, record);
   else state.employees.unshift(record);
-  addHistory("Updated employee profile", userName);
-  notifySuccess("Profile saved", "Your employee profile was updated.");
+  addHistory(existing ? "Updated employee profile" : "Created employee profile", userName, changeSummary);
+  notifySuccess("Profile saved", existing ? "Your employee profile was updated." : "Your employee profile was created.");
   return true;
 }
 
@@ -14003,6 +14326,7 @@ async function updateStatus(data) {
     return false;
   }
   const oldStatus = shipmentItem.status;
+  const previousShipment = { ...shipmentItem };
   const airwayBillNo = String(shipmentItem.airwayBillNo || "").trim();
   const normalizedAwb = airwayBillNo.toLowerCase();
   const awbGroup = normalizedAwb
@@ -14026,7 +14350,11 @@ async function updateStatus(data) {
     shipmentItem.status = newStatus;
     shipmentItem.notes = shipmentMetaNotes(shipmentItem);
     const saved = await persistRecord("shipment", shipmentItem);
-    if (!saved) return false;
+    if (!saved) {
+      Object.assign(shipmentItem, previousShipment);
+      notifyFailed("Status not saved", state.api?.error || `${jobNo} could not be updated. Please try again.`);
+      return false;
+    }
   } else {
     try {
       const result = await fetchJson("/api/shipments/status-by-awb", {
@@ -14047,11 +14375,13 @@ async function updateStatus(data) {
         });
       }
     } catch (error) {
+      Object.assign(shipmentItem, previousShipment);
       notifyDenied("Status not saved", error.message || "The Airway Bill status could not be updated.");
       return false;
     }
   }
   const updatedGroup = airwayBillNo ? awbGroup : [shipmentItem];
+  let historySaveFailures = 0;
   for (const row of updatedGroup) {
     const historyEntry = {
       jobNo: row.jobNo,
@@ -14063,11 +14393,18 @@ async function updateStatus(data) {
       updatedAt: entryDate
     };
     state.shipmentStatusHistory.unshift(historyEntry);
-    if (!airwayBillNo) await postRecord("statusHistory", historyEntry);
+    if (!airwayBillNo && !await postRecord("statusHistory", historyEntry)) {
+      state.shipmentStatusHistory = state.shipmentStatusHistory.filter((item) => item !== historyEntry);
+      historySaveFailures += 1;
+    }
   }
   const statusDetails = `status: ${oldStatus} -> ${newStatus}`;
   addHistory("Updated shipment status", `${airwayBillNo ? `AWB ${airwayBillNo}` : jobNo} -> ${newStatus}`, statusDetails);
-  notifySuccess("Status updated", airwayBillNo ? `AWB ${airwayBillNo} and ${updatedGroup.length} related shipment(s) are now ${newStatus}.` : `${jobNo} is now ${newStatus}.`);
+  if (historySaveFailures) {
+    notifyFailed("Status updated; history incomplete", `${jobNo} is now ${newStatus}, but ${historySaveFailures} shipment history entry/entries did not save. Refresh and verify the journey history.`);
+  } else {
+    notifySuccess("Status updated", airwayBillNo ? `AWB ${airwayBillNo} and ${updatedGroup.length} related shipment(s) are now ${newStatus}.` : `${jobNo} is now ${newStatus}.`);
+  }
   if (airwayBillNo) {
     state.ui.expandedStatusAwb = airwayBillNo;
     state.ui.expandedStatusJob = "";
@@ -14113,15 +14450,18 @@ async function updateLoadStatus(data) {
 
   const jobs = String(loadItem.jobNumbers || "").split(",").map((jobNo) => jobNo.trim()).filter(Boolean);
   let updatedShipments = 0;
+  let failedShipmentUpdates = 0;
+  let failedHistoryWrites = 0;
   for (const jobNo of jobs) {
     const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
     if (!shipmentItem || String(shipmentItem.status || "").trim().toLowerCase() === newStatus.toLowerCase()) continue;
-    const shipmentOldStatus = shipmentItem.status;
+    const previousShipment = { ...shipmentItem };
     shipmentItem.status = newStatus;
     shipmentItem.notes = shipmentMetaNotes(shipmentItem);
     const savedShipment = await persistRecord("shipment", shipmentItem);
     if (!savedShipment) {
-      shipmentItem.status = shipmentOldStatus;
+      Object.assign(shipmentItem, previousShipment);
+      failedShipmentUpdates += 1;
       continue;
     }
     updatedShipments += 1;
@@ -14136,19 +14476,26 @@ async function updateLoadStatus(data) {
       updatedAt: entryDate
     };
     state.shipmentStatusHistory.unshift(historyEntry);
-    await postRecord("statusHistory", historyEntry);
+    if (!await postRecord("statusHistory", historyEntry)) {
+      state.shipmentStatusHistory = state.shipmentStatusHistory.filter((item) => item !== historyEntry);
+      failedHistoryWrites += 1;
+    }
   }
 
   const statusDetails = `status: ${oldStatus} -> ${newStatus}`;
   addHistory("Updated manifest status", `${loadNo} -> ${newStatus}`, statusDetails);
-  notifySuccess("Manifest status updated", `${loadNo} is now ${newStatus}${updatedShipments ? ` - ${updatedShipments} linked shipment(s) updated too.` : "."}`);
+  if (failedShipmentUpdates || failedHistoryWrites) {
+    notifyFailed("Manifest updated; some changes incomplete", `${loadNo} is now ${newStatus}. ${updatedShipments} linked shipment(s) updated; ${failedShipmentUpdates} shipment update(s) and ${failedHistoryWrites} journey history entry/entries failed to save.`);
+  } else {
+    notifySuccess("Manifest status updated", `${loadNo} is now ${newStatus}${updatedShipments ? ` - ${updatedShipments} linked shipment(s) updated too.` : "."}`);
+  }
   return true;
 }
 
 async function sendShipmentStatusEmail(jobNo) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
-    window.alert("Select a shipment first.");
+    notifyDenied("Select a shipment", "Choose a shipment before sending its status email.");
     return;
   }
   try {

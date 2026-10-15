@@ -1,7 +1,7 @@
-import "./app-runtime.js";
+import "./app-runtime.js?v=apollo-notify-audit-20261015-2";
 import "./hr-workflow-links.js";
 
-import("./hr-portal.js").catch((error) => {
+import("./hr-portal.js?v=apollo-notify-audit-20261015-2").catch((error) => {
   console.warn("HR Leave Portal is unavailable.", error);
 });
 
@@ -24,6 +24,6 @@ import("./apollo-ai.js").catch((error) => {
 import("./connected-chat.js").catch((error) => {
   console.warn("Connected Chat is unavailable.", error);
 });
-import("./customer-compliance.js").catch((error) => {
+import("./customer-compliance.js?v=apollo-notify-audit-20261015-2").catch((error) => {
   console.warn("Customer Compliance is unavailable.", error);
 });

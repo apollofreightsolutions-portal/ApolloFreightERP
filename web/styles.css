@@ -656,10 +656,10 @@ label {
 
 .toast-stack {
   position: fixed;
-  top: 50%;
+  top: 18px;
   left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 100;
+  transform: translateX(-50%);
+  z-index: 20000;
   display: grid;
   gap: 10px;
   width: min(360px, calc(100vw - 32px));
