@@ -8,6 +8,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 COPY server/src ./src
 COPY server/sql ./sql
 COPY server/data ./data
+COPY server/assets ./assets
 COPY web ./web
 
 ENV NODE_ENV=production

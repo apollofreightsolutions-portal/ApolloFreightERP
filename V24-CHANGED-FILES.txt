@@ -1,0 +1,17 @@
+V24 IT handoff. Read V24-IT-SETUP.md before deployment.
+
+Dockerfile
+V24-CHANGED-FILES.txt
+V24-IT-SETUP.md
+V24-VALIDATION.md
+server/assets/email/apollo-brand.png
+server/assets/email/customer-portal.png
+server/assets/email/track-shipment.png
+server/sql/048_hr_branch_override.sql
+server/src/email-templates.js
+server/src/hr-approval-workflow.js
+server/src/index.js
+server/src/microsoft-graph-mail.js
+server/src/migrate-hr-approvals.js
+web/app-runtime.js
+web/hr-approvals.js

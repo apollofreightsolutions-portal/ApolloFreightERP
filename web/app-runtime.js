@@ -3189,7 +3189,7 @@ function apiCustomerUser(row) {
 }
 
 function apiUser(row) {
-  return user(
+  const result = user(
     row.user_name,
     row.email,
     row.role,
@@ -3221,6 +3221,9 @@ function apiUser(row) {
     isChecked(row.ai_access),
     row.mfa_policy || "disabled"
   );
+  const p=row.leave_permissions||{};
+  result.leavePermissions={canApprove:p.can_approve_leave===true,finalApprover:p.final_approver===true,managementOverride:p.management_override===true,supervisorUser:p.supervisor_user||''};
+  return result;
 }
 
 function apiUnblockRequest(row) {
@@ -7318,10 +7321,12 @@ function openRecord(type, id, presetRecord) {
       typeLabel: "User",
       saveLabel: "Save Changes",
       body: userDialogBody(record),
+      afterOpen: bindLeavePermissions,
       onSave: async () => {
         const data = collectFormValues(dialogBody.closest("form"));
         const updatedRecord = {
           ...record,
+          leavePermissions: leavePermissionValues(data),
           email: data.email || record.email || "",
           role: data.role || record.role || "Operations",
           accountStatus: data.accountStatus || record.accountStatus || "Active",
@@ -8586,7 +8591,8 @@ function dialogConfigFor(type, mode = "") {
       typeLabel: "User",
       saveLabel: "Create User",
       body: userDialogBody(),
-      onSave: createUser
+      onSave: createUser,
+      afterOpen: bindLeavePermissions
     },
     customerUser: {
       title: "New Customer Portal Account",
@@ -8985,12 +8991,34 @@ function hrAnnouncementDialogBody(record) {
   `;
 }
 
+function leavePermissionValues(data) {
+  return {canApprove:isChecked(data.leaveCanApprove),finalApprover:isChecked(data.leaveFinalApprover),managementOverride:isChecked(data.leaveManagementOverride),supervisorUser:String(data.leaveSupervisor||'')};
+}
+function bindLeavePermissions() {
+  const form=dialogBody.closest('form'), branch=form.elements.branchAccess, select=form.elements.leaveSupervisor;
+  if(!select)return;
+  const norm=v=>String(v||'').trim().toLowerCase();
+  function refresh(){
+    const chosen=select.value||select.dataset.selected||'',b=norm(branch.value),self=norm(form.elements.userName.value);
+    const eligible=state.users.filter(u=>u.leavePermissions?.canApprove&&u.hrPortalAccess&&norm(u.accountStatus)==='active'&&norm(u.userName)!==self&&norm(u.branchAccess)===b&&!['all','both','all branches',''].includes(b)&&!/[;,|]/.test(b));
+    select.innerHTML='<option value="">None — directly to management</option>'+eligible.map(u=>`<option value="${escapeHtml(u.userName)}">${escapeHtml(u.userName)}</option>`).join('');
+    if(chosen&&!eligible.some(u=>u.userName===chosen))select.add(new Option(chosen+' — unavailable in selected branch; choose replacement',chosen));
+    select.value=chosen;select.dataset.selected='';
+  }
+  branch.addEventListener('change',refresh);form.elements.userName.addEventListener('input',refresh);refresh();
+}
 function userDialogBody(record) {
   const fieldValue = (key, fallback = "") => record?.[key] ?? fallback;
   const loaded = Boolean(record);
   const checkedSections = sectionAccessSet(fieldValue("sectionAccess", "Dashboard, Shipment / Airway, Reports"));
   return `
-    <fieldset><legend>Leave approval permissions</legend><p><a href="/hr-approvals.html?settings=1&user=${encodeURIComponent(fieldValue('userName'))}">Configure Leave Approver, Management Final Approver and assigned supervisor</a></p><small>Save a new user first. Leave permissions do not require HR Admin access.</small></fieldset>
+    <fieldset data-leave-permissions><legend>Leave approval permissions</legend>
+      ${checkbox('leaveCanApprove','Leave Approver — own branch, assigned employees only',record?.leavePermissions?.canApprove===true)}
+      ${checkbox('leaveFinalApprover','Management Final Approver — all branches',record?.leavePermissions?.finalApprover===true)}
+      ${checkbox('leaveManagementOverride','Management Override — approve before supervisor or overturn denial (comment required)',record?.leavePermissions?.managementOverride===true)}
+      <label>Assigned supervisor<select name="leaveSupervisor" data-selected="${escapeHtml(record?.leavePermissions?.supervisorUser||'')}"><option value="">None — directly to management</option></select></label>
+      <small>Uses Branch Access below. Supervisors must have one specific branch and HR Portal access. Management permissions cover all branches. All changes save together.</small>
+    </fieldset>
     ${input("userName", "User Name", fieldValue("userName"), loaded)}
     ${passwordField("password", loaded ? "Reset Password (leave blank to keep current)" : "Password", "")}
     ${input("email", "Email", fieldValue("email"), false, "email")}
@@ -12830,8 +12858,10 @@ async function createUser(data) {
     isChecked(data.aiAccess),
     data.mfaPolicy || "disabled"
   );
+  record.leavePermissions=leavePermissionValues(data);
+  const saved=await postRecord("user", record);
+  if(!saved){notifyDenied('User not created',state.api?.error||'The user and permissions could not be saved.');return false;}
   state.users.unshift(record);
-  await postRecord("user", record);
   addHistory("Created user", userName);
   notifySuccess("User created", userName + " was saved successfully.");
   return true;

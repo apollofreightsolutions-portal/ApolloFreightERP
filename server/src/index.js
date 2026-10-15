@@ -19,6 +19,7 @@ const { createCrmRouter } = require("./crm");
 const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
 const { graphMailStatus, sendMicrosoftGraphMail } = require("./microsoft-graph-mail");
+const { shipmentUpdateEmailHtml: brandedShipmentEmail, emailAttachments } = require('./email-templates');
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
 const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const {
@@ -1718,7 +1719,8 @@ async function sanitizeConsolidationJobNumbers(rawJobNumbers, excludeLoadNo = ""
   return requested.filter((jobNo) => !deliveredJobs.has(jobNo) && !assignedJobs.has(jobNo)).join(", ");
 }
 
-async function insertRow(config, body) {
+async function insertRow(config, body, dbQuery = query) {
+  const query = dbQuery;
   body = await prepareRecordForConfig(config, body);
   let insertConfig = config;
   let { columns, values } = collectValues(insertConfig, body);
@@ -1738,6 +1740,7 @@ async function insertRow(config, body) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const placeholders = values.map((_, index) => `$${index + 1}`);
+    if (config.table === 'app_users') await query('savepoint user_write');
     try {
       const result = await query(
         `insert into ${insertConfig.table} (${columns.join(", ")})
@@ -1748,6 +1751,7 @@ async function insertRow(config, body) {
       return result.rows[0];
     } catch (error) {
       if (config.table === "app_users" && error?.code === "42703" && insertConfig === config) {
+        await query('rollback to savepoint user_write');
         const requestedMfaPolicy = Object.prototype.hasOwnProperty.call(body, "mfa_policy")
           ? normalizeMfaPolicy(body.mfa_policy)
           : "disabled";
@@ -1801,7 +1805,8 @@ async function insertRow(config, body) {
 }
 
 
-async function updateRow(config, id, body) {
+async function updateRow(config, id, body, dbQuery = query) {
+  const query = dbQuery;
   if (!config.key) {
     const error = new Error("This resource does not support direct updates.");
     error.status = 400;
@@ -1819,6 +1824,7 @@ async function updateRow(config, id, body) {
   }
 
   let result;
+  if (config.table === 'app_users') await query('savepoint user_write');
   try {
     const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
     const updateValues = [...values, id];
@@ -1834,6 +1840,7 @@ async function updateRow(config, id, body) {
     // applied, allow existing user permissions/settings to be saved without
     // the new MFA column. Never pretend an Optional/Required MFA change saved.
     if (config.table !== "app_users" || error?.code !== "42703") throw error;
+    await query('rollback to savepoint user_write');
 
     const requestedMfaPolicy = Object.prototype.hasOwnProperty.call(body, "mfa_policy")
       ? normalizeMfaPolicy(body.mfa_policy)
@@ -1909,7 +1916,8 @@ async function updateRow(config, id, body) {
   return result.rows[0];
 }
 
-async function deleteRow(config, id) {
+async function deleteRow(config, id, dbQuery = query) {
+  const query = dbQuery;
   if (!config.key) {
     const error = new Error("This resource does not support direct deletion.");
     error.status = 400;
@@ -4310,45 +4318,6 @@ function userCanAccessShipmentBranch(user, shipmentBranch) {
   return normalizedBranchTokens(branchAccess).some((item) => item === target || item.includes(target) || target.includes(item));
 }
 
-function shipmentUpdateEmailHtml({ shipment, latestHistory }) {
-  const status = String(shipment.status || "Updated").trim();
-  const updatedAt = latestHistory?.updated_at || shipment.updated_at || new Date().toISOString();
-  const updatedDate = new Date(updatedAt);
-  const updatedText = Number.isNaN(updatedDate.getTime())
-    ? String(updatedAt || "")
-    : updatedDate.toLocaleString("en-GB", { timeZone: "Asia/Dubai" });
-  const trackingReference = String(shipment.airway_bill_no || "").trim();
-  const note = String(latestHistory?.notes || "").trim();
-  return `<!doctype html>
-  <html><body style="margin:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#172033;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6f8;padding:24px 12px;"><tr><td align="center">
-      <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-        <tr><td style="background:#101827;color:#ffffff;padding:22px 26px;">
-          <div style="font-size:19px;font-weight:700;letter-spacing:.2px;">Apollo Connected</div>
-          <div style="font-size:12px;color:#cbd5e1;margin-top:4px;">Shipment status update</div>
-        </td></tr>
-        <tr><td style="padding:26px;">
-          <p style="margin:0 0 18px;">Dear ${mailHtmlEscape(shipment.customer_name || "Customer")},</p>
-          <p style="margin:0 0 20px;">Your shipment status has been updated.</p>
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="7" style="border-collapse:collapse;font-size:14px;">
-            <tr><td style="font-weight:700;width:175px;border-bottom:1px solid #eef0f2;">Shipment No.</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.job_no)}</td></tr>
-            ${trackingReference ? `<tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Tracking / AWB</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(trackingReference)}</td></tr>` : ""}
-            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Origin</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.origin)}</td></tr>
-            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Destination</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.destination)}</td></tr>
-            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">Current Status</td><td style="border-bottom:1px solid #eef0f2;font-weight:700;">${mailHtmlEscape(status)}</td></tr>
-            <tr><td style="font-weight:700;border-bottom:1px solid #eef0f2;">POD Status</td><td style="border-bottom:1px solid #eef0f2;">${mailHtmlEscape(shipment.pod_status || "")}</td></tr>
-            <tr><td style="font-weight:700;">Updated</td><td>${mailHtmlEscape(updatedText)}</td></tr>
-          </table>
-          ${note ? `<div style="margin-top:20px;padding:14px 16px;background:#f8fafc;border-left:3px solid #f59e0b;font-size:13px;"><strong>Update note:</strong><br>${mailHtmlEscape(note)}</div>` : ""}
-          <p style="margin:24px 0 0;">Regards,<br><strong>Apollo Freight Solutions</strong></p>
-        </td></tr>
-        <tr><td style="padding:16px 26px;background:#f8fafc;color:#6b7280;font-size:11px;line-height:1.5;">
-          This message was sent automatically by Apollo Connected. This mailbox is not monitored. Please contact your Apollo representative if you need assistance.
-        </td></tr>
-      </table>
-    </td></tr></table>
-  </body></html>`;
-}
 
 app.get("/api/mail/status", requireErpPortalAuth, (request, response) => {
   return response.json({ ok: true, mail: graphMailStatus() });
@@ -4410,7 +4379,8 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
     const mail = await sendMicrosoftGraphMail({
       to: recipient,
       subject: `Apollo Connected | Shipment Update | ${shipment.job_no} | ${shipment.status}`,
-      html: shipmentUpdateEmailHtml({ shipment, latestHistory })
+      html: brandedShipmentEmail({ shipment, latestHistory }),
+      attachments: emailAttachments()
     });
 
     try {
@@ -4543,6 +4513,11 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
 
   try {
     const result = await getRows(resourceName, config);
+    if(resourceName==='users') {
+      const settings=(await query('select * from hr_leave_user_settings')).rows;
+      const byUser=new Map(settings.map(s=>[s.user_name.toLowerCase(),s]));
+      result.rows=result.rows.map(u=>({...u,leave_permissions:byUser.get(u.user_name.toLowerCase())||{}}));
+    }
     if (request.appSession?.employeePortal && !isHrAdminSession(request.appSession) && (resourceName === "leave-requests" || resourceName === "payslips" || resourceName === "employees")) {
       const userName = String(request.appSession.userName || "").trim().toLowerCase();
       result.rows = result.rows.filter((row) => String(row.user_name || "").trim().toLowerCase() === userName);
@@ -4552,7 +4527,7 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
     }
     response.json(result);
   } catch (error) {
-    if (isDatabaseSetupError(error)) {
+    if (resourceName !== 'users' && isDatabaseSetupError(error)) {
       return response.json(demoResponse(resourceName));
     }
 
@@ -4582,13 +4557,15 @@ app.post("/api/:resource", requireErpOrHrResourceAuth, async (request, response,
       if (request.body.job_numbers !== undefined) request.body.job_numbers = sanitized;
     }
 
-    const row = await insertRow(config, request.body || {});
+    const row = resourceName==='users'
+      ? await hrWorkflow.saveUser(request,q=>insertRow(config,request.body||{},q))
+      : await insertRow(config, request.body || {});
     response.status(201).json({
       ok: true,
       row
     });
   } catch (error) {
-    if (isDatabaseSetupError(error)) {
+    if (resourceName !== 'users' && isDatabaseSetupError(error)) {
       return response.status(201).json({
         ok: true,
         mode: "demo",
@@ -4734,13 +4711,15 @@ app.put("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, respon
       if (request.body.job_numbers !== undefined) request.body.job_numbers = sanitized;
     }
 
-    const row = await updateRow(config, recordId, request.body || {});
+    const row = resourceName==='users'
+      ? await hrWorkflow.saveUser(request,q=>updateRow(config,recordId,request.body||{},q))
+      : await updateRow(config, recordId, request.body || {});
     response.json({
       ok: true,
       row
     });
   } catch (error) {
-    if (isDatabaseSetupError(error)) {
+    if (resourceName !== 'users' && isDatabaseSetupError(error)) {
       return response.json({
         ok: true,
         mode: "demo",
@@ -4790,13 +4769,15 @@ app.delete("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, res
   }
 
   try {
-    const row = await deleteRow(config, decodeURIComponent(request.params.id));
+    const row = resourceName==='users'
+      ? await hrWorkflow.deleteUser(request,q=>deleteRow(config,decodeURIComponent(request.params.id),q))
+      : await deleteRow(config, decodeURIComponent(request.params.id));
     response.json({
       ok: true,
       row
     });
   } catch (error) {
-    if (isDatabaseSetupError(error)) {
+    if (resourceName !== 'users' && isDatabaseSetupError(error)) {
       return response.json({
         ok: true,
         mode: "demo",
@@ -4809,6 +4790,10 @@ app.delete("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, res
 });
 
 app.use((error, _request, response, _next) => {
+  if(/^\/api\/users(?:\/|$)/.test(_request.path)&&['42P01','42703'].includes(error.code)) {
+    error.status=503;
+    error.message='User permissions require the V24 database update. IT must run node server/src/migrate-hr-approvals.js from the V24 project root against the live database. No changes were saved.';
+  }
   const payload = {
     ok: false,
     error: error.message || "Unexpected server error."

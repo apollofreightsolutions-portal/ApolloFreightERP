@@ -155,7 +155,7 @@ function validateMessage({ to, subject, html, text }) {
   return { recipients, cleanSubject, content };
 }
 
-async function sendGraphMail({ recipients, cleanSubject, content, html, config }) {
+async function sendGraphMail({ recipients, cleanSubject, content, html, config, attachments }) {
   const token = await graphAccessToken(config);
   const endpoint = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(config.from)}/sendMail`;
   const response = await fetchWithTimeout(endpoint, {
@@ -171,7 +171,8 @@ async function sendGraphMail({ recipients, cleanSubject, content, html, config }
           contentType: html ? "HTML" : "Text",
           content
         },
-        toRecipients: recipients.map((address) => ({ emailAddress: { address } }))
+        toRecipients: recipients.map((address) => ({ emailAddress: { address } })),
+        ...(attachments.length?{attachments:attachments.map(a=>({'@odata.type':'#microsoft.graph.fileAttachment',...a}))}:{})
       },
       saveToSentItems: true
     })
@@ -186,7 +187,7 @@ async function sendGraphMail({ recipients, cleanSubject, content, html, config }
   }
 }
 
-async function sendSmtpMail({ recipients, cleanSubject, content, html, config }) {
+async function sendSmtpMail({ recipients, cleanSubject, content, html, config, attachments }) {
   assertSmtpMailConfig(config);
   const transporter = nodemailer.createTransport({
     host: config.smtpHost,
@@ -205,6 +206,7 @@ async function sendSmtpMail({ recipients, cleanSubject, content, html, config })
       from: config.from,
       to: recipients,
       subject: cleanSubject,
+      attachments: attachments.map(a=>({filename:a.name,content:Buffer.from(a.contentBytes,'base64'),contentType:a.contentType,cid:a.contentId,contentDisposition:a.isInline?'inline':'attachment'})),
       ...(html ? { html } : { text: content })
     });
   } catch (error) {
@@ -216,13 +218,13 @@ async function sendSmtpMail({ recipients, cleanSubject, content, html, config })
   }
 }
 
-async function sendMicrosoftGraphMail({ to, subject, html, text = "" }) {
+async function sendMicrosoftGraphMail({ to, subject, html, text = "", attachments = [] }) {
   const config = mailConfig();
   const message = validateMessage({ to, subject, html, text });
   if (config.provider === "smtp") {
-    await sendSmtpMail({ ...message, html, config });
+    await sendSmtpMail({ ...message, html, config, attachments });
   } else {
-    await sendGraphMail({ ...message, html, config });
+    await sendGraphMail({ ...message, html, config, attachments });
   }
   return { accepted: true, from: config.from, to: message.recipients };
 }

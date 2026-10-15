@@ -1,4 +1,4 @@
-// V23 isolated additive migration. Do not replay historical data imports for this update.
+// V24 isolated additive migration. Do not replay historical data imports for this update.
 const fs = require('fs');
 const path = require('path');
 const {getPool,closePool} = require('./db');
@@ -12,7 +12,8 @@ async function main() {
     locked=(await c.query("select pg_try_advisory_lock(hashtext('apollo_freight_schema_migration')) as locked")).rows[0].locked;
     if(!locked)throw new Error('Another migration is running. Retry later.');
     await c.query(fs.readFileSync(path.join(__dirname,'../sql/047_hr_approval_workflow.sql'),'utf8'));
-    console.log('047_hr_approval_workflow.sql applied. Existing requests preserved.');
+    await c.query(fs.readFileSync(path.join(__dirname,'../sql/048_hr_branch_override.sql'),'utf8'));
+    console.log('047 and 048 applied. Existing requests preserved; no override privileges granted automatically.');
   }catch(e){await c.query('rollback').catch(()=>{});throw e;}
   finally{if(locked)await c.query("select pg_advisory_unlock(hashtext('apollo_freight_schema_migration'))");c.release();}
 }
