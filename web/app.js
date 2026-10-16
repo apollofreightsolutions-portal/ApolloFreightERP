@@ -1,7 +1,7 @@
-import "./app-runtime.js?v=apollo-notify-audit-20261015-2";
-import "./hr-workflow-links.js";
+import "./app-runtime.js?v=apollo-v241-notify-20261016-1";
+import "./hr-workflow-links.js?v=apollo-v241-notify-20261016-1";
 
-import("./hr-portal.js?v=apollo-notify-audit-20261015-2").catch((error) => {
+import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {
   console.warn("HR Leave Portal is unavailable.", error);
 });
 

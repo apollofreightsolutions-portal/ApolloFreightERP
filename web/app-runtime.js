@@ -9121,7 +9121,7 @@ function userDialogBody(record) {
       ${checkbox('leaveFinalApprover','Management Final Approver — all branches',record?.leavePermissions?.finalApprover===true)}
       ${checkbox('leaveManagementOverride','Management Override — approve before supervisor or overturn denial (comment required)',record?.leavePermissions?.managementOverride===true)}
       <label>Assigned supervisor<select name="leaveSupervisor" data-selected="${escapeHtml(record?.leavePermissions?.supervisorUser||'')}"><option value="">None — directly to management</option></select></label>
-      <small>Uses Branch Access below. Supervisors must have one specific branch and HR Portal access. Management permissions cover all branches. All changes save together.</small>
+      <small>First save the supervisor with an Active account, HR Portal access, Leave Approver permission and one specific Branch Access. Then select that supervisor here on the employee’s user record in the same branch. User details and supervisor assignment save together—no second window. New assignments apply to new/resubmitted leave requests; use Forward to reassign an existing pending request. Management permissions cover all branches.</small>
     </fieldset>
     ${input("userName", "User Name", fieldValue("userName"), loaded)}
     ${passwordField("password", loaded ? "Reset Password (leave blank to keep current)" : "Password", "")}

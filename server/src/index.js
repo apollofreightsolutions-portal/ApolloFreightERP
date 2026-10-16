@@ -2019,6 +2019,10 @@ app.use(morgan("dev"));
 app.use(express.json({ limit: "15mb" }));
 
 if (fs.existsSync(webIndex)) {
+  app.use((req,res,next)=>{
+    if(/^\/hr-(?:approvals(?:\.html|\.css|\.js)?|workflow-links\.js)$/.test(req.path))res.set('Cache-Control','no-store, max-age=0');
+    next();
+  });
   app.use(express.static(webDir));
 }
 
@@ -3737,12 +3741,13 @@ app.post("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAu
   } catch(error){ return next(error); }
 });
 
-app.get("/api/hr/leave-requests/:requestNo/attachment", requireEmployeePortalAuth, async (request,response,next)=>{
+app.get("/api/hr/leave-requests/:requestNo/attachment", requireAppAuth, async (request,response,next)=>{
   try{
+    if(request.appSession.crmPortal)return response.status(403).json({ok:false,error:"Use your ERP or Employee/HR login, not CRM."});
     const requestNo=String(request.params.requestNo||"").trim();
     const existing=(await query("select * from leave_requests where request_no=$1 limit 1",[requestNo])).rows[0];
     if(!existing?.attachment_url) return response.status(404).json({ok:false,error:"No supporting document is attached."});
-    const admin=isHrAdminSession(request.appSession);
+    const admin=request.appSession.employeePortal && isHrAdminSession(request.appSession);
     if(!admin && !await hrWorkflow.canRead(request.appSession,existing)) return response.status(403).json({ok:false,error:"This leave document is not assigned to you."});
     let metadata={}; try{metadata=JSON.parse(existing.attachment_url||"{}");}catch{}
     if (metadata.storageProvider === "gcs" && metadata.objectName) {

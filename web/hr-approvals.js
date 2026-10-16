@@ -2,14 +2,15 @@ const base=String(window.APOLLO_API_URL||location.origin).replace(/\/$/,'');
 const params=new URLSearchParams(location.search), content=document.getElementById('content'), message=document.getElementById('message');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=v=>String(v||'').slice(0,10), key=v=>String(v||'').toLowerCase();
+let viewer;
 let session;try{session=JSON.parse(sessionStorage.getItem('apollofreighterp-session')||'null');}catch{}
 async function api(path,options={}) {
  const r=await fetch(base+path,{...options,headers:{'Content-Type':'application/json',Authorization:`Bearer ${session?.token||''}`,...options.headers}});
- const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data;
+ const data=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(data.error||`Request failed (${r.status})`);e.status=r.status;throw e;}return data;
 }
 function login() {
- content.innerHTML='<article class="card"><h2>Sign in to review</h2><p>Use your own Employee/HR Portal account. An email button does not grant approval authority.</p><button id="login">Open Connected login</button></article>';
- document.getElementById('login').onclick=()=>{sessionStorage.setItem('apollo-hr-return',location.pathname+location.search);location.href='/';};
+ content.innerHTML='<article class="card"><h2>Sign in to review</h2><p>Use your own Connected ERP or Employee/HR account. An email button does not grant approval authority.</p><button id="login">Open Connected login</button></article>';
+ document.getElementById('login').onclick=()=>{sessionStorage.removeItem('apollofreighterp-session');sessionStorage.setItem('apollo-hr-return',location.pathname+location.search);location.href='/';};
 }
 function notify(status,title,detail=''){const host=document.getElementById('toastStack');if(!host)return;const toast=document.createElement('div');toast.className=`toast toast-${status}`;toast.innerHTML=`<strong>${esc(title)}</strong>${detail?`<span>${esc(detail)}</span>`:''}`;host.appendChild(toast);setTimeout(()=>toast.remove(),5000);}
 function notifySuccess(title,detail=''){notify('success',title,detail);}
@@ -24,12 +25,12 @@ async function request(){
  const r=data.row,p=data.permissions,own=key(r.user_name)===key(session.userName),back=own&&r.status==='Sent Back';
  document.getElementById('title').textContent=`Leave request ${r.request_no}`;
  content.innerHTML=`<article class="card"><span class="badge">${esc(r.status)} · ${esc(r.approval_stage)}</span><h2>${esc(r.employee_name||r.user_name)}</h2><div class="grid"><div><div class="label">Leave type</div><div class="value">${esc(r.leave_type)}</div><div class="label">Dates</div><div class="value">${esc(date(r.start_date))} → ${esc(date(r.end_date))}</div></div><div><div class="label">Leave days</div><div class="value">${esc(r.actual_leave_days??r.total_days)}</div><div class="label">Assigned supervisor</div><div class="value">${esc(r.supervisor_user||'None — direct to management')}</div></div></div><div class="label">Employee reason</div><p>${esc(r.reason)}</p>${r.hasAttachment?'<button class="secondary" id="attachment">View supporting document</button>':''}
- ${p.act||p.override?`<form id="decision"><h3>Your decision</h3><p class="note">${r.approval_stage==='Supervisor'?'The assigned supervisor recommends approval first. An authorised management override can bypass this step with a recorded explanation.':'Management final approval is required. Only this final approval deducts leave.'}</p><label>Action<select name="decision">${p.act?`<option value="approve">${r.approval_stage==='Supervisor'?'Recommend approval':'Final approval'}</option><option value="reject">Deny</option><option value="sendback">Return with comments</option><option value="forward">Forward / reassign supervisor</option>`:''}${p.override?'<option value="override">Management override — approve now</option>':''}</select></label><label id="targetLabel" hidden>Forward to<select name="targetUser"><option value="">Choose an authorised leave approver</option>${data.targets.map(t=>`<option value="${esc(t.user_name)}">${esc(t.user_name)} · ${esc(t.email)}</option>`).join('')}</select></label><label>Comments<textarea name="reason" maxlength="4000" placeholder="Required for deny, return, forward or management override; optional for ordinary approval."></textarea></label><button type="submit">Confirm decision</button></form>`:'<p class="muted">No decision is available to your account at this stage.</p>'}
+ ${p.act||p.override?`<form id="decision"><h3>Your decision</h3><p class="note">${r.approval_stage==='Supervisor'?'The assigned supervisor recommends approval first. An authorised management override can bypass this step with a recorded explanation.':'Management final approval is required. Only this final approval deducts leave.'}</p><label>Action<select name="decision">${p.act?`${r.approval_stage!=='Supervisor'||p.supervisor?`<option value="approve">${r.approval_stage==='Supervisor'?'Recommend approval':'Final approval'}</option>`:''}<option value="reject">Deny</option><option value="sendback">Return with comments</option><option value="forward">Forward / reassign supervisor</option>`:''}${p.override?'<option value="override">Management override — approve now</option>':''}</select></label><label id="targetLabel" hidden>Forward to<select name="targetUser"><option value="">Choose an authorised leave approver</option>${data.targets.map(t=>`<option value="${esc(t.user_name)}">${esc(t.user_name)} · ${esc(t.email)}</option>`).join('')}</select></label><label>Comments<textarea name="reason" maxlength="4000" placeholder="Required for deny, return, forward or management override; optional for ordinary approval."></textarea></label><button type="submit">Confirm decision</button></form>`:'<p class="muted">No decision is available to your account at this stage.</p>'}
  ${back?'<form id="resubmit"><h3>Respond and resubmit</h3><p>Update your explanation and optionally replace the supporting document. To change dates or leave type, cancel this request in My Leave and submit a new application.</p><label>Corrected reason / response<textarea name="reason" required maxlength="4000"></textarea></label><label>Replacement supporting document (optional, maximum 10 MB)<input type="file" name="attachment" accept=".pdf,.jpg,.jpeg,.png"></label><button>Resubmit for review</button></form>':''}</article>
- <article class="card"><h3>Decision history</h3>${data.events.map(e=>`<div class="history"><strong>${esc(e.action)}</strong> · ${esc(e.actor)}${e.target_user?' → '+esc(e.target_user):''}<br><small>${esc(e.created_at)}</small><br>${esc(e.comment)}</div>`).join('')||'<p>Existing request: no V22 decisions yet.</p>'}</article>`;
+ <article class="card"><h3>Decision history</h3>${data.events.map(e=>`<div class="history"><strong>${esc(e.action)}</strong> · ${esc(e.actor)}${e.target_user?' → '+esc(e.target_user):''}<br><small>${esc(e.created_at)}</small><br>${esc(e.comment)}</div>`).join('')||'<p>No decisions recorded yet.</p>'}</article>`;
  document.getElementById('attachment')?.addEventListener('click',async()=>{try{const a=await api(`/api/hr/leave-requests/${encodeURIComponent(no)}/attachment`);location.assign(a.url);}catch(e){showError(e);}});
  const form=document.getElementById('decision');
- if(form){const select=form.elements.decision;const desired=params.get('action');if([...select.options].some(o=>o.value===desired))select.value=desired;
+ if(form){const select=form.elements.decision;let desired=params.get('action');if((!desired||desired==='approve')&&r.approval_stage==='Supervisor'&&!p.supervisor&&p.override)desired='override';if([...select.options].some(o=>o.value===desired))select.value=desired;
  const sync=()=>{document.getElementById('targetLabel').hidden=select.value!=='forward';form.elements.targetUser.required=select.value==='forward';form.elements.reason.required=select.value!=='approve';};select.onchange=sync;sync();
  form.onsubmit=async e=>{e.preventDefault();if(!form.reportValidity())return;if(!window.confirm('Confirm this leave decision? A management override is a final approval and will deduct leave.'))return;const b=form.querySelector('button[type=submit]');b.disabled=true;message.textContent='';try{await api(`/api/hr/workflow/requests/${encodeURIComponent(no)}/decision`,{method:'PUT',body:JSON.stringify({...Object.fromEntries(new FormData(form)),version:r.workflow_version})});message.textContent='Decision saved. Email notifications queued.';try{await request();notifySuccess('Decision saved','Email notifications queued.');}catch(refreshError){message.textContent=`Decision saved, but this page could not refresh: ${refreshError.message}`;notifyFailed('Decision saved; refresh failed',refreshError.message);}}catch(e){showError(e);b.disabled=false;}};
  }
@@ -48,6 +49,33 @@ async function settings(){
  async function mail(){const s=await api('/api/hr/workflow/mail');document.getElementById('mailState').innerHTML=`<p>Sending: ${s.mail.enabled?'enabled':'DISABLED'} · Provider configured: ${s.mail.configured?'Yes':'NO'}</p><div class="table"><table><thead><tr><th>Request / Event</th><th>Recipient</th><th>Status</th><th>Attempts / Error</th></tr></thead><tbody>${s.rows.map(m=>`<tr><td>${esc(m.request_no)} / ${esc(m.event)}</td><td>${esc(m.recipient_user||d.managementEmail)}</td><td>${esc(m.status)}</td><td>${esc(m.attempts)} · ${esc(m.last_error)}</td></tr>`).join('')}</tbody></table></div>`;}
  document.getElementById('mailRefresh').onclick=()=>mail().catch(showError);document.getElementById('mailRetry').onclick=async e=>{e.target.disabled=true;try{await api('/api/hr/workflow/mail/retry',{method:'POST',body:'{}'});try{await mail();notifySuccess('Email retry requested','The queue was processed and delivery status refreshed.');}catch(refreshError){message.textContent=`Email retry was requested, but delivery status could not refresh: ${refreshError.message}`;notifyFailed('Retry requested; status refresh failed',refreshError.message);}}catch(e){showError(e);}finally{e.target.disabled=false;}};
 }
-if(key(session?.role)==='admin')document.getElementById('settingsLink').hidden=false;
-if(!session?.token || (!params.has('settings')&&session.portal!=='employee'))login();
-else (params.has('settings')?settings():params.has('request')?request():inbox()).catch(e=>{content.textContent='Unable to load this page.';showError(e);});
+function setupCard() {
+ content.innerHTML=`<article class="card"><h2>Set up your management approval access</h2><p>You are signed in as <strong>${esc(viewer.userName)}</strong>, an active Connected administrator. This account is not yet fully enabled for management leave approvals.</p><p>Receiving a notification does not assign approval permission. Enable HR access, Management Final Approver and Management Override for <strong>your current account only</strong>. This is recorded in the audit history; other users are unchanged.</p><button id="enableManagement">Enable management approvals for my account</button><p class="muted">Only enable this if you are the intended management approver. You can also configure permissions in User Management.</p><a href="/hr-approvals.html?settings=1">Review leave permissions</a>${viewer.hrAccess?'<p><button class="secondary" id="continueReview">Continue with my existing permissions</button></p>':''}</article>`;
+ document.getElementById('continueReview')?.addEventListener('click',()=>{(params.has('request')?request():inbox()).catch(recover);});
+ document.getElementById('enableManagement').onclick=async e=>{
+  if(!window.confirm(`Enable all-branch final approval and management override for your own account (${viewer.userName})? This will be audited.`))return;
+  e.target.disabled=true;
+  try{await api('/api/hr/workflow/management-setup',{method:'POST',body:JSON.stringify({confirm:true})});message.textContent='Your management approval access is enabled.';await start();}
+  catch(err){showError(err);e.target.disabled=false;}
+ };
+}
+function recover(e) {
+ showError(e);
+ if(e.status===401){login();return;}
+ content.innerHTML=`<article class="card"><h2>We could not open this request</h2><p>Signed in as <strong>${esc(viewer?.userName||session?.userName||'your current account')}</strong>.</p><p>${e.status===404?'The request may no longer exist, the email may point to a different deployment, or this account is not assigned to review it. Check your review inbox or sign in with your authorised account.':'Check the message above. If this continues, send IT the request reference and your Connected username—never your password.'}</p><div class="actions"><button id="retryReview">Try again</button><a class="button secondary" href="/hr-approvals.html">Open review inbox</a><button class="secondary" id="switchAccount">Use another account</button></div></article>`;
+ document.getElementById('retryReview').onclick=()=>{message.textContent='';start();};
+ document.getElementById('switchAccount').onclick=()=>{login();document.getElementById('login').click();};
+}
+async function start(){
+ try{
+  if(!session?.token){login();return;}
+  viewer=await api('/api/hr/workflow/me');
+  document.getElementById('settingsLink').hidden=!viewer.canConfigure;
+  document.getElementById('accountInfo').textContent='Signed in as '+viewer.userName;
+  if(params.has('settings')){await settings();return;}
+  if(viewer.canConfigure&&(!viewer.hrAccess||!viewer.finalApprover||!viewer.managementOverride)){setupCard();return;}
+  if(!viewer.hrAccess){const e=new Error('HR Portal access is not enabled for this account. Ask your Connected administrator to enable it in User Management.');e.status=403;throw e;}
+  await (params.has('request')?request():inbox());
+ }catch(e){recover(e);}
+}
+start();

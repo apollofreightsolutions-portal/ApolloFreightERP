@@ -19,6 +19,15 @@ function authority(user, row) {
 }
 function createHrApprovalWorkflow({ query, getPool, requireAppAuth, requireEmployeePortalAuth, balanceForUser, sendMail, mailStatus }) {
   const router = express.Router();
+  // Both ERP and Employee/HR sessions may review; live database permissions
+  // below remain authoritative. CRM/customer sessions must never enter here.
+  function reviewAuth(req,res,next) {
+    return requireAppAuth(req,res,()=>{
+      if(req.appSession.crmPortal)return res.status(403).json({ok:false,error:'Use your ERP or Employee/HR login, not CRM.'});
+      return next();
+    });
+  }
+  router.use((req,res,next)=>{res.set('Cache-Control','no-store');next();});
   async function account(name, q=query) {
     return (await q(`select u.user_name,u.email,u.role,u.account_status,u.hr_portal_access,u.branch_access,
       coalesce(s.management_override,false) as management_override,
@@ -26,8 +35,8 @@ function createHrApprovalWorkflow({ query, getPool, requireAppAuth, requireEmplo
       coalesce(s.supervisor_user,'') as supervisor_user from app_users u left join hr_leave_user_settings s
       on lower(s.user_name)=lower(u.user_name) where lower(u.user_name)=lower($1) limit 1`,[name])).rows[0];
   }
-  async function admin(req) {
-    const u=await account(req.appSession.userName);
+  async function admin(req,q=query) {
+    const u=await account(req.appSession.userName,q);
     if (!u || key(u.account_status)!=='active' || key(u.role)!=='admin' || req.appSession.crmPortal) fail(403,'Only an active ERP administrator can configure leave permissions.');
     return u;
   }
@@ -41,10 +50,32 @@ function createHrApprovalWorkflow({ query, getPool, requireAppAuth, requireEmplo
     next(e);
   });
   async function canRead(session, row) {
+    if(session.crmPortal)return false;
     const u=await account(session.userName);
     row={...row,employee_branch:(await account(row.user_name))?.branch_access};
     return active(u) && (key(u.user_name)===key(row.user_name) || authority(u,row).read);
   }
+  router.get('/me',reviewAuth,wrap(async(req,res)=>{
+    const u=await account(req.appSession.userName);
+    if(!u || key(u.account_status)!=='active')fail(403,'Your Connected account is inactive or unavailable. Contact your administrator.');
+    res.json({ok:true,userName:u.user_name,hrAccess:u.hr_portal_access===true,
+      finalApprover:u.final_approver,managementOverride:u.management_override,
+      canConfigure:key(u.role)==='admin'});
+  }));
+  // Explicit, audited setup for the currently authenticated administrator only.
+  // Receiving an email never grants this permission, and no GET changes access.
+  router.post('/management-setup',reviewAuth,wrap(async(req,res)=>{
+    if(req.body?.confirm!==true)fail(400,'Confirm management approval setup for your own account.');
+    await transaction(async q=>{
+      await q("select pg_advisory_xact_lock(hashtext('hr-leave-settings'))");
+      const actor=await admin(req,q);
+      await q('update app_users set hr_portal_access=true where user_name=$1',[actor.user_name]);
+      await saveSettings(q,actor,actor.user_name,{canApprove:actor.can_approve_leave,
+        supervisorUser:actor.supervisor_user,finalApprover:true,managementOverride:true});
+      await q("insert into hr_leave_workflow_audit(request_no,actor,action,comment,target_user) values('USER-SETTINGS',$1,'Management setup confirmed','HR access, final approval and management override enabled by this administrator for their own account.',$1)",[actor.user_name]);
+    });
+    res.json({ok:true});
+  }));
   router.get('/settings',requireAppAuth,wrap(async(req,res)=>{
     await admin(req);
     const rows=(await query(`select u.user_name,u.email,u.account_status,u.hr_portal_access,u.branch_access,
@@ -90,14 +121,14 @@ function createHrApprovalWorkflow({ query, getPool, requireAppAuth, requireEmplo
     const updated=await transaction(q=>saveSettings(q,actor,req.params.userName,req.body));
     res.json({ok:true,row:updated});
   }));
-  router.get('/inbox',requireEmployeePortalAuth,wrap(async(req,res)=>{
+  router.get('/inbox',reviewAuth,wrap(async(req,res)=>{
     const u=await account(req.appSession.userName);if(!active(u))fail(403,'Active HR Portal access is required.');
     const rows=(await query(`select request_no,user_name,employee_name,leave_type,start_date,end_date,actual_leave_days,total_days,
       status,approval_stage,supervisor_user,workflow_version from leave_requests where lower(user_name)=lower($1)
       or $2=true or ($3=true and lower(supervisor_user)=lower($1) and lower(trim((select branch_access from app_users where lower(app_users.user_name)=lower(leave_requests.user_name) limit 1)))=$4) order by applied_at desc limit 300`,[u.user_name,u.final_approver,u.can_approve_leave&&singleBranch(u.branch_access),key(u.branch_access)])).rows;
     res.json({ok:true,rows,finalApprover:u.final_approver,canApprove:u.can_approve_leave});
   }));
-  router.get('/requests/:requestNo',requireEmployeePortalAuth,wrap(async(req,res)=>{
+  router.get('/requests/:requestNo',reviewAuth,wrap(async(req,res)=>{
     const row=(await query('select * from leave_requests where request_no=$1',[req.params.requestNo])).rows[0];
     if(!row || !await canRead(req.appSession,row))fail(404,'Leave request not found or not assigned to you.');
     row.employee_branch=(await account(row.user_name))?.branch_access;
@@ -161,8 +192,8 @@ function createHrApprovalWorkflow({ query, getPool, requireAppAuth, requireEmplo
     });
     res.json({ok:true,row});
   }
-  router.put('/requests/:requestNo/decision',requireEmployeePortalAuth,wrap(decide));
-  router.post('/requests/:requestNo/resubmit',requireEmployeePortalAuth,wrap(async(req,res)=>{
+  router.put('/requests/:requestNo/decision',reviewAuth,wrap(decide));
+  router.post('/requests/:requestNo/resubmit',reviewAuth,wrap(async(req,res)=>{
     const result=await transaction(async q=>{
       const r=(await q('select * from leave_requests where request_no=$1 for update',[req.params.requestNo])).rows[0];
       const u=await account(req.appSession.userName,q);
