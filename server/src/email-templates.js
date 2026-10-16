@@ -7,11 +7,16 @@ const NAFL='https://www.nafl.ae/downloads/NAFL-STC.pdf';
 const logo=fs.readFileSync(path.join(__dirname,'../assets/email/apollo-brand.png'));
 function emailAttachments(){return [{name:'apollo-brand.png',contentType:'image/png',contentId:'apollo-brand',isInline:true,contentBytes:logo.toString('base64')}];}
 function button(url,label,color='#0A1C2E') {return `<a href="${esc(url)}" style="display:inline-block;background:${color};color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:bold;text-decoration:none;padding:12px 8px;margin:3px 0">${esc(label)}</a>`;}
+// Shipment CTAs must never share the narrow logo column. Each has its own
+// full-width row with HTML nowrap as well as inline CSS (no media-query dependency).
+function shipmentSignatureButton(url,label,color) {
+ return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed;margin:0"><tr><td align="center" bgcolor="${color}" nowrap style="background:${color};text-align:center;white-space:nowrap;word-break:normal;overflow-wrap:normal"><a href="${esc(url)}" style="display:block;padding:12px 8px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;font-weight:bold;text-decoration:none;white-space:nowrap;word-break:normal;overflow-wrap:normal">${esc(label).replace(/ /g,'&nbsp;')}</a></td></tr><tr><td height="8" style="height:8px;line-height:8px;font-size:1px">&nbsp;</td></tr></table>`;
+}
 function signature(kind='shipment') {
  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin-top:28px;color:#0A1C2E"><tr>
  <td valign="top" style="padding:4px 12px 4px 0;width:52%;font-size:13px;line-height:20px"><p style="margin:0 0 10px">Best regards,</p><strong>Apollo Freight Solutions</strong><br><span style="color:#F15A24;font-weight:bold">Apollo Connected${kind==='hr'?' · HR Portal':''}</span><br><a href="https://www.apollo-freight.com/" style="color:#F15A24;font-size:11px">www.apollo-freight.com</a></td>
  <td valign="top" style="border-left:1px solid #D7DDE3;padding:3px 0 0 10px;width:48%"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="border-top:2px solid #F15A24;padding:8px 0"><a href="https://www.apollo-freight.com/"><img src="cid:apollo-brand" alt="Apollo Freight Solutions — Apollo.Connected." width="218" height="55" style="display:block;width:100%;max-width:218px;height:auto;border:0"></a></td></tr></table>
- ${kind==='shipment'?`<table role="presentation" cellspacing="0" cellpadding="0" width="100%"><tr><td>${button(TRACK,'TRACK SHIPMENT','#F15A24')}</td><td width="8"></td><td>${button(PORTAL,'CUSTOMER PORTAL')}</td></tr></table>`:''}</td></tr></table>`;
+ </td></tr>${kind==='shipment'?`<tr><td colspan="2" style="padding:16px 0 0">${shipmentSignatureButton(TRACK,'TRACK SHIPMENT','#F15A24')}${shipmentSignatureButton(PORTAL,'CUSTOMER PORTAL','#0A1C2E')}</td></tr>`:''}</table>`;
 }
 function footer(kind) {
  return kind==='shipment'
