@@ -5414,6 +5414,12 @@ function dashboardBranchForShipment(row) {
   if (markers.includes("AFS")) return "Dubai";
   return normalizeBranchName(row?.branch);
 }
+function dashboardShipmentVisibleForLiveCount(row) {
+  const classifiedBranch = dashboardBranchForShipment(row);
+  // For this dashboard count only, enforce branch visibility using the serial-derived branch;
+  // the saved branch can be stale and must not hide a KWI/AFS shipment before classification.
+  return ownedByCurrentUser({ ...row, branch: classifiedBranch });
+}
 function dashboardStatusEntryDate(value) {
   const timestamp = String(value || "").trim();
   if (!timestamp) return "";
@@ -5441,7 +5447,7 @@ function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()
   // permission. This Live-button filter uses explicit KWI/AFS serial markers when present,
   // falling back to the saved branch; this does not change record visibility or stored data.
   const visibleJobNos = new Set((state.shipments || [])
-    .filter((row) => ownedByCurrentUser(row) && selectedBranches.has(dashboardBranchForShipment(row)))
+    .filter((row) => dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row)))
     .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();
