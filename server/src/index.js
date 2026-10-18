@@ -20,6 +20,7 @@ const { createApolloAiRouter } = require("./apollo-ai");
 const { createConnectedChatRouter } = require("./connected-chat");
 const { graphMailStatus, sendMicrosoftGraphMail } = require("./microsoft-graph-mail");
 const { shipmentUpdateEmailHtml: brandedShipmentEmail, emailAttachments } = require('./email-templates');
+const { createPasswordResetRouter } = require("./password-reset");
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
 const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const {
@@ -624,14 +625,63 @@ function appAuthFromRequest(request) {
   return payload && payload.portal === "app" ? payload : null;
 }
 
-function requireAppAuth(request, response, next) {
+async function readAppSessionVersion(userName) {
+  const normalizedUserName = String(userName || "").trim();
+  try {
+    const result = await query(
+      "select auth_session_version, account_status from app_users where lower(user_name) = lower($1) limit 1",
+      [normalizedUserName]
+    );
+    const row = result.rows[0];
+    if (!row || String(row.account_status || "Active").trim().toLowerCase() !== "active") return null;
+    return Number(row.auth_session_version || 0);
+  } catch (error) {
+    // Keep existing sessions working if the additive migration has not yet been applied.
+    if (error?.code === "42703") {
+      const legacy = await query(
+        "select account_status from app_users where lower(user_name) = lower($1) limit 1",
+        [normalizedUserName]
+      );
+      const row = legacy.rows[0];
+      if (!row || String(row.account_status || "Active").trim().toLowerCase() !== "active") return null;
+      return 0;
+    }
+    throw error;
+  }
+}
+
+async function isCurrentAppSession(session) {
+  const version = await readAppSessionVersion(session?.userName);
+  return version !== null && Number(session?.authSessionVersion || 0) === version;
+}
+
+function isDevelopmentDemoAdmin(session) {
+  return process.env.NODE_ENV !== "production" &&
+    String(session?.userName || "").trim().toLowerCase() === "admin" &&
+    session?.authSessionVersion === undefined;
+}
+
+async function requireAppAuth(request, response, next) {
   const session = appAuthFromRequest(request);
   if (!session) {
     return response.status(401).json({ ok: false, error: "Login required." });
   }
 
-  request.appSession = session;
-  return next();
+  try {
+    if (!(await isCurrentAppSession(session))) {
+      if (!isDevelopmentDemoAdmin(session)) {
+        return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
+      }
+    }
+    request.appSession = session;
+    return next();
+  } catch (error) {
+    if (isDevelopmentDemoAdmin(session) && isDatabaseSetupError(error)) {
+      request.appSession = session;
+      return next();
+    }
+    return next(error);
+  }
 }
 
 function requireErpPortalAuth(request, response, next) {
@@ -675,11 +725,12 @@ function rejectUnauthorizedHrMutation(request, response, resourceName, action) {
 }
 
 function requireEmployeePortalAuth(request, response, next) {
-  const session = appAuthFromRequest(request);
-  if (!session) return response.status(401).json({ ok: false, error: "Login required." });
-  if (!session.employeePortal) return response.status(403).json({ ok: false, error: "Employee Portal login is required." });
-  request.appSession = session;
-  return next();
+  return requireAppAuth(request, response, () => {
+    if (!request.appSession.employeePortal) {
+      return response.status(403).json({ ok: false, error: "Employee Portal login is required." });
+    }
+    return next();
+  });
 }
 async function getCustomerAccount(identifier) {
   const result = await query(
@@ -2208,6 +2259,10 @@ app.post("/api/session/handoff", loginRateLimiter, async (request, response, nex
   }
 
   try {
+    const authSessionVersion = await readAppSessionVersion(identifier);
+    if (authSessionVersion === null || Number(payload.authSessionVersion || 0) !== authSessionVersion) {
+      return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
+    }
     const result = await query(
       `select user_name, email, role, account_status, branch_access, branch_view_scope, section_access,
               can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history,
@@ -2253,6 +2308,7 @@ app.post("/api/session/handoff", loginRateLimiter, async (request, response, nex
           role: row.role,
           portal: "app",
           employeePortal: false,
+          authSessionVersion,
           isHrAdmin: Boolean(row.is_hr_admin),
           exp: Date.now() + APP_TOKEN_TTL_MS
         })
@@ -2298,6 +2354,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
         error: "This user account is not active."
       });
     }
+    row.auth_session_version = await readAppSessionVersion(row.user_name) ?? 0;
     if (employeeLogin && !row.hr_portal_access) {
       return response.status(403).json({ ok: false, error: "HR Portal access is not enabled for this account." });
     }
@@ -2320,6 +2377,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
         portal: "mfa",
         purpose: "login",
         targetPortal,
+        authSessionVersion: row.auth_session_version,
         exp: Date.now() + 10 * 60 * 1000
       });
       if (row.mfa_enrolled_at && row.mfa_secret_enc) {
@@ -2351,7 +2409,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
         isHrAdmin: Boolean(row.is_hr_admin),
         aiAccess: Boolean(row.ai_access),
         ...crmSessionFlags(row),
-        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: employeeLogin, crmPortal: crmLogin, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: employeeLogin, crmPortal: crmLogin, authSessionVersion: row.auth_session_version, isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
       }
     });
   } catch (error) {
@@ -2423,7 +2481,7 @@ function mfaSession(row, targetPortal = "company") {
     isHrAdmin: Boolean(row.is_hr_admin),
     aiAccess: Boolean(row.ai_access),
     ...crmSessionFlags(row),
-    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: portal === "employee", crmPortal: portal === "crm", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+    token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: portal === "employee", crmPortal: portal === "crm", authSessionVersion: Number(row.auth_session_version || 0), isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
   };
 }
 
@@ -2432,8 +2490,10 @@ app.post("/api/mfa/enroll", async (request, response, next) => {
     await startupReadyPromise;
     const challenge = mfaChallengePayload(request);
     const session = request.appSession || appAuthFromRequest(request);
+    const authSession = session || challenge;
     const userName = String(session?.userName || challenge?.userName || "").trim();
     if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+    if (!(await isCurrentAppSession(authSession))) return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
     const row = (await query("select user_name, mfa_policy, mfa_enrolled_at from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
     if (!row) return response.status(404).json({ ok: false, error: "User account not found." });
     if (normalizeMfaPolicy(row.mfa_policy) === "disabled") return response.status(400).json({ ok: false, error: "MFA is disabled for this user. Ask an Admin to enable Optional or Required MFA." });
@@ -2449,8 +2509,10 @@ app.post("/api/mfa/enroll/verify", async (request, response, next) => {
     await startupReadyPromise;
     const challenge = mfaChallengePayload(request);
     const session = request.appSession || appAuthFromRequest(request);
+    const authSession = session || challenge;
     const userName = String(session?.userName || challenge?.userName || "").trim();
     if (!userName) return response.status(401).json({ ok: false, error: "Login required." });
+    if (!(await isCurrentAppSession(authSession))) return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
     const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
     if (!row?.mfa_secret_enc || row.mfa_enrolled_at) return response.status(400).json({ ok: false, error: "Start a new MFA enrollment first." });
     const secret = decryptMfaSecret(row.mfa_secret_enc, customerPortalSecret);
@@ -2468,6 +2530,7 @@ app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => 
     if (!challenge) return response.status(401).json({ ok: false, error: "The MFA login challenge is invalid or expired." });
     const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [challenge.userName])).rows[0];
     if (!row || String(row.account_status || "Active").toLowerCase() !== "active" || !row.mfa_enrolled_at || !row.mfa_secret_enc) return response.status(401).json({ ok: false, error: "MFA is not enrolled for this user." });
+    if (!(await isCurrentAppSession(challenge))) return response.status(401).json({ ok: false, error: "The MFA challenge has expired. Sign in again." });
     const code = String(request.body?.code || "").trim();
     let valid = false;
     let recoveryCodes = row.mfa_recovery_codes || "[]";
@@ -2565,7 +2628,7 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
         aiAccess: Boolean(row.ai_access),
         ...crmSessionFlags(row),
         portal: requestedPortal === "employee" ? "employee" : requestedPortal === "crm" ? "crm" : "company",
-        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: requestedPortal === "employee", crmPortal: requestedPortal === "crm", isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
+        token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: requestedPortal === "employee", crmPortal: requestedPortal === "crm", authSessionVersion: Number(request.appSession.authSessionVersion || 0), isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
       }
     });
   } catch (error) {
@@ -3384,13 +3447,12 @@ function isHrAdminSession(session) {
 }
 
 function requireHrAdmin(request, response, next) {
-  const session = request.appSession || appAuthFromRequest(request);
-  if (!session) return response.status(401).json({ ok: false, error: "Login required." });
-  if (!isHrAdminSession(session)) {
-    return response.status(403).json({ ok: false, error: "HR Admin access is required." });
-  }
-  request.appSession = session;
-  return next();
+  return requireAppAuth(request, response, () => {
+    if (!isHrAdminSession(request.appSession)) {
+      return response.status(403).json({ ok: false, error: "HR Admin access is required." });
+    }
+    return next();
+  });
 }
 
 async function canApproveLeave(session) {
@@ -4498,6 +4560,14 @@ app.post("/api/shipments", requireErpPortalAuth, async (request, response, next)
 
 // Maintenance is an ERP module: these routes use the ERP database and ERP-only HMAC handoff.
 // They must be mounted before the generic ERP resource handlers below.
+app.use("/api/password-reset", createPasswordResetRouter({
+  query,
+  getPool,
+  hashPassword: hashCustomerPassword,
+  rateLimiter,
+  outboxEncryptionKey: process.env.PASSWORD_RESET_OUTBOX_KEY,
+  enabled: String(process.env.PASSWORD_RESET_ENABLED || "").toLowerCase() === "true"
+}));
 app.use("/api/maintenance/health", maintenanceHealthRouter);
 app.use("/api/maintenance/auth", maintenanceAuthRouter);
 app.use("/api/maintenance/expenses", maintenanceExpensesRouter);

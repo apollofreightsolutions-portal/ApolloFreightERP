@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/migrate.js && node --check src/migrate-cloudinary-to-gcs.js",
+    "check": "node --check src/index.js && node --check src/migrate.js && node --check src/migrate-cloudinary-to-gcs.js && node --check src/password-reset.js && node --check src/password-reset-crypto.js && node --check src/password-reset-email.js && node --check src/process-password-reset-outbox.js && node --check src/migrate-password-reset.js && node --check src/maintenance/routes/users.js && node --check src/maintenance/middleware/auth.js",
+    "test": "node --test test/password-reset.test.js",
     "migrate": "node src/migrate.js",
     "db:setup": "node src/migrate.js",
     "migrate:cloudinary-to-gcs": "node src/migrate-cloudinary-to-gcs.js"

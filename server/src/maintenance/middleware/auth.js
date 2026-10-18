@@ -68,9 +68,17 @@ async function requireAuth(req, res, next) {
     const payload = await verifyErpToken(match[1]);
     const userName = String(payload?.userName || payload?.username || "").trim();
     if (!payload || !userName || payload.portal !== "app") return res.status(401).json({ message: "Use your ERP account to open Maintenance." });
-    const result = await query(`SELECT id, user_name, email, role, account_status, erp_portal_access, maintenance_portal_access, can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history FROM app_users WHERE LOWER(TRIM(user_name)) = LOWER($1) LIMIT 1`, [userName]);
+    let result;
+    try {
+      result = await query(`SELECT id, user_name, email, role, account_status, auth_session_version, erp_portal_access, maintenance_portal_access, can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history FROM app_users WHERE LOWER(TRIM(user_name)) = LOWER($1) LIMIT 1`, [userName]);
+    } catch (error) {
+      if (error?.code !== "42703") throw error;
+      // Preserve existing sessions during the brief window before additive migration 049.
+      result = await query(`SELECT id, user_name, email, role, account_status, erp_portal_access, maintenance_portal_access, can_view_all_entry, can_view_only_self_entry, can_edit_all_entry, can_view_updated_history FROM app_users WHERE LOWER(TRIM(user_name)) = LOWER($1) LIMIT 1`, [userName]);
+    }
     const row = result.rows[0];
     if (!row || String(row.account_status || "Active").toLowerCase() !== "active") return res.status(403).json({ message: "Your ERP account is not active." });
+    if (Number(payload.authSessionVersion || 0) !== Number(row.auth_session_version || 0)) return res.status(401).json({ message: "ERP session expired. Please sign in again." });
     // The ERP login and portal switch already allow either explicit Maintenance
     // access or ERP portal access. Keep the merged Maintenance portal consistent
     // with that rule; its create/view/edit permissions remain enforced below.

@@ -107,6 +107,12 @@ const logoutButton = document.querySelector("#logoutButton");
 const resetEmail = document.querySelector("#resetEmail");
 const resetPasswordButton = document.querySelector("#resetPasswordButton");
 const resetMessage = document.querySelector("#resetMessage");
+const resetPanel = document.querySelector("#resetPanel");
+const resetRequestFields = document.querySelector("#resetRequestFields");
+const resetCompletionForm = document.querySelector("#resetCompletionForm");
+const resetNewPassword = document.querySelector("#resetNewPassword");
+const resetConfirmPassword = document.querySelector("#resetConfirmPassword");
+let passwordResetToken = "";
 const recordDialog = document.querySelector("#recordDialog");
 const dialogType = document.querySelector("#dialogType");
 const dialogTitle = document.querySelector("#dialogTitle");
@@ -1845,7 +1851,8 @@ async function boot() {
     render();
   });
   newShipmentButton?.addEventListener("click", openShipmentWorkspace);
-  resetPasswordButton.addEventListener("click", handlePasswordReset);
+  resetPasswordButton?.addEventListener("click", handlePasswordReset);
+  resetCompletionForm?.addEventListener("submit", handlePasswordResetComplete);
   loginForm.querySelector("[data-toggle-password]")?.addEventListener("click", toggleLoginPassword);
   moduleContent.addEventListener("click", handleModuleClick);
   moduleContent.addEventListener("click", handleModuleLinkClick);
@@ -1939,7 +1946,11 @@ async function boot() {
   document.addEventListener("blur", handleDropdownBlur, true);
   document.addEventListener("pointerdown", handleDocumentPointerDown, false);
 
-  if (currentSession()) {
+  const hasPasswordResetLink = initializePasswordResetLink();
+  if (hasPasswordResetLink) {
+    showLogin();
+    if (!passwordResetToken) setPasswordResetMessage("This reset link is invalid. Request a new link below.");
+  } else if (currentSession()) {
     showApp();
   } else {
     try {
@@ -2415,14 +2426,86 @@ function openShipmentWorkspace() {
   }, 0);
 }
 
-function handlePasswordReset() {
-  const email = resetEmail.value.trim();
+function setPasswordResetMessage(message, success = false) {
+  if (!resetMessage) return;
+  resetMessage.textContent = String(message || "");
+  resetMessage.classList.toggle("is-success", Boolean(success));
+}
+
+function initializePasswordResetLink() {
+  const fragment = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
+  if (!fragment.has("resetToken")) return false;
+
+  const token = String(fragment.get("resetToken") || "");
+  passwordResetToken = /^[A-Za-z0-9_-]{43}$/.test(token) ? token : "";
+  if (resetPanel) resetPanel.open = true;
+  if (resetRequestFields) resetRequestFields.hidden = Boolean(passwordResetToken);
+  resetCompletionForm?.classList.toggle("is-hidden", !passwordResetToken);
+  window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+  return true;
+}
+
+async function handlePasswordReset() {
+  const email = String(resetEmail?.value || "").trim();
   if (!email) {
-    resetMessage.textContent = "Enter an email address first.";
+    setPasswordResetMessage("Enter an email address first.");
     return;
   }
 
-  resetMessage.textContent = `Password reset is not configured yet for ${email}. Enable SMTP or Microsoft 365 on the API to activate this flow.`;
+  if (resetPasswordButton) resetPasswordButton.disabled = true;
+  try {
+    const result = await fetchJson("/api/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    setPasswordResetMessage(result.message || "If an active account matches that email, a reset link will be sent shortly.", true);
+  } catch (error) {
+    setPasswordResetMessage(error.message || "Password reset is temporarily unavailable. Please try again later.");
+  } finally {
+    if (resetPasswordButton) resetPasswordButton.disabled = false;
+  }
+}
+
+async function handlePasswordResetComplete(event) {
+  event.preventDefault();
+  const newPassword = String(resetNewPassword?.value || "");
+  const confirmPassword = String(resetConfirmPassword?.value || "");
+  if (!passwordResetToken) {
+    setPasswordResetMessage("This reset link is invalid or expired. Request a new link.");
+    return;
+  }
+  if (newPassword.length < 12 || newPassword.length > 128) {
+    setPasswordResetMessage("Choose a password between 12 and 128 characters.");
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    setPasswordResetMessage("The password entries do not match.");
+    return;
+  }
+
+  const submitButton = resetCompletionForm?.querySelector("button[type='submit']");
+  if (submitButton) submitButton.disabled = true;
+  try {
+    const result = await fetchJson("/api/password-reset/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: passwordResetToken, newPassword })
+    });
+    passwordResetToken = "";
+    resetCompletionForm?.reset();
+    if (resetRequestFields) resetRequestFields.hidden = false;
+    resetCompletionForm?.classList.add("is-hidden");
+    if (resetPanel) resetPanel.open = false;
+    sessionStorage.removeItem(SESSION_KEY);
+    stopSharedShipmentRefresh();
+    showLogin();
+    loginMessage.textContent = result.message || "Password reset successfully. Sign in with your new password.";
+  } catch (error) {
+    setPasswordResetMessage(error.message || "Password reset is temporarily unavailable. Please try again later.");
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
 }
 
 function openChangePasswordDialog() {
@@ -5325,6 +5408,12 @@ function dashboardStatusAllowedBranches() {
   if (!access || ["both", "all"].includes(access.toLowerCase())) return CANONICAL_BRANCHES.slice();
   return access.split(",").map(normalizeBranchName).filter((branch) => CANONICAL_BRANCHES.includes(branch));
 }
+function dashboardBranchForShipment(row) {
+  const markers = String(row?.jobNo || "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  if (markers.includes("KWI")) return "Kuwait HO";
+  if (markers.includes("AFS")) return "Dubai";
+  return normalizeBranchName(row?.branch);
+}
 function dashboardStatusEntryDate(value) {
   const timestamp = String(value || "").trim();
   if (!timestamp) return "";
@@ -5349,9 +5438,10 @@ function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()
   const selectedBranches = new Set(branches);
   // Live tracking must follow the same User Management visibility scope as the rest of ERP:
   // ownedByCurrentUser() enforces branch access, All Branches scope, and the canViewAllEntry
-  // permission. selectedBranches then applies the dashboard branch filter for users who can use it.
+  // permission. This Live-button filter uses explicit KWI/AFS serial markers when present,
+  // falling back to the saved branch; this does not change record visibility or stored data.
   const visibleJobNos = new Set((state.shipments || [])
-    .filter((row) => ownedByCurrentUser(row) && selectedBranches.has(normalizeBranchName(row.branch)))
+    .filter((row) => ownedByCurrentUser(row) && selectedBranches.has(dashboardBranchForShipment(row)))
     .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();

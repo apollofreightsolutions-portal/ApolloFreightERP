@@ -119,10 +119,25 @@ usersRouter.put("/:id/password", requireAuth, requireAdmin, async (req, res) => 
     const password = String(req.body.password || "");
     if (!Number.isInteger(id) || !password) return res.status(400).json({ message: "A valid user and password are required." });
     const passwordHash = await bcrypt.hash(password, 10);
-    const result = await query(
-      `UPDATE app_users SET password = $2, updated_at = NOW() WHERE id = $1 RETURNING id, user_name, email, role, created_at`,
-      [id, passwordHash]
-    );
+    let result;
+    try {
+      result = await query(
+        `UPDATE app_users
+         SET password = $2, auth_session_version = COALESCE(auth_session_version, 0) + 1, updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, user_name, email, role, created_at`,
+        [id, passwordHash]
+      );
+    } catch (error) {
+      if (error?.code !== "42703") throw error;
+      // Migration 049 may trail the code deployment briefly; preserve the existing password update.
+      result = await query(
+        `UPDATE app_users SET password = $2, updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, user_name, email, role, created_at`,
+        [id, passwordHash]
+      );
+    }
     if (result.rowCount === 0) return res.status(404).json({ message: "User not found." });
     return res.json({ ...result.rows[0], name: result.rows[0].user_name, username: result.rows[0].user_name });
   } catch (error) {

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Apollo Connected Portal</title>
-    <link rel="stylesheet" href="./styles.css?v=apollo-v241-notify-20261016-1" />
+    <link rel="stylesheet" href="./styles.css?v=apollo-branch-reset-20261018-2" />
     <link rel="stylesheet" href="./apollo-connected.css?v=20260911-v2" />
     <link rel="stylesheet" href="./crm-portal.css?v=20260912-v2" />
     <link rel="stylesheet" href="./apollo-ai.css?v=20260914-v1" />
@@ -56,14 +56,28 @@
               <button type="submit">Sign in to Apollo Connected</button>
             </form>
 
-            <details class="reset-panel">
+            <details id="resetPanel" class="reset-panel">
               <summary>Reset password by email</summary>
               <div class="reset-panel-body">
-                <label>
-                  Email address
-                  <input id="resetEmail" type="email" placeholder="name@company.com" />
-                </label>
-                <button id="resetPasswordButton" type="button" class="navy-button">Send Reset Link</button>
+                <div id="resetRequestFields" class="reset-request-fields">
+                  <label>
+                    Email address
+                    <input id="resetEmail" type="email" placeholder="name@company.com" autocomplete="email" />
+                  </label>
+                  <button id="resetPasswordButton" type="button" class="navy-button">Send Reset Link</button>
+                </div>
+                <form id="resetCompletionForm" class="reset-completion-form is-hidden" novalidate>
+                  <p class="reset-help">Choose a new password of 12 to 128 characters.</p>
+                  <label>
+                    New password
+                    <input id="resetNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+                  </label>
+                  <label>
+                    Confirm new password
+                    <input id="resetConfirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+                  </label>
+                  <button type="submit" class="navy-button">Set New Password</button>
+                </form>
                 <p id="resetMessage" class="reset-message" role="status"></p>
                 <p class="reset-help">Need help accessing your account? Contact your Apollo administrator.</p>
               </div>
@@ -191,6 +205,6 @@
 
     <script src="./config.js"></script>
     <script src="./vendor/qrcode-generator.js"></script>
-    <script type="module" src="./app.js?v=apollo-v241-notify-20261016-1"></script>
+    <script type="module" src="./app.js?v=apollo-branch-reset-20261018-2"></script>
   </body>
 </html>

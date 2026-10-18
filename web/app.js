@@ -1,4 +1,4 @@
-import "./app-runtime.js?v=apollo-v241-notify-20261016-1";
+import "./app-runtime.js?v=apollo-branch-reset-20261018-2";
 import "./hr-workflow-links.js?v=apollo-v241-notify-20261016-1";
 
 import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {
