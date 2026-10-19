@@ -9543,6 +9543,10 @@ function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", ser
   prefillRecord.entryMode = "shipment";
   prefillRecord.isNewFromAirway = true;
   prefillRecord.airwayBillNo = typedValue;
+  // The source shipment is only a form template. Its TCN belongs to the old shipment and must
+  // never be copied into the newly created shipment, otherwise the new shipment's TCN printout
+  // can display the old shipment's number.
+  prefillRecord.tcnNumber = "";
   prefillRecord.bookingDate = today();
   prefillRecord.shipmentDate = today();
   prefillRecord.branch = normalizeBranchName(branch || defaultUserBranch());
