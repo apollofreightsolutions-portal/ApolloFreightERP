@@ -9967,30 +9967,30 @@ function bindPalletDimensionBuilder() {
 
   const printTcn = (persistNumber = true) => {
     const data = currentShipmentData();
-    const savedShipment = state.shipments.some((shipmentItem) => shipmentItem.jobNo === data.jobNo);
+    const savedShipment = state.shipments.find((shipmentItem) => String(shipmentItem.jobNo || "").trim() === String(data.jobNo || "").trim());
     if (!savedShipment) {
       notifyDenied("Save shipment first", "Save or create this shipment or airway bill before generating a TCN.");
       return;
     }
-    const tcn = data.tcnNumber || data.airwayBillNo || nextTcnNumber();
+    const tcn = savedShipment.tcnNumber || data.tcnNumber || savedShipment.airwayBillNo || data.airwayBillNo || nextTcnNumber();
     if (persistNumber) {
       if (tcnField) tcnField.value = tcn;
       if (airwayBillField) airwayBillField.value = tcn;
     }
-    openPrintableDocument(tcnDocumentHtml({ ...data, airwayBillNo: tcn, tcnNumber: tcn, palletDimensionsJson: hiddenField.value }));
+    openPrintableDocument(tcnDocumentHtml({ ...savedShipment, ...data, airwayBillNo: tcn, tcnNumber: tcn, palletDimensionsJson: hiddenField.value }));
   };
 
   const duplicateTcn = () => {
     const data = currentShipmentData();
-    const savedShipment = state.shipments.some((shipmentItem) => shipmentItem.jobNo === data.jobNo);
+    const savedShipment = state.shipments.find((shipmentItem) => String(shipmentItem.jobNo || "").trim() === String(data.jobNo || "").trim());
     if (!savedShipment) {
       notifyDenied("Save shipment first", "Save or create this shipment before duplicating a TCN.");
       return;
     }
     const companyName = "ALT EXPRESS CARGO AND CLEARING LLC";
     const logoUrl = "/assets/alt-express-logo.png";
-    const tcn = data.tcnNumber || data.airwayBillNo || data.jobNo;
-    openPrintableDocument(duplicateTcnDocumentHtml({ ...data, airwayBillNo: tcn, tcnNumber: tcn, palletDimensionsJson: hiddenField.value, documentCompanyName: companyName.trim(), documentCompanyLogoUrl: logoUrl.trim() }));
+    const tcn = savedShipment.tcnNumber || data.tcnNumber || savedShipment.airwayBillNo || data.airwayBillNo || data.jobNo;
+    openPrintableDocument(duplicateTcnDocumentHtml({ ...savedShipment, ...data, airwayBillNo: tcn, tcnNumber: tcn, palletDimensionsJson: hiddenField.value, documentCompanyName: companyName.trim(), documentCompanyLogoUrl: logoUrl.trim() }));
   };
 
   const sync = () => {
