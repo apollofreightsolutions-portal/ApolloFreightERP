@@ -444,8 +444,9 @@ function loadMetaNotes(data) {
 function syncTcnNumberAfterAirwayBillChange(previousRecord, updatedRecord) {
   const previousAwb = String(previousRecord?.airwayBillNo || "").trim();
   const updatedAwb = String(updatedRecord?.airwayBillNo || "").trim();
-  const previousTcn = String(previousRecord?.tcnNumber || "").trim();
-  if (updatedAwb && updatedAwb !== previousAwb && (!previousTcn || previousTcn === previousAwb)) {
+  // The TCN waybill number follows the shipment AWB. Replace any legacy/custom old value
+  // when the AWB changes so that the edited shipment and its TCN remain consistent.
+  if (updatedAwb && updatedAwb !== previousAwb) {
     updatedRecord.tcnNumber = updatedAwb;
   }
 }
@@ -11862,6 +11863,7 @@ function tariffDocumentHtml(record) {
 function tcnDocumentHtml(record) {
   const shipmentRecord = shipmentForTcn(record);
   const mergedRecord = mergeFilled(shipmentRecord, record);
+  const waybillNumber = mergedRecord.airwayBillNo || mergedRecord.tcnNumber || mergedRecord.jobNo;
   const cargoLines = parsePalletDimensions(mergedRecord.cargoItemsJson || mergedRecord.palletDimensionsJson || "[]");
   const printOnlyCargoDetails = isChecked(mergedRecord.printOnlyCargoDetails);
   const totalVolumetricWeight = cargoLines.reduce((sum, line) => sum + cargoVolumetricWeight(line.count || line.quantity, line.length, line.width, line.height, line.dimensionUnit || "CM", mergedRecord.volumeCategory), 0);
@@ -11871,13 +11873,13 @@ function tcnDocumentHtml(record) {
   const grandTotalCbm = Number(mergedRecord.cbm || roundUpToHalf(cargoLines.reduce((sum, line) => sum + cargoVolumeCbm(line.count || line.quantity, line.length, line.width, line.height, line.dimensionUnit || "CM"), 0)));
   const chargeableWeight = roundUpToWholeKg(Math.max(totalGrossWeight, totalVolumetricWeight, Number(mergedRecord.chargeableKg || 0)));
   return documentShell(
-    `TCN ${mergedRecord.tcnNumber || mergedRecord.jobNo}`,
+    `TCN ${waybillNumber}`,
     "Truck Consignment Note - TCN / WAYBILL",
-    mergedRecord.tcnNumber || mergedRecord.jobNo,
+    waybillNumber,
     mergedRecord.bookingDate || today(),
     `
       <section class="tcn-grid">
-        <div><span>WAYBILL NUMBER</span><strong>${escapeHtml(mergedRecord.tcnNumber || mergedRecord.airwayBillNo || mergedRecord.jobNo)}</strong></div>
+        <div><span>WAYBILL NUMBER</span><strong>${escapeHtml(waybillNumber)}</strong></div>
         <div><span>DATE</span><strong>${escapeHtml(mergedRecord.bookingDate || today())}</strong></div>
         <div><span>PLACE</span><strong>${escapeHtml(mergedRecord.origin || mergedRecord.pickupLocation || "")}</strong></div>
         <div><span>ORIGIN</span><strong>${escapeHtml(mergedRecord.origin || "")}</strong></div>
@@ -14884,12 +14886,13 @@ function duplicateTcnDocumentHtml(record) {
   const remark = record.shipmentRemarks || record.remarks || "";
   const secondLogo = "/assets/second-tcn-logo.bmp";
   const displayDate = date ? new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }).replace(/ /g, "-") : "";
+  const waybillNumber = record.airwayBillNo || record.tcnNumber || record.jobNo || "";
   const cell = (label, value, extra = "") => `<div class="dw-cell"><b>${escapeHtml(label)}</b><span>${escapeHtml(value || "")}</span>${extra}</div>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.tcnNumber || record.jobNo || "Duplicate TCN")}</title><style>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(waybillNumber || "Duplicate TCN")}</title><style>
     @page{size:A4 portrait;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#111;font-family:Arial,sans-serif;font-size:10px}.waybill{width:190mm;margin:10mm auto 0;border:1px solid #111}.top{padding:5px 7px;border-bottom:1px solid #111;font-weight:700}.top span{float:right;font-size:20px;letter-spacing:.04em}.top small{font-size:8px}.grid{display:grid;grid-template-columns:1fr 1fr}.dw-cell{min-height:28mm;padding:5px 7px;border-bottom:1px solid #111}.grid>.dw-cell:nth-child(odd){border-right:1px solid #111}.dw-cell b{display:block;text-decoration:underline;margin-bottom:8px}.dw-cell span{display:block;white-space:pre-line;font-size:14px;line-height:1.35}.logo-cell{text-align:center}.logo-cell img{display:block;width:48mm;height:22mm;object-fit:contain;margin:2px auto}.small{min-height:12mm}.cargo{border-bottom:1px solid #111}.cargo-title{text-align:center;font-weight:700;padding:4px;border-bottom:1px solid #111}.cargo-head,.cargo-row{display:grid;grid-template-columns:1.1fr 1.1fr 2fr;border-bottom:1px solid #111}.cargo-head b,.cargo-row span{padding:4px 7px;border-right:1px solid #111}.cargo-head b:last-child,.cargo-row span:last-child{border-right:0}.total{padding:5px 7px;border-bottom:1px solid #111}.total-split{display:grid;grid-template-columns:1fr 1fr;padding:0}.total-split span{padding:5px 7px}.total-split span+span{border-left:1px solid #111}.notes{min-height:42mm;padding:6px 7px;border-bottom:1px solid #111}.charges{display:grid;grid-template-columns:1fr 1fr;min-height:25mm;border-bottom:1px solid #111}.charges>div{padding:5px 7px}.charges>div:first-child{border-right:1px solid #111}.alt-ref-cell{display:flex;align-items:center;justify-content:space-between;gap:8px}.alt-ref-cell img{width:30mm;height:16mm;object-fit:contain}.footer{text-align:center;padding:4px}.print{position:fixed;right:12px;top:12px;padding:7px 12px;border:1px solid #555;background:#eee;font-family:Arial,sans-serif}@media print{.print{display:none}.waybill{width:190mm;margin:10mm auto 0}}
   </style></head><body><button class="print" id="tcnPrintButton" type="button">Print</button><main class="waybill">
-    <div class="top">TRUCK WAY BILL NUMBER <span>: ${escapeHtml(record.tcnNumber || record.jobNo || "")}</span><small><br>To be used for Single Consignment, Full Truck Load and Less Truck Load</small></div>
-    <div class="grid">${cell("Shipper's Name and Address:", [record.shipperName || record.customer || "", record.shipperAddress || "", record.shipperCountry || ""].filter(Boolean).join("\n"))}${cell("TRUCK WAY BILL NUMBER", record.tcnNumber || record.airwayBillNo || record.jobNo || "")}${cell("Consignee Name and Address:", [record.consigneeName || record.customer || "", record.consigneeAddress || "", record.consigneeCountry || ""].filter(Boolean).join("\n"))}${cell("Truck AWB Issued By", "", '<div class="logo-cell"><img src="' + escapeHtml(logo) + '" alt="' + escapeHtml(company) + '"><span>' + escapeHtml(company) + '</span></div>')}${cell("Delivery Agent", bookingParty)}${cell("Booking Party", bookingParty)}${cell("Origin", [record.origin || record.pickupLocation || "", record.originCity || ""].filter(Boolean).join("     "))}${cell("Destination", [record.destination || record.deliveryLocation || "", record.destinationCity || ""].filter(Boolean).join("     "))}</div>
+    <div class="top">TRUCK WAY BILL NUMBER <span>: ${escapeHtml(waybillNumber)}</span><small><br>To be used for Single Consignment, Full Truck Load and Less Truck Load</small></div>
+    <div class="grid">${cell("Shipper's Name and Address:", [record.shipperName || record.customer || "", record.shipperAddress || "", record.shipperCountry || ""].filter(Boolean).join("\n"))}${cell("TRUCK WAY BILL NUMBER", waybillNumber)}${cell("Consignee Name and Address:", [record.consigneeName || record.customer || "", record.consigneeAddress || "", record.consigneeCountry || ""].filter(Boolean).join("\n"))}${cell("Truck AWB Issued By", "", '<div class="logo-cell"><img src="' + escapeHtml(logo) + '" alt="' + escapeHtml(company) + '"><span>' + escapeHtml(company) + '</span></div>')}${cell("Delivery Agent", bookingParty)}${cell("Booking Party", bookingParty)}${cell("Origin", [record.origin || record.pickupLocation || "", record.originCity || ""].filter(Boolean).join("     "))}${cell("Destination", [record.destination || record.deliveryLocation || "", record.destinationCity || ""].filter(Boolean).join("     "))}</div>
     <section class="cargo"><div class="cargo-title">PARTICULARS FURNISHED BY SHIPPER - CARRIER/AGENT NOT RESPONSIBLE</div><div class="cargo-head"><b>No of Pieces</b><b>Gross Weight (kgs.)</b><b>Description</b></div><div class="cargo-row"><span>${escapeHtml(pieces ? `${pieces} ${pieceLabel}` : "")}</span><span>${escapeHtml(weight ? `${weight.toLocaleString()} Kgs` : "")}</span><span>${escapeHtml(description)}</span></div><div class="total total-split"><span>Total&nbsp;&nbsp; ${escapeHtml(pieces ? `${pieces} ${pieceLabel}` : "")}&nbsp;&nbsp;&nbsp; ${escapeHtml(weight ? `${weight.toLocaleString()} Kgs` : "")}</span><span>Remark: ${escapeHtml(remark)}</span></div></section>
     <div class="notes">Invoice : ${escapeHtml(record.invoiceNo || "")}<br>Customer Reference : ${escapeHtml(record.customerReference || "")}<br><br>The particulars given above are as stated by shipper. The actual weight, measure, quantity, condition, content and value of the Goods are unknown to the Carrier.</div>
     <div class="charges"><div>Move Type　　　　　　　　 BND<br>Freight Charges<br>Duty and Other Charges<br>Origin Charges<br>Destination Charges</div><div class="alt-ref-cell"><img src="${escapeHtml(secondLogo)}" alt="Reference logo"><strong>THIS AWB IS ONLY FOR THE ALT REF.</strong></div></div><div class="footer">DATE　　 ${escapeHtml(displayDate)}</div>
