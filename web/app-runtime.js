@@ -441,6 +441,15 @@ function loadMetaNotes(data) {
   });
 }
 
+function syncTcnNumberAfterAirwayBillChange(previousRecord, updatedRecord) {
+  const previousAwb = String(previousRecord?.airwayBillNo || "").trim();
+  const updatedAwb = String(updatedRecord?.airwayBillNo || "").trim();
+  const previousTcn = String(previousRecord?.tcnNumber || "").trim();
+  if (updatedAwb && updatedAwb !== previousAwb && (!previousTcn || previousTcn === previousAwb)) {
+    updatedRecord.tcnNumber = updatedAwb;
+  }
+}
+
 function shipment(
   jobNo,
   branch,
@@ -7912,6 +7921,7 @@ async function saveDialogRecordInner() {
       notifyDuplicateAirwayBill(updatedRecord.airwayBillNo, updatedRecord.branch);
       return;
     }
+    syncTcnNumberAfterAirwayBillChange(editing.record, updatedRecord);
     updatedRecord.notes = shipmentMetaNotes(updatedRecord);
   }
   if (editing.type === "load") {
@@ -13425,6 +13435,7 @@ async function createShipmentDraft(data) {
       updatedRecord[key] = coerceValue(updatedRecord[key], data[key]);
     });
     updatedRecord.status = "Draft";
+    syncTcnNumberAfterAirwayBillChange(editing.record, updatedRecord);
     updatedRecord.notes = shipmentMetaNotes(updatedRecord);
     const changeSummary = summarizeChanges(editing.record, updatedRecord, Object.keys(data));
     if (updatedRecord.jobNo !== editing.record.jobNo) {
