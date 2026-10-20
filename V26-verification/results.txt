@@ -1,0 +1,65 @@
+PASS syntax server/src/compliance-spreadsheet.js
+
+PASS syntax server/src/crm-reviews.js
+
+PASS syntax server/src/crm.js
+
+PASS syntax server/src/customer-compliance.js
+
+PASS syntax server/src/index.js
+
+PASS syntax web/app-runtime.js
+
+PASS syntax web/app.js
+
+PASS syntax web/crm-portal.js
+
+PASS syntax web/customer-compliance.js
+
+v26_1-check.cjs
+PASS actual invoice: 164 rows, 86 HS codes, 552 units, invoice number and 304.21 kg gross weight; 12-digit column preferred
+PASS XLS/XLSX/XLSM, leading-zero codes, missing-code rows retained and totals excluded
+PASS cold-start metadata endpoint
+PASS actual invoice through HTTP: all 164 rows preserved and saved, 140 attention / 24 pass, generic Accessories replacement suppressed; 3543ms, ZERO Google calls
+PASS authentication, corrupt workbook and excess-file rejection
+PASS AI fallback preserves 61 rows; truncated / over-limit / incomplete mixed Excel results never saved
+PASS actual browser analyze function, uppercase XLSM / blank MIME, FileReader, HTTP request, 164-count and meaningful review cards
+PASS actual shipment attachment handler accepts XLSM and preserves customer ownership check (storage/database mocked)
+LIMIT: local HTTP and persistence adapter; no live customer login, Google service or production database used. No macros executed.
+
+
+v26-crm-test.cjs
+PASS server-side salesperson filters, original visit author, scoped options, filtered export and no access expansion
+PASS append-only comment history, atomic comment/task SQL, server-selected recipient, salesperson read access, email escaping and reassigned-account recipient fallback
+PASS validation, mail failure preserves saved follow-up with honest status, and database failure never sends email
+PASS actual frontend functions and change handler: filters through HTTP, modal, comment send, persisted history, staff read-only view and HTML escaping
+LIMIT: database/mail/DOM adapters simulated; actual Express routes and frontend functions executed. Browser rendering not verified (Chromium unavailable). No production data or external email used.
+CRM review email was not accepted: send_failed
+
+
+v26-current-vertex-test.cjs
+PASS default Vertex global host, resource location, bearer header and PDF transport payload
+PASS explicit regional endpoint and model override preserved
+PASS explicitly selected Gemini API path preserved; no automatic provider fallback
+PASS provider errors distinguish invalid request, authentication, access, endpoint/model, quota and outage without leaking provider details
+PASS HTTP customer PDF -> Vertex request -> analysis save; service failure never saves a false successful result
+LIMIT: Google authentication, AI responses and database are fixtures; no live Google request or customer document extraction was performed.
+
+
+v26-current-legacy-test.cjs
+PASS invoice.xlsx real workbook, leading zeros, empty columns, formula cache, multiple sheets
+PASS invoice.xls real workbook, leading zeros, empty columns, formula cache, multiple sheets
+PASS Independent Python-created XLSX with differing XML layout
+PASS Corrupt Excel returns readable 422
+PASS HTTP analyze invoice.xlsx -> spreadsheet text -> mocked AI -> real HS matching -> saved result
+PASS HTTP analyze invoice.xls -> spreadsheet text -> mocked AI -> real HS matching -> saved result
+PASS HTTP analyze openpyxl.xlsx -> spreadsheet text -> mocked AI -> real HS matching -> saved result
+PASS HTTP corrupt Excel
+PASS size limit before parsing / AI
+PASS customer authentication preserved
+PASS mixed Excel/PDF preserves existing PDF path
+PASS actual browser analyze: generic MIME uppercase .XLS, FileReader, HTTP, rendered result
+TOTAL 12 passed; provider calls 4 saved analyses 5 (AI and database mocked; no external documents transmitted)
+
+
+PASS: original ZIP CRC; all original files present; only eight authorized production files changed and two modules added; all other source bytes preserved from uploaded V25. No credentials or node_modules packaged.

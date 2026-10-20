@@ -1,6 +1,7 @@
 const express = require("express");
+const { registerCrmReviews } = require("./crm-reviews");
 
-function createCrmRouter({ query, requireAppAuth }) {
+function createCrmRouter({ query, requireAppAuth, sendMail }) {
   const router = express.Router();
   router.use(requireAppAuth);
 
@@ -102,6 +103,8 @@ function createCrmRouter({ query, requireAppAuth }) {
     values.push(user.user_name);
     return `lower(${alias}.assigned_to) = lower($${values.length})`;
   }
+
+  registerCrmReviews({router, query, accountScope, sendMail});
 
   async function getAccountForUser(accountId, user, { includeArchived = false } = {}) {
     const values = [Number(accountId)];
@@ -385,6 +388,11 @@ function createCrmRouter({ query, requireAppAuth }) {
       const accountId = Number(request.query.accountId || 0);
       const conditions = ["a.archived_at is null", scope];
       if (accountId) { values.push(accountId); conditions.push(`${alias}.${accountField}=$${values.length}`); }
+      const salesperson = cleanText(request.query.salesperson, 200);
+      if (table === "crm_opportunities" && salesperson) {
+        values.push(salesperson);
+        conditions.push(`lower(coalesce(nullif(trim(o.owner_user_name),''),a.assigned_to))=lower($${values.length})`);
+      }
       const result = await query(
         `select ${alias}.*, a.company_name, a.account_code, a.assigned_to ${extraSelect}
          from ${table} ${alias} join crm_accounts a on a.id=${alias}.${accountField}
@@ -399,6 +407,8 @@ function createCrmRouter({ query, requireAppAuth }) {
     try {
       const values=[]; const scope=accountScope("a",request.crmUser,values); const accountId=Number(request.query.accountId||0); const conditions=["a.archived_at is null",scope];
       if(accountId){values.push(accountId);conditions.push(`v.account_id=$${values.length}`)}
+      const salesperson=cleanText(request.query.salesperson,200);
+      if(salesperson){values.push(salesperson);conditions.push(`lower(v.created_by)=lower($${values.length})`);}
       const result=await query(`select v.*,a.company_name,a.account_code,a.assigned_to,c.full_name as contact_name from crm_visits v join crm_accounts a on a.id=v.account_id left join crm_contacts c on c.id=v.contact_id where ${conditions.join(" and ")} order by v.visit_date desc,v.created_at desc limit 1500`,values);
       response.json({ok:true,rows:result.rows});
     } catch(error){next(error)}
@@ -612,7 +622,10 @@ function createCrmRouter({ query, requireAppAuth }) {
     try{
       if(!request.crmUser.permissions.exportAccess)return response.status(403).json({ok:false,error:"CRM export/download permission is not enabled for this account."});
       const entity=cleanText(request.params.entity,50).toLowerCase(); const allowed={accounts:{table:"crm_accounts",alias:"a",cols:["account_code","company_name","status","segment","industry","branch","territory","assigned_to","source","country","city","services_interest","trade_lanes","potential_value","currency","next_action","next_action_date"]},opportunities:{table:"crm_opportunities",alias:"o",cols:["opportunity_no","title","stage","status","service_type","origin","destination","estimated_value","currency","probability","expected_close_date","owner_user_name"]}}; const cfg=allowed[entity]; if(!cfg)return response.status(400).json({ok:false,error:"This CRM export is not available."});
-      const values=[]; const scope=accountScope("a",request.crmUser,values); let sql;if(entity==="accounts")sql=`select ${cfg.cols.map(c=>`a.${c}`).join(",")} from crm_accounts a where a.archived_at is null and ${scope} order by a.company_name`;else sql=`select ${cfg.cols.map(c=>`o.${c}`).join(",")},a.company_name from crm_opportunities o join crm_accounts a on a.id=o.account_id where a.archived_at is null and ${scope} order by o.created_at desc`;
+      const values=[]; let scope=accountScope("a",request.crmUser,values);
+      const salesperson=cleanText(request.query.salesperson,200);
+      if(entity==="opportunities"&&salesperson){values.push(salesperson);scope+=` and lower(coalesce(nullif(trim(o.owner_user_name),''),a.assigned_to))=lower($${values.length})`;}
+      let sql;if(entity==="accounts")sql=`select ${cfg.cols.map(c=>`a.${c}`).join(",")} from crm_accounts a where a.archived_at is null and ${scope} order by a.company_name`;else sql=`select ${cfg.cols.map(c=>`o.${c}`).join(",")},a.company_name from crm_opportunities o join crm_accounts a on a.id=o.account_id where a.archived_at is null and ${scope} order by o.created_at desc`;
       const result=await query(sql,values); const headers=Object.keys(result.rows[0]||Object.fromEntries(cfg.cols.map(c=>[c,""]))); const csv=[headers.join(","),...result.rows.map(r=>headers.map(h=>csvCell(r[h])).join(","))].join("\n"); response.setHeader("Content-Type","text/csv; charset=utf-8"); response.setHeader("Content-Disposition",`attachment; filename=apollo-crm-${entity}-${new Date().toISOString().slice(0,10)}.csv`); response.send(csv);
     }catch(error){next(error)}
   });

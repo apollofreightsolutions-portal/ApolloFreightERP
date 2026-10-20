@@ -1,0 +1,19 @@
+{
+  "baseArchive": "(25)ApolloFreightERP-main (25).zip",
+  "baseSHA256": "5e4915b5372c4401ab21451301bc1212b66acef04dad23967a50731960739fe7",
+  "modified": [
+    "server/src/crm.js",
+    "server/src/customer-compliance.js",
+    "server/src/index.js",
+    "web/app-runtime.js",
+    "web/app.js",
+    "web/crm-portal.js",
+    "web/customer-compliance.js",
+    "web/index.html"
+  ],
+  "added": [
+    "V26-START-HERE.md",
+    "server/src/compliance-spreadsheet.js",
+    "server/src/crm-reviews.js"
+  ]
+}

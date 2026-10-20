@@ -1,4 +1,4 @@
-import "./app-runtime.js?v=apollo-live-branch-20261018-3";
+import "./app-runtime.js?v=apollo-v26-crm-excel-20261020";
 import "./hr-workflow-links.js?v=apollo-v241-notify-20261016-1";
 
 import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {
@@ -12,7 +12,7 @@ import("./hs-code-customer-portal.js").catch((error) => {
 });
 
 
-import("./crm-portal.js").catch((error) => {
+import("./crm-portal.js?v=apollo-v26-crm-excel-20261020").catch((error) => {
   console.warn("CRM Portal is unavailable.", error);
 });
 
@@ -24,6 +24,6 @@ import("./apollo-ai.js").catch((error) => {
 import("./connected-chat.js").catch((error) => {
   console.warn("Connected Chat is unavailable.", error);
 });
-import("./customer-compliance.js?v=apollo-notify-audit-20261015-2").catch((error) => {
+import("./customer-compliance.js?v=apollo-v26-crm-excel-20261020").catch((error) => {
   console.warn("Customer Compliance is unavailable.", error);
 });

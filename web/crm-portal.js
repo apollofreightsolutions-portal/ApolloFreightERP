@@ -14,9 +14,12 @@ const cache = {
   reports: null,
   users: null,
   adminUsers: null,
+  salespeople: null,
   loading: new Set(),
   errors: {}
 };
+
+const salespersonFilters = {opportunities: "", visits: ""};
 
 function session() {
   try { return JSON.parse(sessionStorage.getItem(CRM_SESSION_KEY) || "null") || {}; } catch { return {}; }
@@ -73,7 +76,8 @@ const endpoints = {
   activity: "/activity",
   reports: "/reports",
   users: "/users",
-  adminUsers: "/admin/users"
+  adminUsers: "/admin/users",
+  salespeople: "/salespeople"
 };
 
 async function load(key, force = false) {
@@ -82,7 +86,9 @@ async function load(key, force = false) {
   cache.loading.add(key);
   delete cache.errors[key];
   try {
-    const result = await request(endpoints[key]);
+    const selected = salespersonFilters[key] || "";
+    const result = await request(endpoints[key] + (selected ? `?salesperson=${encodeURIComponent(selected)}` : ""));
+    if (selected !== (salespersonFilters[key] || "")) return null;
     cache[key] = key === "me" ? result.user : key === "dashboard" ? result : key === "reports" ? result : result.rows || [];
   } catch (error) {
     cache.errors[key] = error.message;
@@ -154,19 +160,57 @@ function renderContacts() {
   return shell(body,{title:"Contacts",subtitle:"Contacts inherit account ownership automatically, so reassignment immediately changes visibility.",actions:`<button data-crm-action="new-contact">New Contact</button>`});
 }
 
+function salespersonFilter(entity) {
+  ensure("salespeople");
+  const values = new Map();
+  for (const row of cache.salespeople || []) if (row.entity === entity) values.set(String(row.salesperson).toLowerCase(),row.salesperson);
+  for (const row of cache[entity] || []) { const name=entity==="visits"?row.created_by:(row.owner_user_name||row.assigned_to); if(name)values.set(String(name).toLowerCase(),name); }
+  const current=salespersonFilters[entity];
+  if(current)values.set(current.toLowerCase(),current);
+  return `<div class="crm-toolbar"><label>Salesperson — ${entity==="visits"?"visit logged by":"opportunity owner"} <select data-crm-salesperson="${entity}"><option value="">All permitted salespeople</option>${[...values.values()].sort((a,b)=>a.localeCompare(b)).map(name=>`<option value="${esc(name)}" ${name.toLowerCase()===current.toLowerCase()?"selected":""}>${esc(name)}</option>`).join("")}</select></label></div>`;
+}
+function reviewButton(entity,id) { return `<button type="button" class="secondary-button" data-crm-action="review-record" data-entity="${entity}" data-id="${id}">Comments / Review</button>`; }
+
+async function openReview(entity,id,notice="") {
+  try {
+    const result=await request(`/reviews/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`);
+    const history=(result.rows||[]).map(row=>{
+      const detail=typeof row.details_json==="string"?JSON.parse(row.details_json):row.details_json||{};
+      return `<article class="crm-panel"><div class="crm-panel-body"><strong>${esc(row.actor_user_name)}</strong><span class="crm-sub">${esc(new Date(row.created_at).toLocaleString())} · To: ${esc(detail.recipient||"")}</span><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(detail.comment)}</p>${detail.dueDate?`<p>Follow-up date: ${esc(detail.dueDate)}</p>`:""}</div></article>`;
+    }).join("")||empty("No review comments yet.");
+    const canWrite=result.canComment&&result.recipient;
+    modal(`Review: ${result.recordLabel}`,`
+      <div class="wide"><strong>${esc(result.companyName)}</strong>${notice?`<p role="status">${esc(notice)}</p>`:""}${history}</div>
+      ${canWrite?`<div class="wide crm-inline-note">Send to: <strong>${esc(result.recipient)}</strong>. This saves the comment, adds a CRM follow-up and sends an email.</div><label class="wide">Comment / requested follow-up<textarea name="comment" required maxlength="5000" rows="5"></textarea></label>${field("Follow-up date (optional)","dueDate","","date")}<input type="hidden" name="entity" value="${esc(entity)}"><input type="hidden" name="id" value="${esc(id)}">`:result.canComment?'<p class="wide">Assign an active CRM salesperson to this account before sending a comment.</p>':""}
+    `,{formType:canWrite?"review-comment":"review-read",saveLabel:canWrite?"Send comment":"Close"});
+  } catch(error) { crmFailed("Could not open review",error.message); }
+}
+async function sendReview(form,data) {
+  const button=form.querySelector('button[type="submit"]');
+  if(button.disabled)return;
+  button.disabled=true;button.textContent="Sending…";
+  try {
+    const result=await request(`/reviews/${encodeURIComponent(data.entity)}/${encodeURIComponent(data.id)}`,{method:"POST",body:JSON.stringify({comment:data.comment,dueDate:data.dueDate})});
+    invalidate("tasks","dashboard","activity");
+    await openReview(data.entity,data.id,result.message);
+    refresh();
+  } catch(error) { crmFailed("Comment could not be saved",error.message); }
+  finally {button.disabled=false;button.textContent="Send comment";}
+}
+
 function renderOpportunities() {
   ensure("opportunities","accounts"); if(!cache.opportunities) return shell(loading("opportunities"),{title:"Opportunities",subtitle:"A freight-focused pipeline from qualification through won or lost."});
   const rows=cache.opportunities; const stages=["Qualification","Discovery","Proposal","Negotiation","Won"];
-  const columns=stages.map(stage=>{const items=rows.filter(r=>String(r.stage||"").toLowerCase()===stage.toLowerCase() && String(r.status||"Open").toLowerCase()!=="lost"); const total=items.reduce((a,r)=>a+Number(r.estimated_value||0),0); return `<section class="crm-stage"><div class="crm-stage-head"><strong>${esc(stage)}</strong><span>${items.length} · ${money(total,"AED")}</span></div>${items.length?items.map(r=>`<div class="crm-opportunity-card" data-crm-action="edit-opportunity" data-id="${r.id}"><strong>${esc(r.title)}</strong><span>${esc(r.company_name)}</span><span>${esc(text(r.service_type))} · ${esc(text(r.origin,""))}${r.origin&&r.destination?" → ":""}${esc(text(r.destination,""))}</span><span>Owner: ${esc(text(r.owner_user_name||r.assigned_to))}</span><div class="value">${money(r.estimated_value,r.currency)} · ${Number(r.probability||0)}%</div></div>`).join(""):empty("No opportunities")}</section>`}).join("");
+  const columns=stages.map(stage=>{const items=rows.filter(r=>String(r.stage||"").toLowerCase()===stage.toLowerCase() && String(r.status||"Open").toLowerCase()!=="lost"); const total=items.reduce((a,r)=>a+Number(r.estimated_value||0),0); return `<section class="crm-stage"><div class="crm-stage-head"><strong>${esc(stage)}</strong><span>${items.length} · ${money(total,"AED")}</span></div>${items.length?items.map(r=>`<div class="crm-opportunity-card" data-crm-action="edit-opportunity" data-id="${r.id}"><strong>${esc(r.title)}</strong><span>${esc(r.company_name)}</span><span>${esc(text(r.service_type))} · ${esc(text(r.origin,""))}${r.origin&&r.destination?" → ":""}${esc(text(r.destination,""))}</span><span>Owner: ${esc(text(r.owner_user_name||r.assigned_to))}</span><div class="value">${money(r.estimated_value,r.currency)} · ${Number(r.probability||0)}%</div>${reviewButton("opportunities",r.id)}</div>`).join(""):empty("No opportunities")}</section>`}).join("");
   const exportButton=crmSession().crmExportAccess?`<button class="secondary-button" data-crm-export="opportunities">Export CSV</button>`:"";
-  return shell(`${panel("Pipeline Board","Drag-free by design: stage changes are recorded as auditable edits.",`<div class="crm-pipeline">${columns}</div>`)}${rows.some(r=>String(r.status||"").toLowerCase()==="lost")?panel("Lost Opportunities","Retained for analysis instead of being deleted",`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Opportunity</th><th>Account</th><th>Value</th><th>Reason</th><th>Owner</th></tr></thead><tbody>${rows.filter(r=>String(r.status||"").toLowerCase()==="lost").map(r=>`<tr><td>${esc(r.title)}</td><td>${esc(r.company_name)}</td><td>${money(r.estimated_value,r.currency)}</td><td>${esc(text(r.lost_reason))}</td><td>${esc(text(r.owner_user_name))}</td></tr>`).join("")}</tbody></table></div>`):""}`,
+  return shell(`${salespersonFilter("opportunities")}${panel("Pipeline Board","Drag-free by design: stage changes are recorded as auditable edits.",`<div class="crm-pipeline">${columns}</div>`)}${rows.some(r=>String(r.status||"").toLowerCase()==="lost")?panel("Lost Opportunities","Retained for analysis instead of being deleted",`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Opportunity</th><th>Account</th><th>Value</th><th>Reason</th><th>Owner</th><th></th></tr></thead><tbody>${rows.filter(r=>String(r.status||"").toLowerCase()==="lost").map(r=>`<tr><td>${esc(r.title)}</td><td>${esc(r.company_name)}</td><td>${money(r.estimated_value,r.currency)}</td><td>${esc(text(r.lost_reason))}</td><td>${esc(text(r.owner_user_name))}</td><td>${reviewButton("opportunities",r.id)}</td></tr>`).join("")}</tbody></table></div>`):""}`,
   {title:"Opportunities",subtitle:"Pipeline value, probability, lanes, service type, competitor and next step are captured per opportunity.",actions:`<button data-crm-action="new-opportunity">New Opportunity</button>${exportButton}`});
 }
 
 function renderVisits() {
   ensure("visits","accounts","contacts"); if(!cache.visits) return shell(loading("visits"),{title:"Sales Visits",subtitle:"Proof of field activity with outcomes and next steps."});
-  const rows=cache.visits; const table=rows.length?`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Date</th><th>Account</th><th>Contact</th><th>Type</th><th>Purpose</th><th>Outcome</th><th>Follow-up</th><th>Logged By</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td class="crm-primary">${date(r.visit_date)}<span class="crm-sub">${esc(text(r.visit_time,""))}</span></td><td>${esc(r.company_name)}</td><td>${esc(text(r.contact_name))}</td><td>${badge(r.visit_type,"navy")}</td><td>${esc(text(r.purpose))}</td><td>${esc(text(r.outcome))}</td><td>${date(r.follow_up_date)}<span class="crm-sub">${esc(text(r.next_step,""))}</span></td><td>${esc(text(r.created_by))}</td><td><button class="secondary-button" data-crm-action="edit-visit" data-id="${r.id}">Edit</button></td></tr>`).join("")}</tbody></table></div>`:empty("No client visits logged yet.");
-  return shell(table,{title:"Sales Visits",subtitle:"Visits stay attached to the account, even if the salesperson later leaves Apollo.",actions:`<button data-crm-action="new-visit">Log Visit</button>`});
+  const rows=cache.visits; const table=rows.length?`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Date</th><th>Account</th><th>Contact</th><th>Type</th><th>Purpose</th><th>Outcome</th><th>Follow-up</th><th>Logged By</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td class="crm-primary">${date(r.visit_date)}<span class="crm-sub">${esc(text(r.visit_time,""))}</span></td><td>${esc(r.company_name)}</td><td>${esc(text(r.contact_name))}</td><td>${badge(r.visit_type,"navy")}</td><td>${esc(text(r.purpose))}</td><td>${esc(text(r.outcome))}</td><td>${date(r.follow_up_date)}<span class="crm-sub">${esc(text(r.next_step,""))}</span></td><td>${esc(text(r.created_by))}</td><td><button class="secondary-button" data-crm-action="edit-visit" data-id="${r.id}">Edit</button>${reviewButton("visits",r.id)}</td></tr>`).join("")}</tbody></table></div>`:empty("No client visits logged yet.");
+  return shell(salespersonFilter("visits")+table,{title:"Sales Visits",subtitle:"Visits stay attached to the account, even if the salesperson later leaves Apollo.",actions:`<button data-crm-action="new-visit">Log Visit</button>`});
 }
 
 function renderMeetings() {
@@ -286,6 +330,8 @@ function openPermissions(userName){const r=(cache.adminUsers||[]).find(u=>u.user
 function openAccountView(id){const a=recordBy("accounts",id);if(!a)return; const c=(cache.contacts||[]).filter(x=>String(x.account_id)===String(id)); const o=(cache.opportunities||[]).filter(x=>String(x.account_id)===String(id)); const v=(cache.visits||[]).filter(x=>String(x.account_id)===String(id)); const m=(cache.meetings||[]).filter(x=>String(x.account_id)===String(id)); modal(a.company_name,`<div class="wide crm-account-banner"><div><h3>${esc(a.company_name)}</h3><div class="crm-account-meta">${badge(a.status,statusTone(a.status))}${badge(a.relationship_health||"New","navy")}<span>${esc(text(a.industry))}</span><span>${esc(text(a.city))}</span></div></div><div class="crm-account-owner"><span>Assigned Salesperson</span><strong>${esc(a.assigned_to)}</strong></div></div><div class="wide crm-grid-equal"><div><strong>Services / lanes</strong><p>${esc(text(a.services_interest))}</p><p>${esc(text(a.trade_lanes))}</p></div><div><strong>Commercial potential</strong><p>${money(a.potential_value,a.currency)}</p><p>${Number(a.estimated_monthly_shipments||0)} est. monthly shipments</p></div></div><div class="wide"><strong>Relationship record</strong><p>${c.length} contacts · ${o.length} opportunities · ${v.length} visits · ${m.length} meeting minutes</p><p><strong>Next action:</strong> ${esc(text(a.next_action))} · ${date(a.next_action_date)}</p></div>`,{formType:"view-account",saveLabel:"Close"}); const d=document.querySelector("#crmDialog"); const form=d.querySelector("form"); form.addEventListener("submit",e=>{e.preventDefault();d.close();},{once:true}); }
 
 async function submitForm(form){const type=form.dataset.crmForm; if(!type||type==="view-account")return; const data=Object.fromEntries(new FormData(form).entries()); const d=document.querySelector("#crmDialog"); try{
+  if(type==="review-read"){d?.close();return;}
+  if(type==="review-comment"){await sendReview(form,data);return;}
   let path,method="POST",payload={...data};
   if(type==="account"){path=data.id?`/accounts/${data.id}`:"/accounts";method=data.id?"PUT":"POST";delete payload.id;}
   else if(type==="contact"){path=data.id?`/contacts/${data.id}`:"/contacts";method=data.id?"PUT":"POST";delete payload.id;payload.isPrimary=data.isPrimary==="true";}
@@ -296,19 +342,20 @@ async function submitForm(form){const type=form.dataset.crmForm; if(!type||type=
   else if(type==="permissions"){path=`/admin/users/${encodeURIComponent(data.userName)}`;method="PUT";delete payload.userName; for(const k of ["crmPortalAccess","crmViewAllAccounts","crmManageAssignments","crmExportAccess","crmArchiveAccess","crmViewTeamReports","crmAdminAccess"])payload[k]=payload[k]==="true";}
   else if(type==="reassign"){path="/reassign";payload=data;}
   else return;
-  await request(path,{method,body:JSON.stringify(payload)}); d?.close(); invalidate("dashboard","accounts","contacts","opportunities","visits","meetings","tasks","activity","reports","users","adminUsers"); refresh();
+  await request(path,{method,body:JSON.stringify(payload)}); d?.close(); invalidate("dashboard","accounts","contacts","opportunities","visits","meetings","tasks","activity","reports","users","adminUsers","salespeople"); refresh();
   crmSuccess("CRM saved", "The CRM record was saved successfully.");
  }catch(error){crmFailed("CRM save failed", error.message);}}
 
 async function completeTask(id){const r=recordBy("tasks",id);if(!r)return;try{await request(`/tasks/${id}`,{method:"PUT",body:JSON.stringify({status:"Completed",title:r.title,description:r.description,dueDate:date(r.due_date)==="—"?null:date(r.due_date),priority:r.priority,assignedTo:r.assigned_to})});invalidate("dashboard","tasks","activity","reports");refresh();crmSuccess("Task completed", "The CRM follow-up was marked completed.");}catch(error){crmFailed("Task update failed", error.message)}}
 async function doReassign(form){await submitForm(form);}
-async function exportEntity(entity){try{const response=await request(`/export/${entity}`);const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`apollo-crm-${entity}-${today()}.csv`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);crmSuccess("Export ready", `${entity} data was downloaded.`);}catch(error){crmFailed("Export failed", error.message)}}
+async function exportEntity(entity){try{const response=await request(`/export/${entity}${salespersonFilters[entity]?`?salesperson=${encodeURIComponent(salespersonFilters[entity])}`:""}`);const blob=await response.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`apollo-crm-${entity}-${today()}.csv`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);crmSuccess("Export ready", `${entity} data was downloaded.`);}catch(error){crmFailed("Export failed", error.message)}}
 
 function bind(){
   document.addEventListener("click",event=>{
     const nav=event.target.closest("[data-crm-nav]"); if(nav){const button=[...document.querySelectorAll("#moduleNav button")].find(b=>b.dataset.module===nav.dataset.crmNav);button?.click();return;}
     const exp=event.target.closest("[data-crm-export]"); if(exp){exportEntity(exp.dataset.crmExport);return;}
     const b=event.target.closest("[data-crm-action]"); if(!b)return; const id=b.dataset.id; const action=b.dataset.crmAction;
+    if(action==="review-record"){openReview(b.dataset.entity,id);return;}
     if(action==="new-account")openAccount();else if(action==="edit-account")openAccount(id);else if(action==="view-account"){ensure("contacts","opportunities","visits","meetings");setTimeout(()=>openAccountView(id),cache.contacts&&cache.opportunities&&cache.visits&&cache.meetings?0:500)}
     else if(action==="new-contact")openContact();else if(action==="edit-contact")openContact(id);else if(action==="new-opportunity")openOpportunity();else if(action==="edit-opportunity")openOpportunity(id);
     else if(action==="new-visit")openVisit();else if(action==="edit-visit")openVisit(id);else if(action==="new-meeting")openMeeting();else if(action==="edit-meeting")openMeeting(id);
@@ -319,6 +366,8 @@ function bind(){
     if(event.target.matches('[data-crm-filter="account-search"]')){const q=event.target.value.toLowerCase();document.querySelectorAll(".crm-table tbody tr").forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));}
   });
   document.addEventListener("change",event=>{
+    const entity=event.target.dataset.crmSalesperson;
+    if(entity==="opportunities"||entity==="visits"){salespersonFilters[entity]=event.target.value;invalidate(entity);refresh();return;}
     if(event.target.matches('[data-crm-filter="account-status"]')){const v=event.target.value.toLowerCase();document.querySelectorAll(".crm-table tbody tr").forEach(tr=>{tr.hidden=v!=="all"&&!tr.textContent.toLowerCase().includes(v);});}
   });
 }
@@ -328,7 +377,7 @@ bind();
 window.ApolloCRM = {
   renderDashboard, renderAccounts, renderContacts, renderOpportunities, renderVisits, renderMeetings,
   renderTasks, renderActivity, renderReports, renderTeam, renderAdmin,
-  invalidate: () => { Object.keys(cache).forEach(k=>{if(!["loading","errors"].includes(k))cache[k]=null;}); }
+  invalidate: () => { salespersonFilters.opportunities="";salespersonFilters.visits=""; Object.keys(cache).forEach(k=>{if(!["loading","errors"].includes(k))cache[k]=null;}); }
 };
 
 // If the CRM module loads after the main runtime has already rendered a CRM session,

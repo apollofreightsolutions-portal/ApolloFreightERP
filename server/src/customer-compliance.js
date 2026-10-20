@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { GoogleAuth } = require("google-auth-library");
 const XLSX = require("xlsx");
+const { extractSpreadsheetInvoice } = require("./compliance-spreadsheet");
 
 const MASTER_PATH = path.join(__dirname, "..", "data", "kuwait-hs-master-2025.json");
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
@@ -11,16 +12,16 @@ const VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 const READY_THRESHOLD = 95;
 const MAX_FILES = 3;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
-const MAX_LINE_ITEMS = 60;
+const MAX_LINE_ITEMS = 1500;
 const ANALYSIS_TTL_HOURS = 24;
 const SUPPORTED_MIME = new Set([
   "application/pdf", "image/jpeg", "image/png", "image/webp",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel"
+  "application/vnd.ms-excel", "application/vnd.ms-excel.sheet.macroenabled.12"
 ]);
 const SPREADSHEET_MIME = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-excel"
+  "application/vnd.ms-excel", "application/vnd.ms-excel.sheet.macroenabled.12"
 ]);
 const STOP_WORDS = new Set([
   "a","an","and","as","at","by","for","from","in","into","is","of","on","or","the","to","with","without",
@@ -52,10 +53,10 @@ function displayCode(value) { return cleanText(value, 40); }
 function tokenize(value) {
   return [...new Set(normalizeText(value).split(" ").filter((token) => token.length > 1 && !STOP_WORDS.has(token)))];
 }
-function descriptionSimilarity(queryText, candidate) {
-  const queryTokens = tokenize(queryText);
+function descriptionSimilarity(queryText, candidate, prepared) {
+  const queryTokens = prepared?.tokens || tokenize(queryText);
   if (!queryTokens.length) return 0;
-  const queryNorm = normalizeText(queryText);
+  const queryNorm = prepared?.norm || normalizeText(queryText);
   const candidateNorm = String(candidate?._norm || "");
   if (!candidateNorm) return 0;
 
@@ -67,7 +68,7 @@ function descriptionSimilarity(queryText, candidate) {
     if (paddedCandidate.includes(` ${token} `)) common += 1;
   }
   const recall = common / queryTokens.length;
-  const candidateTokenCount = candidateNorm ? (candidateNorm.match(/ /g)?.length || 0) + 1 : 0;
+  const candidateTokenCount = candidate._tokenCount ?? ((candidateNorm.match(/ /g)?.length || 0) + 1);
   const precision = common / Math.max(1, Math.min(candidateTokenCount, queryTokens.length + 5));
   const tokenScore = (0.80 * recall) + (0.20 * precision);
   const phraseBoost = queryNorm.length >= 5 && candidateNorm.includes(queryNorm) ? 0.16 : 0;
@@ -94,7 +95,8 @@ function loadMaster() {
     return {
       ...row,
       _code: normalizeCode(row.hsCode),
-      _norm: normalizeText(searchable)
+      _norm: normalizeText(searchable),
+      _tokenCount: (normalizeText(searchable).match(/ /g)?.length || 0) + 1
     };
   });
   cachedIndex = new Map(cachedMaster.map((row) => [row._code, row]));
@@ -138,15 +140,20 @@ function findCandidates(description, submittedCode, excludeCode = "") {
   const master = loadMaster();
   const normalizedExclude = normalizeCode(excludeCode);
   const scored = [];
+  const prepared = {tokens: tokenize(description), norm: normalizeText(description)};
+  // Generic category words do not justify recommending a replacement code.
+  if (!prepared.tokens.length || /^(accessories|apparel|clothing|footwear|goods|items)$/i.test(prepared.norm)) return [];
   for (const row of master) {
     if (normalizedExclude && row._code === normalizedExclude) continue;
     if (row.importProhibition) continue; // never recommend a prohibited replacement
-    const descScore = descriptionSimilarity(description, row);
+    const descScore = descriptionSimilarity(description, row, prepared);
     const prefix = submittedCode ? commonPrefixRatio(submittedCode, row.hsCode) : 0;
     if (descScore < 0.12 && prefix < 0.72) continue;
     const score = submittedCode ? Math.max(descScore, (0.8 * descScore) + (0.2 * prefix)) : descScore;
     const restrictionPenalty = row.importRestriction ? 0.05 : 0;
-    scored.push({ row, score: score - restrictionPenalty, confidence: candidateConfidence(description, row, submittedCode), descScore, prefix });
+    let confidence = Math.round(60 + 40 * score);
+    if (prepared.tokens.length < 2) confidence = Math.min(confidence, 92);
+    scored.push({ row, score: score - restrictionPenalty, confidence: clamp(confidence, 0, 99), descScore, prefix });
   }
   return scored.sort((a, b) => b.score - a.score || b.confidence - a.confidence).slice(0, 5);
 }
@@ -203,7 +210,10 @@ function analyzeLineItem(line, index) {
     matchedMaster: exact ? rowPublic(exact) : null,
     suggestion,
     effectiveHsCode: acceptedCode || submittedDisplay,
-    acceptedSuggestion: false
+    acceptedSuggestion: false,
+    sourceFile: cleanText(line?.sourceFile, 180),
+    sourceSheet: cleanText(line?.sourceSheet, 200),
+    sourceRow: Number(line?.sourceRow) || null
   };
 }
 
@@ -251,7 +261,7 @@ function spreadsheetText(file) {
     if (!isXlsx && !isXls) throw new Error("Invalid Excel container");
     workbook = XLSX.read(bytes, { type: "buffer", sheetRows: 501, cellFormula: false, cellHTML: false });
   } catch {
-    const error = new Error(`${file.fileName || "The Excel file"} could not be read. Upload a valid, unprotected .xls or .xlsx workbook.`);
+    const error = new Error(`${file.fileName || "The Excel file"} could not be read. Upload a valid, unprotected .xls, .xlsx or .xlsm workbook.`);
     error.status = 422;
     throw error;
   }
@@ -326,7 +336,9 @@ async function providerRequest({ files, destination }) {
       vertexAuthClient = await auth.getClient();
     }
     Object.assign(headers, await vertexAuthClient.getRequestHeaders());
-    endpoint = `https://${encodeURIComponent(location)}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+    // Google uses an unprefixed hostname for global, unlike regional endpoints.
+    const host = location === 'global' ? 'aiplatform.googleapis.com' : `${encodeURIComponent(location)}-aiplatform.googleapis.com`;
+    endpoint = `https://${host}/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
   } else {
     headers["x-goog-api-key"] = apiKey;
     endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -353,11 +365,25 @@ async function providerRequest({ files, destination }) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.warn(`Apollo Compliance document AI error (${response.status}):`, cleanText(payload?.error?.message || "unknown", 600));
-    const error = new Error(response.status === 429 ? "Document AI usage limit reached. Please try again shortly." : "The shipment documents could not be analyzed by Apollo AI.");
-    error.status = response.status === 429 ? 429 : 502;
+    // Keep provider internals in server logs, but make the customer's next step clear.
+    const failures = {
+      400: [422, 'The document analysis service rejected this request. Check that the PDF opens normally and is not password-protected. If it does, contact Apollo support. Reference: DOC-AI-400.'],
+      401: [503, 'Document analysis is temporarily unavailable because its service authentication needs attention. Please contact Apollo support. Reference: DOC-AI-401.'],
+      403: [503, 'Document analysis is temporarily unavailable because its service access needs attention. Please contact Apollo support. Reference: DOC-AI-403.'],
+      404: [503, 'Document analysis is temporarily unavailable because its model or service endpoint needs attention. Please contact Apollo support. Reference: DOC-AI-404.'],
+      429: [429, 'Document AI usage limit reached. Please try again shortly. Reference: DOC-AI-429.']
+    };
+    const [status, message] = failures[response.status] || [502, 'The document analysis service is temporarily unavailable. Please try again later or contact Apollo support. Reference: DOC-AI-UPSTREAM.'];
+    const error = new Error(message);
+    error.status = status;
     throw error;
   }
-  const text = (payload?.candidates?.[0]?.content?.parts || []).map((part) => typeof part?.text === "string" ? part.text : "").join("\n");
+  const candidate = payload?.candidates?.[0];
+  if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+    const error = new Error("Document analysis did not finish. Split the documents into smaller files and try again; no partial check was saved.");
+    error.status = 422; throw error;
+  }
+  const text = (candidate?.content?.parts || []).map((part) => typeof part?.text === "string" ? part.text : "").join("\n");
   return extractJson(text);
 }
 
@@ -424,35 +450,44 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
   router.use(requireCustomerPortalAuth);
 
   router.get("/meta", (_request, response) => {
-    return response.json({ ok: true, destination: "Kuwait", master: "Kuwait Customs HS Master 2025", hsCodes: cachedMaster.length, readyThreshold: READY_THRESHOLD, supportedDocumentTypes: [...SUPPORTED_MIME] });
+    return response.json({ ok: true, destination: "Kuwait", master: "Kuwait Customs HS Master 2025", hsCodes: loadMaster().length, readyThreshold: READY_THRESHOLD, supportedDocumentTypes: [...SUPPORTED_MIME] });
   });
 
   router.post("/analyze", async (request, response, next) => {
     try {
       const destination = cleanText(request.body?.destination || "", 120);
       if (!isKuwaitDestination(destination)) return response.status(422).json({ ok: false, error: "Apollo Connected currently has a compliance master for Kuwait only. Select Kuwait as destination for this check." });
-      const files = Array.isArray(request.body?.files) ? request.body.files.slice(0, MAX_FILES) : [];
+      const files = Array.isArray(request.body?.files) ? request.body.files : [];
+      if (files.length > MAX_FILES) return response.status(422).json({ok: false, error: "Select up to 3 documents for one compliance analysis."});
       if (!files.length) return response.status(400).json({ ok: false, error: "Upload at least one invoice or packing-list document to analyze." });
       let totalBytes = 0;
       const normalizedFiles = files.map((file) => {
         const fileName = cleanText(file?.fileName, 180);
         const mimeType = /\.xlsx$/i.test(fileName) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : /\.xlsm$/i.test(fileName) ? "application/vnd.ms-excel.sheet.macroenabled.12"
           : /\.xls$/i.test(fileName) ? "application/vnd.ms-excel" : cleanText(file?.mimeType, 120).toLowerCase();
         const contentBase64 = String(file?.contentBase64 || "").replace(/^data:[^,]+,/, "");
-        if (!SUPPORTED_MIME.has(mimeType)) { const error = new Error(`AI document analysis currently supports PDF, JPG, PNG, WebP and Excel (.xls/.xlsx). ${cleanText(file?.fileName, 120) || "One file"} is not a supported document type.`); error.status = 415; throw error; }
+        if (!SUPPORTED_MIME.has(mimeType)) { const error = new Error(`AI document analysis currently supports PDF, JPG, PNG, WebP and Excel (.xls/.xlsx/.xlsm). ${cleanText(file?.fileName, 120) || "One file"} is not a supported document type.`); error.status = 415; throw error; }
         const bytes = Buffer.byteLength(contentBase64, "base64"); totalBytes += bytes;
         if (totalBytes > MAX_TOTAL_BYTES) { const error = new Error("For AI analysis, keep the selected documents to 10 MB total. Larger files can still be attached after the check."); error.status = 413; throw error; }
         const normalized = { fileName, mimeType, contentBase64 };
         if (SPREADSHEET_MIME.has(mimeType)) {
           normalized.text = spreadsheetText(normalized);
+          normalized.invoice = extractSpreadsheetInvoice(normalized);
           if (!normalized.text) { const error = new Error(`${normalized.fileName || "The Excel file"} does not contain readable worksheet data.`); error.status = 422; throw error; }
         }
         return normalized;
       });
       if (totalBytes > MAX_TOTAL_BYTES) return response.status(413).json({ ok: false, error: "For AI analysis, keep the selected documents to 10 MB total. Larger files can still be attached after the check." });
 
-      const extraction = await providerRequest({ files: normalizedFiles, destination });
-      const rawLines = Array.isArray(extraction?.lineItems) ? extraction.lineItems.slice(0, MAX_LINE_ITEMS) : [];
+      // A single recognized invoice is deterministic: no AI copying, token limit,
+      // network dependency or lost rows. Other layouts retain document AI.
+      const extraction = normalizedFiles.length === 1 && normalizedFiles[0].invoice
+        ? normalizedFiles[0].invoice : await providerRequest({ files: normalizedFiles, destination });
+      const rawLines = Array.isArray(extraction?.lineItems) ? extraction.lineItems : [];
+      const knownCount = Math.max(0, ...normalizedFiles.map(f => f.invoice?.lineItems.length || 0));
+      if (rawLines.length < knownCount) { const error = new Error("Document analysis omitted Excel invoice rows. Analyze the invoice on its own to check every row; no partial result was saved."); error.status = 422; throw error; }
+      if (rawLines.length > MAX_LINE_ITEMS) { const error = new Error(`This analysis contains more than ${MAX_LINE_ITEMS} items. Split the documents into smaller files; no partial result was saved.`); error.status = 422; throw error; }
       const lines = rawLines.map((line, index) => analyzeLineItem(line, index));
       const cargoLines = (Array.isArray(extraction?.cargoLines) ? extraction.cargoLines : []).map(normalizeCargoLine).filter((line) => line.count > 0 && (line.total > 0 || line.weightKg > 0));
       const status = overallStatus(lines);

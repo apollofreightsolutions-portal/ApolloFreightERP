@@ -90,9 +90,10 @@ function renderResult(panel, result, analysisId) {
     const confidence = Number(suggestion?.confidence || item.confidence || 0);
     const kind = item.status === "BLOCKED" ? "blocked" : item.status === "REVIEW" ? "review" : "";
     return `<div class="apollo-attention-item ${kind}">
-      <div class="apollo-attention-desc">${esc(item.description || "Unnamed line item")}</div>
+      <div class="apollo-attention-desc">${esc(item.description || "Unnamed line item")}${item.sourceRow ? ` — ${esc(item.sourceSheet || "Sheet")}, row ${Number(item.sourceRow)}` : ""}</div>
       <div class="apollo-attention-grid">
         <div><strong>Submitted HS</strong>${esc(formatCode(item.submittedHsCode))}</div>
+        <div><strong>Master description</strong>${esc(item.matchedMaster?.description || "Code not found")}</div>
         <div><strong>Issue</strong>${esc(item.issue || "Needs review")}</div>
         <div><strong>Current match</strong><span class="apollo-confidence ${Number(item.confidence || 0) >= READY_THRESHOLD ? "high" : "low"}">${Number(item.confidence || 0)}%</span></div>
       </div>
@@ -103,10 +104,10 @@ function renderResult(panel, result, analysisId) {
       ${item.matchedMaster?.importProhibition ? `<div class="apollo-compliance-error"><strong>Import prohibition:</strong> ${esc(item.matchedMaster.importProhibition)}</div>` : ""}
     </div>`;
   }).join("");
-  panel.innerHTML = `<h3 class="apollo-attention-title">HS / description attention required</h3><p class="apollo-attention-note">Connected is showing only the line items that need attention. Passed items are hidden.</p>
+  panel.innerHTML = `<h3 class="apollo-attention-title">HS / description attention required</h3><p class="apollo-attention-note">${Number(result.totalLineItems || 0)} invoice lines checked. Items needing attention are shown below. A low description match is a review flag, not proof that the HS code is wrong. Percentages are text-match scores, not classification probabilities.</p>
     <div class="apollo-compliance-summary"><span class="apollo-compliance-pill">${Number(result.passedLineItems || 0)} passed</span><span class="apollo-compliance-pill">${attention.length} need attention</span><span class="apollo-compliance-pill">Ready threshold ${READY_THRESHOLD}%</span></div>
     ${cards || `<div class="apollo-compliance-error">No line items could be validated from the uploaded documents.</div>`}
-    <div class="apollo-extracted">Cargo/shipment details were extracted where available. Verify the populated booking fields before submission.</div>
+    <div class="apollo-extracted">Cargo/shipment details were extracted where available. Verify the populated booking fields before submission. ${(result.warnings || []).map(esc).join(" ")}</div>
     <div class="apollo-compliance-disclaimer">${esc(result.disclaimer || "")}</div>`;
 }
 function applyExtractionToForm(form, result) {
@@ -138,14 +139,14 @@ function syncEffectiveHsToForm(form, result) {
   const lines = Array.isArray(result?.lines) ? result.lines : [];
   if (!lines.length) return;
   const first = lines[0];
-  const code = first.effectiveHsCode || first.submittedHsCode || first.suggestion?.hsCode || "";
+  const code = first.effectiveHsCode || first.submittedHsCode || "";
   if (code) { setField(form, "hsCode", code); setField(form, "itemCode", code); }
 }
 async function analyze(form, panel, button) {
   const files = Array.from(form.querySelector("input[name='attachments']")?.files || []);
-  const supported = files.filter((file) => ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"].includes(String(file.type || "").toLowerCase()) || /\.(xlsx?|xls)$/i.test(file.name || ""));
+  const supported = files.filter((file) => ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", "application/vnd.ms-excel.sheet.macroenabled.12"].includes(String(file.type || "").toLowerCase()) || /\.(xlsx|xls|xlsm)$/i.test(file.name || ""));
   if (!files.length) throw new Error("Select the invoice and/or packing list first.");
-  if (!supported.length) throw new Error("AI analysis reads PDF, JPG, PNG, WebP and Excel (.xls/.xlsx) files.");
+  if (supported.length !== files.length) throw new Error("Select only PDF, JPG, PNG, WebP or Excel (.xls/.xlsx/.xlsm) files for analysis. No selected file will be silently skipped.");
   if (supported.length > 3) throw new Error("Select up to 3 documents for one compliance analysis.");
   const destination = String(form.querySelector("[name='destination']")?.value || "").trim();
   if (!/\bkuwait\b|\bkwi\b/i.test(destination)) throw new Error("The current compliance master is for Kuwait. Set Destination to Kuwait before running the check.");
@@ -160,7 +161,7 @@ async function analyze(form, panel, button) {
     for (const file of supported) {
       const lowerName = String(file.name || "").toLowerCase();
       const suppliedMime = String(file.type || "").toLowerCase();
-      const mimeType = /\.xlsx$/i.test(lowerName) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : /\.xls$/i.test(lowerName) ? "application/vnd.ms-excel" : suppliedMime;
+      const mimeType = /\.xlsx$/i.test(lowerName) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : /\.xlsm$/i.test(lowerName) ? "application/vnd.ms-excel.sheet.macroenabled.12" : /\.xls$/i.test(lowerName) ? "application/vnd.ms-excel" : suppliedMime;
       payloadFiles.push({ fileName: file.name, mimeType, contentBase64: await readBase64(file) });
     }
     const response = await api("/api/customer/compliance/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, files: payloadFiles }), timeoutMs: 45000 });
