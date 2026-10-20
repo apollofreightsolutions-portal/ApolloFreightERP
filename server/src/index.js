@@ -3683,7 +3683,7 @@ app.get("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, res
     const values = [];
     let where = "";
     if (!admin) { values.push(request.appSession.userName); where = "where lower(user_name)=lower($1)"; }
-    const result = await query(`select request_no,user_name,employee_name,leave_type,start_date,end_date,total_days,calendar_days,weekend_days,public_holiday_days,actual_leave_days,half_day_type,reason,rejoining_date,contact_during_leave,leave_address,emergency_contact,declaration_accepted,attachment_url,status,approved_by,approved_at,rejection_reason,cancellation_reason,rejoined_at,rejoined_by,late_return_days,applied_at,created_at,updated_at from leave_requests ${where} order by applied_at desc`, values);
+    const result = await query(`select request_no,user_name,employee_name,leave_type,start_date,end_date,total_days,calendar_days,weekend_days,public_holiday_days,actual_leave_days,half_day_type,reason,rejoining_date,contact_during_leave,leave_address,emergency_contact,declaration_accepted,attachment_url,status,approved_by,approved_at,rejection_reason,cancellation_reason,rejoined_at,rejoined_by,late_return_days,workflow_version,applied_at,created_at,updated_at from leave_requests ${where} order by applied_at desc`, values);
     return response.json({ok:true,rows:result.rows});
   } catch(error){ return next(error); }
 });
@@ -3697,6 +3697,15 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
   try {
     const data = request.body || {};
     const userName = String(request.appSession.userName || "").trim();
+    const existingRequestNo = String(data.requestNo || "").trim();
+    if (existingRequestNo) {
+      const existing = (await query("select request_no,user_name,status,workflow_version from leave_requests where request_no=$1 limit 1", [existingRequestNo])).rows[0];
+      if (!existing) return response.status(404).json({ok:false,error:"Leave request not found."});
+      if (String(existing.user_name || "").toLowerCase() !== userName.toLowerCase()) return response.status(403).json({ok:false,error:"You can only edit your own sent-back leave request."});
+      if (existing.status !== "Sent Back") return response.status(409).json({ok:false,error:"Only a sent-back leave request can be edited and resubmitted."});
+      if (Number(data.workflowVersion) !== Number(existing.workflow_version)) return response.status(409).json({ok:false,error:"This request changed. Refresh the leave list before editing it."});
+      if (!String(data.resubmissionComment || "").trim()) return response.status(400).json({ok:false,error:"Briefly describe the corrections made for the reviewer."});
+    }
     const leaveType = String(data.leaveType || "ANNUAL").trim().toUpperCase();
     const type = (await query("select * from hr_leave_types where code=$1 and active=true limit 1", [leaveType])).rows[0];
     if (!type) return response.status(400).json({ok:false,error:"Choose a valid leave type."});
@@ -3724,7 +3733,7 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
     const calendarRules = await hrCalendarRules(branch);
     const blackout = calendarRules.holidays.find((item) => String(item.day_type || "").toUpperCase() === "BLACKOUT" && String(item.holiday_date).slice(0,10) >= startDate && String(item.holiday_date).slice(0,10) <= endDate);
     if (blackout) return response.status(400).json({ok:false,error:`Leave is restricted during ${blackout.title || 'a blackout date'}. HR must change the calendar rule first.`});
-    const requestNo = `LV-${year}-${Date.now().toString().slice(-7)}`;
+    const newRequestNo = `LV-${year}-${Date.now().toString().slice(-7)}`;
     const calendarMap = new Map(calendarRules.holidays.map((item) => [String(item.holiday_date).slice(0,10), item]));
     const isWorkingDate = (date) => {
       const item = calendarMap.get(date);
@@ -3754,9 +3763,35 @@ app.post("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, re
     if (maxSameDepartmentLeave > 0 && Number(staffing.rows[0]?.count || 0) >= maxSameDepartmentLeave) return response.status(400).json({ok:false,error:`The maximum number of employees from ${employee.department} already on overlapping leave has been reached.`});
     const staffingWarning = Number(staffing.rows[0]?.count || 0) > 0
       ? `${staffing.rows[0].count} colleague(s) in ${employee.department} already have overlapping pending or approved leave.` : "";
+    if (existingRequestNo) {
+      const client = await getPool().connect();
+      try {
+        await client.query("begin");
+        const updated = await client.query(`update leave_requests set leave_type=$1,start_date=$2,end_date=$3,total_days=$4,
+          calendar_days=$5,weekend_days=$6,public_holiday_days=$7,actual_leave_days=$8,half_day_type=$9,reason=$10,
+          rejoining_date=$11,contact_during_leave=$12,leave_address=$13,emergency_contact=$14,
+          declaration_accepted=true,declaration_accepted_at=now(),status='Pending',applied_at=now(),updated_at=now(),
+          approved_by='',approved_at=null,rejection_reason=''
+          where request_no=$15 and lower(user_name)=lower($16) and status='Sent Back' and workflow_version=$17 returning *`,
+          [leaveType,startDate,endDate,calculation.actualLeaveDays,calculation.calendarDays,calculation.weekendDays,calculation.publicHolidayDays,calculation.actualLeaveDays,halfDayType,reason,rejoiningDate,contactDuringLeave,leaveAddress,String(data.emergencyContact||"").trim(),existingRequestNo,userName,Number(data.workflowVersion)]);
+        if (!updated.rows[0]) {
+          await client.query("rollback");
+          return response.status(409).json({ok:false,error:"This request changed. Refresh the leave list before resubmitting it."});
+        }
+        await client.query(`insert into hr_leave_workflow_audit(request_no,actor,action,comment) values($1,$2,'Employee response',$3)`,
+          [existingRequestNo,userName,String(data.resubmissionComment||"").trim().slice(0,4000)]);
+        await client.query("commit");
+        return response.json({ok:true,row:updated.rows[0],calculation,balance,staffingWarning});
+      } catch (error) {
+        await client.query("rollback").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
     const saved = await query(`insert into leave_requests (request_no,user_name,employee_name,leave_type,start_date,end_date,total_days,calendar_days,weekend_days,public_holiday_days,actual_leave_days,half_day_type,reason,rejoining_date,contact_during_leave,leave_address,emergency_contact,declaration_accepted,declaration_accepted_at,status,applied_at,created_at,updated_at)
       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,now(),'Pending',now(),now(),now()) returning *`,
-      [requestNo,userName,employee.full_name || userName,leaveType, startDate,endDate,calculation.actualLeaveDays,calculation.calendarDays,calculation.weekendDays,calculation.publicHolidayDays,calculation.actualLeaveDays,halfDayType,reason,rejoiningDate,contactDuringLeave,leaveAddress,String(data.emergencyContact||"").trim()]);
+      [newRequestNo,userName,employee.full_name || userName,leaveType, startDate,endDate,calculation.actualLeaveDays,calculation.calendarDays,calculation.weekendDays,calculation.publicHolidayDays,calculation.actualLeaveDays,halfDayType,reason,rejoiningDate,contactDuringLeave,leaveAddress,String(data.emergencyContact||"").trim()]);
     return response.status(201).json({ok:true,row:saved.rows[0],calculation,balance,staffingWarning});
   } catch(error){ return next(error); }
 });
