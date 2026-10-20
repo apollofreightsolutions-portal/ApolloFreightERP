@@ -3631,6 +3631,21 @@ function render() {
       selected: field.tagName === "SELECT" ? Array.from(field.options).map((option) => option.selected) : null
     }))
   })) : [];
+  const statusFormState = new Map(Array.from(moduleContent.querySelectorAll("form[data-form='status'][data-status-draft-key]"))
+    .filter((form) => !form.dataset.statusDraftClearOnRender)
+    .map((form) => [form.dataset.statusDraftKey, Array.from(form.querySelectorAll("input[name],select[name],textarea[name]")).map((field) => ({
+      name: field.name,
+      value: field.value,
+      checked: field.checked,
+      selected: field.tagName === "SELECT" ? Array.from(field.options).map((option) => option.selected) : null
+    }))]));
+  const focusedStatusForm = document.activeElement?.closest?.("form[data-form='status'][data-status-draft-key]");
+  const focusedStatusField = focusedStatusForm ? {
+    key: focusedStatusForm.dataset.statusDraftKey,
+    name: document.activeElement.name || "",
+    selectionStart: document.activeElement.selectionStart,
+    selectionEnd: document.activeElement.selectionEnd
+  } : null;
   // Record selectors also live inside moduleContent. A background refresh replaces that DOM, so
   // capture the current value before rendering. This is intentionally done for both load/action
   // selectors and delete selectors: actions must continue to target exactly what the user picked,
@@ -3719,6 +3734,22 @@ function render() {
     "CRM Security": () => renderCrmModule("renderAdmin", "CRM Security")
   };
   moduleContent.innerHTML = (renderers[activeModule] || renderDashboard)();
+  if (statusFormState.size) {
+    moduleContent.querySelectorAll("form[data-form='status'][data-status-draft-key]").forEach((form) => {
+      const values = statusFormState.get(form.dataset.statusDraftKey);
+      if (!values) return;
+      values.forEach((item) => {
+        const field = form.querySelector(`[name="${cssAttrEscape(item.name)}"]`);
+        if (!field) return;
+        if (field.type === "checkbox" || field.type === "radio") field.checked = item.checked;
+        else if (field.tagName === "SELECT" && item.selected) Array.from(field.options).forEach((option, index) => { option.selected = Boolean(item.selected[index]); });
+        else field.value = item.value;
+      });
+      const statusSelect = form.querySelector("[name='status']");
+      const expectedArrivalField = form.querySelector("[data-expected-arrival-field]");
+      if (statusSelect && expectedArrivalField) expectedArrivalField.hidden = !isBranchTransferStatus(statusSelect.value);
+    });
+  }
   if (hrFormState.length) {
     moduleContent.querySelectorAll("form").forEach((form, formIndex) => {
       const saved = hrFormState[formIndex];
@@ -3731,6 +3762,15 @@ function render() {
         else field.value = item.value;
       });
     });
+  }
+  if (focusedStatusField) {
+    const form = Array.from(moduleContent.querySelectorAll("form[data-form='status'][data-status-draft-key]"))
+      .find((candidate) => candidate.dataset.statusDraftKey === focusedStatusField.key);
+    const field = form?.querySelector(`[name="${cssAttrEscape(focusedStatusField.name)}"]`);
+    if (field) {
+      field.focus();
+      try { field.setSelectionRange(focusedStatusField.selectionStart, focusedStatusField.selectionEnd); } catch (_error) { /* non-text controls do not support selection ranges */ }
+    }
   }
   renderErpAnnouncementsDropdown();
   window.__APOLLO_HR_RENDER = () => { if (typeof render === "function") render(); };
@@ -4920,7 +4960,7 @@ function shipmentAwbExpandRowMarkup(airwayBillNo, colSpan) {
         <button type="button" class="ghost-button" data-action="toggle-status-awb" data-awb="${escapeHtml(airwayBillNo)}">Collapse ▲</button>
       </div>
       <p class="empty-state">This AWB is linked to ${group.length} shipment(s): ${escapeHtml(jobNumbers)}. The selected status will be applied to every linked shipment across all branches.</p>
-      <form data-form="status" class="inline-status-form">
+      <form data-form="status" data-status-draft-key="awb:${escapeHtml(normalizedAwb)}" class="inline-status-form">
         <input type="hidden" name="jobNo" value="${escapeHtml(representative.jobNo)}" />
         ${strictSelect("status", "Status", statusOptions(), representative.status)}
         ${input("date", "Date", today(), false, "date")}
@@ -4949,7 +4989,7 @@ function shipmentStatusExpandRowMarkup(row, colSpan) {
         <h4>Update Status - ${escapeHtml(jobNo)}</h4>
         <button type="button" class="ghost-button" data-action="toggle-status-row" data-id="${escapeHtml(jobNo)}">Collapse ▲</button>
       </div>
-      <form data-form="status" class="inline-status-form">
+      <form data-form="status" data-status-draft-key="job:${escapeHtml(jobNo)}" class="inline-status-form">
         <input type="hidden" name="jobNo" value="${escapeHtml(jobNo)}" />
         ${strictSelect("status", "Status", statusOptions(), row.status)}
         ${input("date", "Date", today(), false, "date")}
@@ -12954,6 +12994,7 @@ async function handleModuleSubmit(event) {
   if (saved === false) {
     return;
   }
+  if (type === "status") form.dataset.statusDraftClearOnRender = "true";
   saveState();
   render();
 }
