@@ -105,56 +105,34 @@ gcloud run jobs execute apollo-password-reset-outbox \
   --project="$PROJECT_ID" --region="$REGION" --wait
 ```
 
-The first execution should report `claimed=0, sent=0` when the queue is empty. That verifies the job starts and can reach its configuration, but it does **not** verify actual email delivery.
+The first execution should report `claimed=0, sent=0` when the queue is empty. That verifies the job starts and can reach its configuration, but it does **not** verify actual email delivery. The worker job is optional after the updated API is deployed.
 
-## 5. Create a least-privilege Scheduler identity and run every minute
+## 5. Keep the recurring Scheduler paused
 
-Cloud Scheduler invokes the Cloud Run Jobs v2 `:run` API with an OAuth token. Create a dedicated service account and grant it `roles/run.invoker` on this job only. The account creating the Scheduler job must also be allowed to act as this service account.
+The updated API sends each newly requested reset email immediately after its encrypted outbox row commits. It invokes the existing outbox processor for that request's token, so Cloud Scheduler does not need to run every minute. If `apollo-password-reset-outbox-every-minute` already exists, leave it paused; do not create or resume a recurring Scheduler for reset delivery.
+
+Migration `049_password_reset_tokens.sql` is a one-time schema change. It does not run when a user requests a password reset and must not be scheduled. The outbox worker is a separate, optional Cloud Run Job. Run it manually only if you need to drain older queued mail or clean up expired rows:
 
 ```bash
-gcloud services enable cloudscheduler.googleapis.com --project="$PROJECT_ID"
-
-export SCHEDULER_SA=apollo-password-reset-scheduler@$PROJECT_ID.iam.gserviceaccount.com
-if ! gcloud iam service-accounts describe "$SCHEDULER_SA" \
-    --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud iam service-accounts create apollo-password-reset-scheduler \
-    --project="$PROJECT_ID" \
-    --display-name='Apollo password reset outbox scheduler'
-fi
-
-gcloud run jobs add-iam-policy-binding apollo-password-reset-outbox \
-  --project="$PROJECT_ID" --region="$REGION" \
-  --member="serviceAccount:$SCHEDULER_SA" \
-  --role=roles/run.invoker
-
-gcloud scheduler jobs create http apollo-password-reset-outbox-every-minute \
-  --project="$PROJECT_ID" \
-  --location="$REGION" \
-  --schedule='* * * * *' \
-  --time-zone='Etc/UTC' \
-  --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/apollo-password-reset-outbox:run" \
-  --http-method=POST \
-  --oauth-service-account-email="$SCHEDULER_SA" \
-  --oauth-token-scope='https://www.googleapis.com/auth/cloud-platform'
+gcloud run jobs execute apollo-password-reset-outbox \
+  --project="$PROJECT_ID" --region="$REGION" --wait
 ```
 
-If the Scheduler job name already exists, inspect it first and use `gcloud scheduler jobs update http` instead of creating a duplicate. Cloud Scheduler does not start a second outstanding execution while the earlier execution is still running.
+## 6. Configure the portal service for on-demand delivery
 
-## 6. Enable the portal endpoint after the worker is ready
-
-Only after migration 049, the worker job, and the Scheduler job are in place, enable the API endpoint and make the same encryption secret available to Cloud Run:
+After migration 049 and the outbox encryption secret exist, configure the **Cloud Run service** with the same Microsoft Graph mail settings and secrets as the optional worker. The service must have Graph mail access because it sends the requested email from the API request flow.
 
 ```bash
 gcloud run services update apollo-freighterp \
   --project="$PROJECT_ID" --region="$REGION" \
-  --update-env-vars=PASSWORD_RESET_ENABLED=true \
-  --update-secrets=PASSWORD_RESET_OUTBOX_KEY=apollo-password-reset-outbox-key:latest
+  --update-env-vars=PASSWORD_RESET_ENABLED=true,MAIL_PROVIDER=microsoft_graph,MAIL_SEND_ENABLED=true,M365_TENANT_ID=8d8f1875-1195-4f41-a0ea-ae177e503e89,M365_CLIENT_ID=3596aff6-15d9-4399-aeba-641d640782b5,MAIL_FROM=noreply@apollo-freight.com,APP_PUBLIC_URL=https://connected.apollo-freight.com \
+  --update-secrets=PASSWORD_RESET_OUTBOX_KEY=apollo-password-reset-outbox-key:latest,M365_CLIENT_SECRET=apollo-m365-client-secret:1
 ```
 
-The route returns a generic response for registered and unregistered email addresses. The API only queues encrypted messages; the scheduled worker performs Graph delivery. Reset links expire after 30 minutes, can be used once, and completing a reset invalidates prior ERP and Maintenance Portal sessions.
+The route returns a generic response for registered and unregistered email addresses. For a registered, active user it queues an encrypted message and attempts Graph delivery during that request. If Graph is temporarily unavailable, the outbox retains the message for a later manual worker run or a newly requested link. Reset links expire after 30 minutes, can be used once, and completing a reset invalidates prior ERP and Maintenance Portal sessions.
 
 ## IAM checklist
 
-The operator needs permission to create the Cloud Run Jobs, create/use the Secret Manager secret, enable Cloud Scheduler, and create its job. The Cloud Run runtime service account needs `roles/cloudsql.client` and `roles/secretmanager.secretAccessor` for the database, Graph, and outbox secrets. The dedicated Scheduler service account needs `roles/run.invoker` on the worker job; the operator needs `roles/iam.serviceAccountUser` on that Scheduler account to attach it to the Scheduler job. Google documents the Cloud Run Jobs schedule endpoint and these authentication roles in its [Cloud Run scheduling guide](https://docs.cloud.google.com/run/docs/execute/jobs-on-schedule) and [Cloud Scheduler HTTP authentication guide](https://docs.cloud.google.com/scheduler/docs/http-target-auth).
+The operator needs permission to update the Cloud Run service and create/use the Secret Manager secrets. The Cloud Run runtime service account needs `roles/cloudsql.client` and `roles/secretmanager.secretAccessor` for the database, Graph, and outbox secrets. No Scheduler service account or recurring Scheduler is required for on-demand password-reset delivery.
 
 After setup, test one reset using an active registered account and confirm delivery through the no-reply mailbox. Also check the dashboard Live button once with a `KWI` serial shipment and once with an `AFS` serial shipment. No real Graph delivery or live Cloud deployment has been verified by local tests.

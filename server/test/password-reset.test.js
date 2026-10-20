@@ -11,8 +11,6 @@ const {
   hashResetToken,
   isValidResetToken
 } = require('../src/password-reset');
-const { decryptResetOutboxPayload } = require('../src/password-reset-crypto');
-const { processPasswordResetOutbox } = require('../src/process-password-reset-outbox');
 
 const OUTBOX_KEY = 'test-only-password-reset-outbox-key-32-bytes-minimum';
 
@@ -38,7 +36,7 @@ function createFakeDatabase() {
 
     if (statement.startsWith('select id, token_hash, payload_ciphertext')) {
       const rows = outbox
-        .filter((row) => !row.sent_at && !row.cancelled_at && row.expires_at > Date.now() && row.available_at <= Date.now() && (!row.locked_until || row.locked_until < Date.now()))
+        .filter((row) => !row.sent_at && !row.cancelled_at && row.expires_at > Date.now() && row.available_at <= Date.now() && (!row.locked_until || row.locked_until < Date.now()) && (!params[1] || row.token_hash === String(params[1])))
         .sort((a, b) => a.created_at - b.created_at)
         .slice(0, Number(params[0]))
         .map((row) => ({ ...row }));
@@ -180,16 +178,23 @@ function createApp(database, options = {}) {
     enabled: options.enabled ?? true,
     hashPassword: (password) => `test-pbkdf2-hash:${password}`,
     rateLimiter: () => (_request, _response, next) => next(),
-    env: { APP_PUBLIC_URL: 'https://portal.example.test', NODE_ENV: 'test' },
+    sendMail: options.sendMail || (async (message) => { options.sent?.push(message); }),
+    env: { PASSWORD_RESET_ENABLED: 'true', APP_PUBLIC_URL: 'https://portal.example.test', NODE_ENV: 'test' },
     minimumRequestResponseMs: 0
   }));
   return app;
 }
 
-test('reset requests queue encrypted mail, rotate one-time tokens, deliver via worker, and revoke sessions', async () => {
+function resetTokenFromMail(message) {
+  const resetLink = message.html.match(/<a href="([^"]+)" style="display:inline-block/)[1];
+  const resetUrl = new URL(resetLink);
+  return new URLSearchParams(resetUrl.hash.slice(1)).get('resetToken');
+}
+
+test('reset requests deliver queued mail immediately, rotate one-time tokens, and revoke sessions', async () => {
   const database = createFakeDatabase();
-  const app = createApp(database);
   const sent = [];
+  const app = createApp(database, { sent });
 
   await withServer(app, async (baseUrl) => {
     const post = async (path, payload) => {
@@ -203,55 +208,40 @@ test('reset requests queue encrypted mail, rotate one-time tokens, deliver via w
 
     const first = await post('request', { email: 'NILESH@APOLLO-FREIGHT.COM' });
     assert.equal(first.status, 200);
-    assert.match(first.body.message, /If an active Apollo Connected account/);
+    assert.equal(first.body.message.match(/If an active Apollo Connected account/)?.length, 1);
     assert.equal(database.outbox.length, 1);
-    assert.equal(database.outbox[0].sent_at, null);
-    const firstPayload = decryptResetOutboxPayload({
-      ciphertext: database.outbox[0].payload_ciphertext,
-      nonce: database.outbox[0].payload_nonce,
-      authTag: database.outbox[0].payload_auth_tag
-    }, OUTBOX_KEY);
+    assert.ok(database.outbox[0].sent_at, 'the request sends its queued email immediately');
+    assert.equal(database.outbox[0].payload_ciphertext, null, 'successful delivery erases the encrypted payload');
     assert.equal(database.tokens[0].email_at_request_hash, hashResetEmail('nilesh@apollo-freight.com'));
     assert.notEqual(database.tokens[0].email_at_request_hash, 'nilesh@apollo-freight.com');
-    const firstToken = firstPayload.token;
-    assert.equal(firstPayload.email, 'nilesh@apollo-freight.com');
+    const firstToken = resetTokenFromMail(sent[0]);
     assert.ok(isValidResetToken(firstToken));
     assert.notEqual(database.outbox[0].token_hash, firstToken);
     assert.equal(database.outbox[0].token_hash, hashResetToken(firstToken));
-    assert.equal(sent.length, 0, 'the API request never sends mail inline');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, 'nilesh@apollo-freight.com');
 
     const second = await post('request', { email: 'nilesh@apollo-freight.com' });
     assert.equal(second.status, 200);
     assert.equal(second.body.message, first.body.message);
     assert.equal(database.outbox.length, 2);
+    assert.equal(sent.length, 2, 'each accepted reset request attempts delivery immediately');
+    const token = resetTokenFromMail(sent[1]);
+    assert.ok(isValidResetToken(token));
+    assert.equal(hashResetToken(token), database.outbox[1].token_hash);
+    assert.ok(database.outbox[1].sent_at);
+    assert.equal(database.outbox[1].payload_ciphertext, null);
     assert.ok(database.tokens[0].used_at, 'issuing a new link invalidates the earlier link');
-    assert.ok(database.outbox[0].cancelled_at, 'an unsent stale message is cancelled');
-    assert.equal(database.outbox[0].payload_ciphertext, null, 'cancelled encrypted mail payload is erased');
+    assert.equal(database.outbox[0].cancelled_at, null, 'a previously sent row remains in delivery history');
+    const staleLink = await post('complete', { token: firstToken, newPassword: 'Invalid-Old-Link-2030' });
+    assert.equal(staleLink.status, 400, 'a previously emailed token is invalidated by the newer request');
 
     const unknown = await post('request', { email: 'not-registered@example.test' });
     assert.equal(unknown.status, 200);
     assert.equal(unknown.body.message, first.body.message);
     assert.equal(database.outbox.length, 2, 'unknown addresses do not create queue entries');
-
-    const workerResult = await processPasswordResetOutbox({
-      query: database.query,
-      getPool: database.getPool,
-      sendMail: async (message) => { sent.push(message); },
-      outboxKey: OUTBOX_KEY,
-      env: { PASSWORD_RESET_ENABLED: 'true', APP_PUBLIC_URL: 'https://portal.example.test', NODE_ENV: 'test' }
-    });
-    assert.equal(workerResult.claimed, 1);
-    assert.equal(workerResult.sent, 1);
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0].to, 'nilesh@apollo-freight.com');
-
-    const resetLink = sent[0].html.match(/<a href="([^"]+)" style="display:inline-block/)[1];
-    const resetUrl = new URL(resetLink);
-    const token = new URLSearchParams(resetUrl.hash.slice(1)).get('resetToken');
-    assert.equal(resetUrl.origin, 'https://portal.example.test');
-    assert.ok(isValidResetToken(token));
-    assert.equal(hashResetToken(token), database.outbox[1].token_hash);
-    assert.equal(database.outbox[1].payload_ciphertext, null, 'successful delivery erases the encrypted payload');
+    assert.equal(sent.length, 2, 'unknown addresses do not trigger email delivery');
+    assert.equal(new URL(sent[1].html.match(/<a href="([^"]+)" style="display:inline-block/)[1]).origin, 'https://portal.example.test');
 
     const completed = await post('complete', { token, newPassword: 'NewPassword-For-Apollo-2030' });
     assert.equal(completed.status, 200);

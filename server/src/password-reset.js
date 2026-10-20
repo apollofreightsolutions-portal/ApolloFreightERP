@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { processPasswordResetOutbox } = require('./process-password-reset-outbox');
 const {
   buildPasswordResetLink,
   encryptResetOutboxPayload,
@@ -33,9 +34,11 @@ function createPasswordResetRouter({
   outboxEncryptionKey = process.env.PASSWORD_RESET_OUTBOX_KEY,
   enabled = String(process.env.PASSWORD_RESET_ENABLED || '').toLowerCase() === 'true',
   minimumRequestResponseMs = 250,
+  processOutbox = processPasswordResetOutbox,
+  sendMail,
   env = process.env
 }) {
-  if (![query, getPool, hashPassword, rateLimiter].every((value) => typeof value === 'function')) {
+  if (![query, getPool, hashPassword, rateLimiter, processOutbox].every((value) => typeof value === 'function')) {
     throw new TypeError('Password reset router dependencies are required.');
   }
 
@@ -165,6 +168,23 @@ function createPasswordResetRouter({
       return requestResponse(response, startedAt, 200, { ok: true, message: GENERIC_REQUEST_MESSAGE });
     } finally {
       client?.release();
+    }
+
+    // Deliver this request's email immediately after its durable outbox row commits. The
+    // scheduled worker remains optional for backlog cleanup; delivery no longer depends on
+    // a minute-by-minute Scheduler execution.
+    try {
+      await processOutbox({
+        query,
+        getPool,
+        sendMail,
+        outboxKey: outboxEncryptionKey,
+        env,
+        tokenHash
+      });
+    } catch (_error) {
+      // Keep the public response generic and never log reset tokens, addresses, or provider data.
+      console.error('Immediate password-reset email delivery could not be completed.');
     }
 
     return requestResponse(response, startedAt, 200, { ok: true, message: GENERIC_REQUEST_MESSAGE });

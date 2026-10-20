@@ -16,7 +16,7 @@ const MAX_BATCH = 10;
 const MAX_ATTEMPTS = 5;
 const LEASE_MINUTES = 5;
 
-async function claimPendingOutboxRows(pool, limit = MAX_BATCH) {
+async function claimPendingOutboxRows(pool, limit = MAX_BATCH, tokenHash = '') {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -27,11 +27,12 @@ async function claimPendingOutboxRows(pool, limit = MAX_BATCH) {
          and cancelled_at is null
          and expires_at > now()
          and available_at <= now()
-       and (locked_until is null or locked_until < now())
+         and (locked_until is null or locked_until < now())
+         and ($2::text is null or token_hash = $2)
        order by created_at asc
        limit $1
        for update skip locked`,
-      [Math.max(1, Math.min(MAX_BATCH, Number(limit) || MAX_BATCH))]
+      [Math.max(1, Math.min(MAX_BATCH, Number(limit) || MAX_BATCH)), tokenHash || null]
     );
     const rows = result.rows || [];
     for (const row of rows) {
@@ -70,7 +71,8 @@ async function processPasswordResetOutbox({
   outboxKey = process.env.PASSWORD_RESET_OUTBOX_KEY,
   env = process.env,
   limit = MAX_BATCH,
-  maxAttempts = MAX_ATTEMPTS
+  maxAttempts = MAX_ATTEMPTS,
+  tokenHash = ''
 } = {}) {
   if (String(env.PASSWORD_RESET_ENABLED || '').toLowerCase() !== 'true') {
     return { claimed: 0, sent: 0, cancelled: 0, retried: 0, disabled: true };
@@ -79,7 +81,7 @@ async function processPasswordResetOutbox({
     throw new Error('PASSWORD_RESET_OUTBOX_KEY must contain at least 32 bytes.');
   }
 
-  const rows = await claimPendingOutboxRows(getPoolFn(), limit);
+  const rows = await claimPendingOutboxRows(getPoolFn(), limit, tokenHash);
   const summary = { claimed: rows.length, sent: 0, cancelled: 0, retried: 0, disabled: false };
 
   for (const row of rows) {
