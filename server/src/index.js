@@ -3468,7 +3468,9 @@ async function canApproveLeave(session) {
 }
 
 function isoDate(value) {
-  const text = String(value || "").slice(0, 10);
+  const text = value instanceof Date && Number.isFinite(value.getTime())
+    ? `${String(value.getFullYear()).padStart(4,"0")}-${String(value.getMonth()+1).padStart(2,"0")}-${String(value.getDate()).padStart(2,"0")}`
+    : String(value || "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
   const [year, month, day] = text.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -3916,11 +3918,12 @@ app.post("/api/hr/leave-requests/:requestNo/rejoin", requireEmployeePortalAuth, 
     if(existing.rejoined_at) return response.status(409).json({ok:false,error:"This leave request has already been marked as rejoined."});
     const admin=isHrAdminSession(request.appSession);
     if(!admin && String(existing.user_name).toLowerCase()!==String(request.appSession.userName).toLowerCase()) return response.status(403).json({ok:false,error:"Not allowed."});
-    const actualReturn=isoDate(request.body?.actualReturnDate)||new Date().toISOString().slice(0,10);
+    const rawActualReturn=request.body?.actualReturnDate;
+    const actualReturn=rawActualReturn?isoDate(rawActualReturn):new Date().toISOString().slice(0,10);
     const promised=isoDate(existing.rejoining_date);
-    if(!promised||actualReturn<promised) return response.status(400).json({ok:false,error:"Actual return date must be on or after the promised rejoining date."});
+    if(!actualReturn) return response.status(400).json({ok:false,error:"Enter a valid actual return date."});
     let lateReturnDays=0;
-    if(actualReturn>promised){ const dayBefore=new Date(`${actualReturn}T00:00:00Z`); dayBefore.setUTCDate(dayBefore.getUTCDate()-1); const type=(await query("select paid from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1",[existing.leave_type])).rows[0]; const calc=await calculateHrLeave(promised,dayBefore.toISOString().slice(0,10),await hrBranchForUser(existing.user_name)); lateReturnDays=type?.paid===false?0:Number(calc.actualLeaveDays||0); }
+    if(promised&&actualReturn>promised){ const dayBefore=new Date(`${actualReturn}T00:00:00Z`); dayBefore.setUTCDate(dayBefore.getUTCDate()-1); const type=(await query("select paid from hr_leave_types where upper(code)=upper($1) or lower(name)=lower($1) limit 1",[existing.leave_type])).rows[0]; const calc=await calculateHrLeave(promised,dayBefore.toISOString().slice(0,10),await hrBranchForUser(existing.user_name)); lateReturnDays=type?.paid===false?0:Number(calc.actualLeaveDays||0); }
     const saved=await query("update leave_requests set rejoined_at=$1,rejoined_by=$2,late_return_days=$3,updated_at=now() where request_no=$4 and rejoined_at is null returning *",[actualReturn,request.appSession.userName,lateReturnDays,requestNo]);
     if(!saved.rows[0]) return response.status(409).json({ok:false,error:"This leave request was already marked as rejoined."});
     if(lateReturnDays>0) await query("insert into hr_leave_ledger(user_name,year,leave_type_code,transaction_type,reference_no,days,balance_after,reason,created_by) values($1,$2,$3,'LATE_RETURN',$4,$5,0,$6,$7)",[existing.user_name,Number(String(existing.start_date).slice(0,4)),String(existing.leave_type||'').toUpperCase(),requestNo,lateReturnDays,`Late return: ${lateReturnDays} additional leave day(s)`,request.appSession.userName]);
