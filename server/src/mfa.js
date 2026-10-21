@@ -65,6 +65,22 @@ function decryptSecret(payload, seed) {
   return Buffer.concat([decipher.update(Buffer.from(encryptedText, "base64url")), decipher.final()]).toString("utf8");
 }
 
+function decryptSecretWithFallback(payload, primarySeed, fallbackSeeds = []) {
+  const seeds = [primarySeed];
+  const additionalSeeds = Array.isArray(fallbackSeeds) ? fallbackSeeds : [fallbackSeeds];
+  for (const seed of additionalSeeds) {
+    if (seed && !seeds.includes(seed)) seeds.push(seed);
+  }
+  for (let index = 0; index < seeds.length; index += 1) {
+    try {
+      return { secret: decryptSecret(payload, seeds[index]), usedFallback: index > 0 };
+    } catch {}
+  }
+  const error = new Error("Stored MFA secret could not be authenticated with the active or configured legacy key.");
+  error.code = "MFA_SECRET_DECRYPTION_FAILED";
+  throw error;
+}
+
 function hotp(secret, counter) {
   const key = base32Decode(secret);
   const counterBuffer = Buffer.alloc(8);
@@ -125,6 +141,7 @@ module.exports = {
   normalizePolicy,
   encryptSecret,
   decryptSecret,
+  decryptSecretWithFallback,
   verifyTotp,
   createRecoveryCodes,
   recoveryCodeHash,

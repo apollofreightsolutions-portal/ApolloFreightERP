@@ -26,7 +26,7 @@ const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const {
   normalizePolicy: normalizeMfaPolicy,
   encryptSecret: encryptMfaSecret,
-  decryptSecret: decryptMfaSecret,
+  decryptSecretWithFallback: decryptMfaSecretWithFallback,
   verifyTotp,
   createRecoveryCodes,
   recoveryCodeHash,
@@ -198,6 +198,8 @@ if (allowedOrigins.includes("*")) {
 // the database-backed shared secret is initialized in the background. The HTTP server and login
 // route remain responsive while migrations complete.
 let customerPortalSecret = configuredSecret || crypto.randomBytes(32).toString("hex");
+let mfaEncryptionSecret = "";
+let mfaEncryptionSecretStable = false;
 let startupReady = false;
 let startupReadyPromise = Promise.resolve();
 
@@ -237,6 +239,28 @@ async function ensurePortalSecret() {
     customerPortalSecret = customerPortalSecret || crypto.randomBytes(32).toString("hex");
     runtimeStatus.loginSecret = "unstable";
     return customerPortalSecret;
+  }
+}
+
+async function ensureMfaEncryptionSecret() {
+  try {
+    const secretKey = "company_mfa_encryption_key";
+    const existing = await query("select secret_value from system_secrets where secret_key = $1 limit 1", [secretKey]);
+    if (existing.rows[0]?.secret_value) {
+      mfaEncryptionSecret = existing.rows[0].secret_value;
+      mfaEncryptionSecretStable = true;
+      return;
+    }
+    const generated = crypto.randomBytes(32).toString("hex");
+    await query("insert into system_secrets (secret_key, secret_value) values ($1, $2) on conflict (secret_key) do nothing", [secretKey, generated]);
+    const persisted = await query("select secret_value from system_secrets where secret_key = $1 limit 1", [secretKey]);
+    if (!persisted.rows[0]?.secret_value) throw new Error("The shared MFA encryption key could not be persisted.");
+    mfaEncryptionSecret = persisted.rows[0].secret_value;
+    mfaEncryptionSecretStable = true;
+  } catch (error) {
+    mfaEncryptionSecret = "";
+    mfaEncryptionSecretStable = false;
+    console.error(`MFA enrollment unavailable because its shared encryption key could not be loaded or persisted: ${error.message}`);
   }
 }
 
@@ -2488,6 +2512,7 @@ function mfaSession(row, targetPortal = "company") {
 app.post("/api/mfa/enroll", async (request, response, next) => {
   try {
     await startupReadyPromise;
+    if (!mfaEncryptionSecretStable) return response.status(503).json({ ok: false, error: "MFA enrollment is temporarily unavailable because a stable encryption key cannot be reached. Try again later." });
     const challenge = mfaChallengePayload(request);
     const session = request.appSession || appAuthFromRequest(request);
     const authSession = session || challenge;
@@ -2499,7 +2524,7 @@ app.post("/api/mfa/enroll", async (request, response, next) => {
     if (normalizeMfaPolicy(row.mfa_policy) === "disabled") return response.status(400).json({ ok: false, error: "MFA is disabled for this user. Ask an Admin to enable Optional or Required MFA." });
     if (row.mfa_enrolled_at) return response.status(409).json({ ok: false, error: "MFA is already enrolled for this user." });
     const payload = await enrollmentPayload({ userName });
-    await query("update app_users set mfa_secret_enc=$1, mfa_recovery_codes='[]', mfa_enrolled_at=null where lower(user_name)=lower($2)", [encryptMfaSecret(payload.secret, customerPortalSecret), userName]);
+    await query("update app_users set mfa_secret_enc=$1, mfa_recovery_codes='[]', mfa_enrolled_at=null where lower(user_name)=lower($2)", [encryptMfaSecret(payload.secret, mfaEncryptionSecret), userName]);
     return response.json({ ok: true, userName, secret: payload.secret, qrDataUrl: payload.qrDataUrl });
   } catch (error) { return next(error); }
 });
@@ -2507,6 +2532,7 @@ app.post("/api/mfa/enroll", async (request, response, next) => {
 app.post("/api/mfa/enroll/verify", async (request, response, next) => {
   try {
     await startupReadyPromise;
+    if (!mfaEncryptionSecretStable) return response.status(503).json({ ok: false, error: "MFA enrollment is temporarily unavailable because a stable encryption key cannot be reached. Try again later." });
     const challenge = mfaChallengePayload(request);
     const session = request.appSession || appAuthFromRequest(request);
     const authSession = session || challenge;
@@ -2515,10 +2541,16 @@ app.post("/api/mfa/enroll/verify", async (request, response, next) => {
     if (!(await isCurrentAppSession(authSession))) return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
     const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
     if (!row?.mfa_secret_enc || row.mfa_enrolled_at) return response.status(400).json({ ok: false, error: "Start a new MFA enrollment first." });
-    const secret = decryptMfaSecret(row.mfa_secret_enc, customerPortalSecret);
-    if (!verifyTotp(secret, request.body?.code)) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid or expired." });
+    let decrypted;
+    try {
+      decrypted = decryptMfaSecretWithFallback(row.mfa_secret_enc, mfaEncryptionSecret, [customerPortalSecret, configuredSecret]);
+    } catch (error) {
+      console.error(`MFA secret decryption failed for ${userName}: ${error.code || error.message}`);
+      return response.status(503).json({ ok: false, error: "The stored authenticator setup could not be verified. Contact an administrator to reset MFA and enroll again." });
+    }
+    if (!verifyTotp(decrypted.secret, request.body?.code)) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid or expired." });
     const recoveryCodes = createRecoveryCodes();
-    await query("update app_users set mfa_recovery_codes=$1, mfa_enrolled_at=now() where lower(user_name)=lower($2)", [JSON.stringify(recoveryCodes.map(recoveryCodeHash)), userName]);
+    await query("update app_users set mfa_secret_enc=$1, mfa_recovery_codes=$2, mfa_enrolled_at=now() where lower(user_name)=lower($3)", [decrypted.usedFallback ? encryptMfaSecret(decrypted.secret, mfaEncryptionSecret) : row.mfa_secret_enc, JSON.stringify(recoveryCodes.map(recoveryCodeHash)), userName]);
     return response.json({ ok: true, recoveryCodes, session: mfaSession(row, challenge.targetPortal) });
   } catch (error) { return next(error); }
 });
@@ -2534,9 +2566,21 @@ app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => 
     const code = String(request.body?.code || "").trim();
     let valid = false;
     let recoveryCodes = row.mfa_recovery_codes || "[]";
-    if (/^\d{6}$/.test(code)) valid = verifyTotp(decryptMfaSecret(row.mfa_secret_enc, customerPortalSecret), code);
+    let decrypted;
+    if (/^\d{6}$/.test(code)) {
+      try {
+        decrypted = decryptMfaSecretWithFallback(row.mfa_secret_enc, mfaEncryptionSecret || customerPortalSecret, [customerPortalSecret, configuredSecret]);
+      } catch (error) {
+        console.error(`MFA secret decryption failed for ${row.user_name}: ${error.code || error.message}`);
+        return response.status(503).json({ ok: false, error: "The stored authenticator setup could not be verified. Contact an administrator to reset MFA and enroll again." });
+      }
+      valid = verifyTotp(decrypted.secret, code);
+    }
     else if (code) { const consumed = consumeRecoveryCode(recoveryCodes, code); valid = consumed.valid; recoveryCodes = JSON.stringify(consumed.remaining); }
     if (!valid) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid." });
+    if (decrypted?.usedFallback && mfaEncryptionSecretStable) {
+      await query("update app_users set mfa_secret_enc=$1 where lower(user_name)=lower($2)", [encryptMfaSecret(decrypted.secret, mfaEncryptionSecret), row.user_name]);
+    }
     if (recoveryCodes !== row.mfa_recovery_codes) await query("update app_users set mfa_recovery_codes=$1 where lower(user_name)=lower($2)", [recoveryCodes, row.user_name]);
     return response.json({ ok: true, session: mfaSession(row, challenge.targetPortal) });
   } catch (error) { return next(error); }
@@ -4961,6 +5005,7 @@ function start() {
     // Resolve the stable shared secret after migrations. Login requests wait for this promise,
     // preventing token signing races while still allowing Render to detect the open port.
     await ensurePortalSecret();
+    await ensureMfaEncryptionSecret();
     // Production intentionally keeps automatic migrations disabled. This narrowly-scoped,
     // idempotent repair protects the shared-AWB rule even when the isolated migration job is not run.
     await removeObsoleteAirwayBillIndex();
