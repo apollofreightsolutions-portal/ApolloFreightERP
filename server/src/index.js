@@ -3724,8 +3724,7 @@ app.get("/api/hr/leave-ledger", requireEmployeePortalAuth, async (request, respo
 
 app.get("/api/hr/leave-requests", requireEmployeePortalAuth, async (request, response, next) => {
   try {
-    const role = String(request.appSession.role || "").toLowerCase();
-    const admin = ["admin","hr"].includes(role);
+    const admin = isHrAdminSession(request.appSession);
     const values = [];
     let where = "";
     if (!admin) { values.push(request.appSession.userName); where = "where lower(user_name)=lower($1)"; }
