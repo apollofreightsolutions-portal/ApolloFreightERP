@@ -23,6 +23,38 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
     return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
   }
 
+  function htmlEscape(value) {
+    return String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+  }
+
+  async function emailTaskAssignee(task, actor, event) {
+    if (!sendMail || !task?.assigned_to) return "not_sent";
+    try {
+      const user = (await query(
+        `select email from app_users
+         where lower(trim(user_name))=lower(trim($1)) and lower(account_status)='active'
+           and (crm_portal_access=true or lower(trim(role))='admin')
+         limit 1`,
+        [task.assigned_to]
+      )).rows[0];
+      if (!user?.email) return "not_sent";
+      const title = cleanText(task.title, 500);
+      const description = cleanText(task.description, 5000);
+      const company = cleanText(task.company_name, 300);
+      const dueDate = task.due_date ? String(task.due_date).slice(0, 10) : "Not specified";
+      const subject = `Apollo Connected CRM | Task ${event}: ${title}`;
+      const text = `${actor} ${event} a CRM task for you.\n\nTask: ${title}${company ? `\nAccount: ${company}` : ""}\nDue date: ${dueDate}${description ? `\n\nDetails:\n${description}` : ""}\n\nSign in to Apollo Connected CRM and open Follow-ups.`;
+      const delivered = await sendMail({
+        to: [user.email], subject, text,
+        html: `<h2>Apollo Connected · CRM task ${htmlEscape(event)}</h2><p><strong>${htmlEscape(actor)}</strong> ${htmlEscape(event)} a task for you.</p><p><strong>Task:</strong> ${htmlEscape(title)}${company ? `<br><strong>Account:</strong> ${htmlEscape(company)}` : ""}<br><strong>Due date:</strong> ${htmlEscape(dueDate)}</p>${description ? `<p><strong>Details</strong></p><div style="white-space:pre-wrap">${htmlEscape(description)}</div>` : ""}<p>Sign in to Apollo Connected CRM and open Follow-ups.</p><p>This is an automated message.</p>`
+      });
+      return delivered?.accepted === true ? "accepted" : "not_sent";
+    } catch (error) {
+      console.warn("CRM task email was not accepted:", error?.status || "send_failed");
+      return "not_sent";
+    }
+  }
+
   function bool(value) {
     return value === true || value === 1 || String(value || "").toLowerCase() === "true" || String(value || "").toLowerCase() === "yes";
   }
@@ -516,7 +548,10 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
       if(!request.crmUser.permissions.manageAssignments) assignedTo=request.crmUser.user_name;
       const result=await query(`insert into crm_tasks(account_id,opportunity_id,assigned_to,title,description,due_date,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,[accountId,opportunityId,assignedTo,title,cleanText(b.description,5000),cleanDate(b.dueDate||b.due_date),cleanText(b.priority||"Normal",80),cleanText(b.status||"Open",80),request.crmUser.user_name]);
       await audit(request,{entityType:"task",entityId:result.rows[0].id,accountId,action:"CREATE",summary:`Created follow-up task: ${result.rows[0].title}`});
-      response.status(201).json({ok:true,row:result.rows[0]});
+      const task=result.rows[0];
+      if(accountId) task.company_name=(await query(`select company_name from crm_accounts where id=$1 limit 1`,[accountId])).rows[0]?.company_name||"";
+      const emailStatus=await emailTaskAssignee(task,request.crmUser.user_name,"assigned");
+      response.status(201).json({ok:true,row:task,emailStatus});
     }catch(error){next(error)}
   });
 
@@ -528,7 +563,12 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
       const b={...current,...request.body}; let assignedTo=cleanText(b.assignedTo||b.assigned_to||current.assigned_to,200); if(!request.crmUser.permissions.manageAssignments)assignedTo=request.crmUser.user_name;
       const title=cleanText(b.title||current.title,500); if(!title)return response.status(400).json({ok:false,error:"Task title is required."});
       const status=cleanText(b.status||current.status,80); const result=await query(`update crm_tasks set assigned_to=$1,title=$2,description=$3,due_date=$4,priority=$5,status=$6,completed_at=case when lower($6)='completed' then coalesce(completed_at,now()) else null end where id=$7 returning *`,[assignedTo,title,cleanText(b.description||current.description,5000),cleanDate(b.dueDate||b.due_date||current.due_date),cleanText(b.priority||current.priority,80),status,id]);
-      await audit(request,{entityType:"task",entityId:id,accountId:current.account_id,action:"UPDATE",summary:`Updated follow-up task: ${result.rows[0].title}`}); response.json({ok:true,row:result.rows[0]});
+      await audit(request,{entityType:"task",entityId:id,accountId:current.account_id,action:"UPDATE",summary:`Updated follow-up task: ${result.rows[0].title}`});
+      const task=result.rows[0];
+      const reassigned=String(current.assigned_to||"").trim().toLowerCase()!==String(task.assigned_to||"").trim().toLowerCase();
+      if(reassigned && current.account_id) task.company_name=(await query(`select company_name from crm_accounts where id=$1 limit 1`,[current.account_id])).rows[0]?.company_name||"";
+      const emailStatus=reassigned?await emailTaskAssignee(task,request.crmUser.user_name,"reassigned"):"not_sent";
+      response.json({ok:true,row:task,emailStatus});
     }catch(error){next(error)}
   });
 
