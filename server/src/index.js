@@ -3355,7 +3355,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
     return response.status(400).json({ ok: false, error: "POD file must be a PDF, JPG, JPEG, or PNG file." });
   }
   try {
-    const shipment = await query("select job_no, airway_bill_no from shipments where lower(job_no) = lower($1) limit 1", [jobNo]);
+    const shipment = await query("select * from shipments where lower(job_no) = lower($1) limit 1", [jobNo]);
     if (!shipment.rows[0]) return response.status(404).json({ ok: false, error: "Shipment not found." });
     const fileBuffer = Buffer.from(contentBase64, "base64");
     if (!fileBuffer.length || fileBuffer.length > 10 * 1024 * 1024) {
@@ -3370,14 +3370,17 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
       const notes = JSON.stringify({ storageProvider: "gcs", bucket: gcsStorage.bucket.name, objectName, bytes: fileBuffer.length, signedPod: true, splitNo: splitNo || "" });
       const saved = await query(`insert into documents (document_no, linked_no, type, status, date, owner, file_name, storage_url, notes, created_by) values ($1,$2,'POD','Uploaded',current_date,$3,$4,$5,$6,$3) on conflict (document_no) do update set file_name=excluded.file_name,storage_url=excluded.storage_url,notes=excluded.notes,status='Uploaded',date=current_date,owner=excluded.owner,updated_at=now() returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`, [documentNo, jobNo, userName, fileName, storageUrl, notes]);
       const airwayBillNo = String(shipment.rows[0]?.airway_bill_no || requestedAirwayBillNo || "").trim();
+      // Do not flip shipment.pod_status here: the portal still has to save the split reference and
+      // final shipment fields. Delivered + Uploaded becomes read-only, so status is set by that
+      // subsequent shipment save after this document upload succeeds.
       let relatedRows = shipment.rows;
       const relatedDocuments = [saved.rows[0]];
       if (airwayBillNo) {
-        const updated = await query("update shipments set pod_status='Uploaded', updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
-        relatedRows = updated.rows;
-        for (const related of updated.rows) {
-          if (String(related.job_no || "").trim().toLowerCase() === jobNo.toLowerCase()) continue;
-          const relatedJobPart = safeEmployeeDocumentPart(related.job_no);
+        const related = await query("select * from shipments where lower(trim(airway_bill_no))=lower(trim($1))", [airwayBillNo]);
+        relatedRows = related.rows;
+        for (const relatedShipment of related.rows) {
+          if (String(relatedShipment.job_no || "").trim().toLowerCase() === jobNo.toLowerCase()) continue;
+          const relatedJobPart = safeEmployeeDocumentPart(relatedShipment.job_no);
           const relatedDocumentNo = splitNo
             ? `POD-${relatedJobPart.toUpperCase()}-${safeEmployeeDocumentPart(splitNo).toUpperCase()}`
             : `POD-${relatedJobPart.toUpperCase()}`;
@@ -3386,13 +3389,10 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
              values ($1,$2,'POD','Uploaded',current_date,$3,$4,$5,$6,$3)
              on conflict (document_no) do update set file_name=excluded.file_name,storage_url=excluded.storage_url,notes=excluded.notes,status='Uploaded',date=current_date,owner=excluded.owner,updated_at=now()
              returning document_no,linked_no,type,status,date,owner,file_name,storage_url,notes,created_at`,
-            [relatedDocumentNo, related.job_no, userName, fileName, storageUrl, notes]
+            [relatedDocumentNo, relatedShipment.job_no, userName, fileName, storageUrl, notes]
           );
           relatedDocuments.push(relatedDocument.rows[0]);
         }
-      } else {
-        const updated = await query("update shipments set pod_status='Uploaded', updated_at=now() where lower(trim(job_no))=lower(trim($1)) returning *", [jobNo]);
-        relatedRows = updated.rows;
       }
       return response.status(201).json({ ok: true, row: saved.rows[0], airwayBillNo, relatedRows, relatedDocuments });
     }

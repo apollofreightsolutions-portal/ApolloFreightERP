@@ -8542,12 +8542,15 @@ async function savePodDelivery(data, options = {}) {
   const newDeliveredTotal = deliveredSoFar + newSplit.pieces;
   const isFullyDelivered = isMarkedDelivered || !totalPieces || newDeliveredTotal >= totalPieces;
   const updatedSplits = [...existingSplits, newSplit];
-  const previousPodStatus = shipmentItem.podStatus || "Pending";
+  const hasPreviouslyUploadedPod = existingSplits.some((split) => split.documentNo);
   const updatedShipment = {
     ...shipmentItem,
     status: isFullyDelivered ? "Delivered" : "Partially Delivered",
     podSplitsJson: JSON.stringify(updatedSplits),
-    podStatus: isFullyDelivered ? (hasPodFile || existingSplits.some((split) => split.documentNo) ? "Uploaded" : previousPodStatus) : "Partial",
+    // The newly entered delivery does not have a POD file yet. Keep the shipment editable until
+    // that file is stored and the final save adds its document reference; Delivered + Uploaded is
+    // read-only for non-admin users.
+    podStatus: isFullyDelivered ? (hasPodFile ? "Uploaded" : hasPreviouslyUploadedPod ? "Partial" : "Pending") : "Partial",
     // Kept in sync with the LATEST delivery for any older code/reports that still read these
     // shipment-level fields directly instead of the split history.
     deliveryNoteNo: newSplit.deliveryNoteNo,
