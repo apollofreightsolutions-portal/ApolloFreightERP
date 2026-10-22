@@ -4599,7 +4599,8 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
       to: recipient,
       subject: `Apollo Connected | Shipment Update | ${shipment.airway_bill_no || `Shipment ${shipment.job_no}`} | ${shipment.status || "Updated"}`,
       html: brandedShipmentEmail({ shipment, latestHistory }),
-      attachments: [...emailAttachments(), ...podAttachments]
+      attachments: [...emailAttachments(), ...podAttachments],
+      timeoutMs: attachPod ? 60000 : 0
     });
 
     try {

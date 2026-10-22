@@ -14676,12 +14676,17 @@ async function sendShipmentStatusEmail(jobNo, attachPod = false, sendButton = nu
     const result = await fetchJson("/api/shipments/status-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobNo: shipmentItem.jobNo, attachPod })
+      body: JSON.stringify({ jobNo: shipmentItem.jobNo, attachPod }),
+      timeoutMs: attachPod ? 120000 : undefined
     });
     const attachmentNote = result.podAttachmentCount ? ` ${result.podAttachmentCount} POD attachment${result.podAttachmentCount === 1 ? "" : "s"} included.` : "";
     notifySuccess("Status update sent", `The shipment update was emailed to ${result.recipient}.${attachmentNote}`);
   } catch (error) {
-    notifyDenied("Status update not sent", error.message || "The customer status email could not be sent.");
+    if (String(error.message || "").startsWith("Request timed out after")) {
+      notifyDenied("Status email may still be sending", "The portal stopped waiting for a response, but the server may still finish sending it. Check the sender's Sent Items before retrying to avoid a duplicate.");
+    } else {
+      notifyDenied("Status update not sent", error.message || "The customer status email could not be sent.");
+    }
   } finally {
     if (sendButton?.isConnected) {
       sendButton.disabled = false;

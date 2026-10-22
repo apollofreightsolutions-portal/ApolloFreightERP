@@ -218,8 +218,12 @@ async function sendSmtpMail({ recipients, cleanSubject, content, html, config, a
   }
 }
 
-async function sendMicrosoftGraphMail({ to, subject, html, text = "", attachments = [] }) {
+async function sendMicrosoftGraphMail({ to, subject, html, text = "", attachments = [], timeoutMs = 0 }) {
   const config = mailConfig();
+  const requestedTimeoutMs = Number(timeoutMs);
+  if (Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > config.timeoutMs) {
+    config.timeoutMs = requestedTimeoutMs;
+  }
   const message = validateMessage({ to, subject, html, text });
   if (config.provider === "smtp") {
     await sendSmtpMail({ ...message, html, config, attachments });
