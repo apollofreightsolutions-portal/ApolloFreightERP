@@ -76,6 +76,7 @@ let lastPendingNotificationCount = 0;
 let activeDropdownMenu = null;
 let customerPortalData = null;
 let sharedShipmentRefreshTimer = null;
+let statusEmailAttachPodChecked = false;
 let sharedShipmentRefreshInProgress = false;
 let sharedShipmentRefreshEventsBound = false;
 let liveShipmentDataReady = false;
@@ -1890,6 +1891,11 @@ async function boot() {
   moduleContent.addEventListener("keydown", handleModuleKeydown);
   moduleContent.addEventListener("submit", handleModuleSubmit);
   moduleContent.addEventListener("change", (event) => {
+    const attachPodCheckbox = event.target.closest("#status-attach-pod");
+    if (attachPodCheckbox) {
+      statusEmailAttachPodChecked = attachPodCheckbox.checked;
+      return;
+    }
     const recordSelector = event.target.closest("[data-load-select], [data-delete-select]");
     if (recordSelector) {
       state.ui.selectedRecordSelectors = state.ui.selectedRecordSelectors || {};
@@ -2825,6 +2831,7 @@ async function switchPortal(target) {
 }
 
 function showLogin() {
+  statusEmailAttachPodChecked = false;
   customerPortalData = null;
   loginScreen.classList.remove("is-hidden");
   appShell.classList.add("is-hidden");
@@ -4860,7 +4867,7 @@ function renderShipmentStatus() {
           <div class="action-row module-action-buttons">
             <button type="button" class="primary-button" data-action="load-record" data-type="status">Open</button>
             <button type="button" class="secondary-button" data-action="send-status-email" data-type="status">Send Update</button>
-            <label class="status-attach-pod-option" for="status-attach-pod"><input id="status-attach-pod" type="checkbox"><span>Attach POD</span></label>
+            <label class="status-attach-pod-option" for="status-attach-pod"><input id="status-attach-pod" type="checkbox" ${statusEmailAttachPodChecked ? "checked" : ""}><span>Attach POD</span></label>
           </div>
           <p class="empty-state">Type to filter by job number, AWB, customer, origin, destination, or status. Status changes continue to use the existing register and tracking-history handlers.</p>
         </div>
