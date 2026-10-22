@@ -1,4 +1,4 @@
-import "./app-runtime.js?v=apollo-v26-crm-excel-20261020";
+import "./app-runtime.js?v=apollo-status-email-pod-attach-20261022-1";
 import "./hr-workflow-links.js?v=apollo-v241-notify-20261016-1";
 
 import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {

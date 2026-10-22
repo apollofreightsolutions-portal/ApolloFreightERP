@@ -6756,6 +6756,10 @@ function collectionFor(type) {
 }
 
 async function handleModuleClick(event) {
+  if (event.target.closest(".status-attach-pod-option")) {
+    event.stopImmediatePropagation();
+    return;
+  }
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const { action, type, id, mode } = button.dataset;
@@ -7048,7 +7052,7 @@ async function handleModuleClick(event) {
   }
 
   if (action === "send-status-email") {
-    sendShipmentStatusEmail(selectedRecordId("status"), document.querySelector("#status-attach-pod")?.checked === true);
+    sendShipmentStatusEmail(selectedRecordId("status"), document.querySelector("#status-attach-pod")?.checked === true, button);
     return;
   }
 
@@ -14650,11 +14654,16 @@ async function updateLoadStatus(data) {
   return true;
 }
 
-async function sendShipmentStatusEmail(jobNo, attachPod = false) {
+async function sendShipmentStatusEmail(jobNo, attachPod = false, sendButton = null) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
     notifyDenied("Select a shipment", "Choose a shipment before sending its status email.");
     return;
+  }
+  const originalButtonText = sendButton?.textContent || "Send Update";
+  if (sendButton) {
+    sendButton.disabled = true;
+    sendButton.textContent = "Sending…";
   }
   try {
     const result = await fetchJson("/api/shipments/status-email", {
@@ -14666,6 +14675,11 @@ async function sendShipmentStatusEmail(jobNo, attachPod = false) {
     notifySuccess("Status update sent", `The shipment update was emailed to ${result.recipient}.${attachmentNote}`);
   } catch (error) {
     notifyDenied("Status update not sent", error.message || "The customer status email could not be sent.");
+  } finally {
+    if (sendButton?.isConnected) {
+      sendButton.disabled = false;
+      sendButton.textContent = originalButtonText;
+    }
   }
 }
 
