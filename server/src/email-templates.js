@@ -29,7 +29,7 @@ function frame(title,body,kind='shipment') {
 function details(rows){return `<table role="presentation" width="100%" cellspacing="0" cellpadding="8" style="border-collapse:collapse;font-size:14px">${rows.map(([label,value])=>`<tr><td style="width:42%;font-weight:bold;border-bottom:1px solid #eef0f2;vertical-align:top">${esc(label)}</td><td style="border-bottom:1px solid #eef0f2;overflow-wrap:anywhere">${esc(value)}</td></tr>`).join('')}</table>`;}
 function shipmentUpdateEmailHtml({shipment,latestHistory}) {
  const date=new Date(latestHistory?.updated_at||shipment.updated_at||Date.now());
- const rows=[['Shipment No.',shipment.job_no]];
+ const rows=[['Customer Reference',shipment.customer_reference||'Not provided']];
  if(shipment.airway_bill_no)rows.push(['Tracking / AWB',shipment.airway_bill_no]);
  rows.push(['Origin',shipment.origin],['Destination',shipment.destination],['Current Status',shipment.status||'Updated'],['POD Status',shipment.pod_status||'Not available'],['Updated (Dubai time)',Number.isNaN(date.getTime())?'Not available':date.toLocaleString('en-GB',{timeZone:'Asia/Dubai'})]);
  // Internal history notes are never customer-facing. Do not guess using keyword filters.

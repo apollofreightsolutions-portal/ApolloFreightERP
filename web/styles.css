@@ -2155,6 +2155,26 @@ th {
   min-width: 112px;
 }
 
+.status-attach-pod-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.status-attach-pod-option input[type="checkbox"] {
+  width: 14px !important;
+  height: 14px !important;
+  min-height: 14px !important;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--brand);
+}
+
 .shipment-landscape-actions,
 .shipment-register-panel {
   min-width: 0;

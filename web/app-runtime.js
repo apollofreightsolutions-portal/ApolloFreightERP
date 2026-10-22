@@ -4860,6 +4860,7 @@ function renderShipmentStatus() {
           <div class="action-row module-action-buttons">
             <button type="button" class="primary-button" data-action="load-record" data-type="status">Open</button>
             <button type="button" class="secondary-button" data-action="send-status-email" data-type="status">Send Update</button>
+            <label class="status-attach-pod-option" for="status-attach-pod"><input id="status-attach-pod" type="checkbox"><span>Attach POD</span></label>
           </div>
           <p class="empty-state">Type to filter by job number, AWB, customer, origin, destination, or status. Status changes continue to use the existing register and tracking-history handlers.</p>
         </div>
@@ -7047,7 +7048,7 @@ async function handleModuleClick(event) {
   }
 
   if (action === "send-status-email") {
-    sendShipmentStatusEmail(selectedRecordId("status"));
+    sendShipmentStatusEmail(selectedRecordId("status"), document.querySelector("#status-attach-pod")?.checked === true);
     return;
   }
 
@@ -8631,8 +8632,7 @@ async function uploadPodFileForSelectedShipment(jobNo, targetSplitNo = null) {
         targetSplit.fileName = documentItem.fileName;
         shipmentItem.podSplitsJson = JSON.stringify(splits);
       }
-      const isFullyDelivered = statusKey === "delivered";
-      if (isFullyDelivered) shipmentItem.podStatus = "Uploaded";
+      shipmentItem.podStatus = "Uploaded";
       const shipmentSaved = await persistRecord("shipment", shipmentItem);
       if (!shipmentSaved) {
         Object.assign(shipmentItem, savedShipmentSnapshot);
@@ -14647,7 +14647,7 @@ async function updateLoadStatus(data) {
   return true;
 }
 
-async function sendShipmentStatusEmail(jobNo) {
+async function sendShipmentStatusEmail(jobNo, attachPod = false) {
   const shipmentItem = state.shipments.find((row) => row.jobNo === jobNo);
   if (!shipmentItem) {
     notifyDenied("Select a shipment", "Choose a shipment before sending its status email.");
@@ -14657,9 +14657,10 @@ async function sendShipmentStatusEmail(jobNo) {
     const result = await fetchJson("/api/shipments/status-email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobNo: shipmentItem.jobNo })
+      body: JSON.stringify({ jobNo: shipmentItem.jobNo, attachPod })
     });
-    notifySuccess("Status update sent", `The shipment update was emailed to ${result.recipient}.`);
+    const attachmentNote = result.podAttachmentCount ? ` ${result.podAttachmentCount} POD attachment${result.podAttachmentCount === 1 ? "" : "s"} included.` : "";
+    notifySuccess("Status update sent", `The shipment update was emailed to ${result.recipient}.${attachmentNote}`);
   } catch (error) {
     notifyDenied("Status update not sent", error.message || "The customer status email could not be sent.");
   }

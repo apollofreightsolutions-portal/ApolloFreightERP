@@ -3373,7 +3373,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
       let relatedRows = shipment.rows;
       const relatedDocuments = [saved.rows[0]];
       if (airwayBillNo) {
-        const updated = await query("update shipments set status=case when lower(trim(status))='delivered' then 'Delivered' else status end, pod_status=case when lower(trim(status))='delivered' then 'Uploaded' else pod_status end, updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
+        const updated = await query("update shipments set pod_status='Uploaded', updated_at=now() where lower(trim(airway_bill_no))=lower(trim($1)) returning *", [airwayBillNo]);
         relatedRows = updated.rows;
         for (const related of updated.rows) {
           if (String(related.job_no || "").trim().toLowerCase() === jobNo.toLowerCase()) continue;
@@ -3390,6 +3390,9 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
           );
           relatedDocuments.push(relatedDocument.rows[0]);
         }
+      } else {
+        const updated = await query("update shipments set pod_status='Uploaded', updated_at=now() where lower(trim(job_no))=lower(trim($1)) returning *", [jobNo]);
+        relatedRows = updated.rows;
       }
       return response.status(201).json({ ok: true, row: saved.rows[0], airwayBillNo, relatedRows, relatedDocuments });
     }
@@ -4471,6 +4474,70 @@ app.get("/api/mail/status", requireErpPortalAuth, (request, response) => {
   return response.json({ ok: true, mail: graphMailStatus() });
 });
 
+async function shipmentPodEmailAttachments(jobNo) {
+  const documents = (await query(
+    `select document_no, linked_no, type, status, file_name, storage_url, notes
+       from documents
+      where lower(trim(linked_no)) = lower(trim($1))
+        and lower(trim(type)) = 'pod'
+        and lower(trim(status)) = 'uploaded'
+        and trim(coalesce(storage_url, '')) <> ''
+      order by created_at asc, document_no asc`,
+    [jobNo]
+  )).rows;
+  if (!documents.length) {
+    const error = new Error("Attach POD was selected, but no uploaded POD file was found for this shipment. Upload the POD first or uncheck Attach POD.");
+    error.status = 422;
+    throw error;
+  }
+
+  const maxTotalBytes = 2.5 * 1024 * 1024;
+  const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
+  const attachments = [];
+  let totalBytes = 0;
+  for (const document of documents) {
+    const url = await resolveStoredDocumentUrl(document);
+    const target = new URL(url);
+    if (target.protocol !== "https:" || !["storage.googleapis.com", "res.cloudinary.com"].includes(target.hostname)) {
+      const error = new Error("The uploaded POD is stored at an unsupported location and cannot be attached.");
+      error.status = 422;
+      throw error;
+    }
+    const response = await fetch(target, { signal: AbortSignal.timeout(20000) });
+    if (!response.ok) {
+      const error = new Error(`The uploaded POD could not be downloaded for email (HTTP ${response.status}).`);
+      error.status = 502;
+      throw error;
+    }
+    const announcedBytes = Number(response.headers.get("content-length") || 0);
+    if (announcedBytes && announcedBytes + totalBytes > maxTotalBytes) {
+      const error = new Error("The POD attachment is larger than the email attachment limit (2.5 MB total). Reduce the file size and try again.");
+      error.status = 413;
+      throw error;
+    }
+    const content = Buffer.from(await response.arrayBuffer());
+    if (!content.length || content.length + totalBytes > maxTotalBytes) {
+      const error = new Error("The POD attachment is empty or larger than the email attachment limit (2.5 MB total). Reduce the file size and try again.");
+      error.status = 413;
+      throw error;
+    }
+    const extension = path.extname(String(document.file_name || "")).toLowerCase();
+    const extensionTypes = { ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png" };
+    const responseType = String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    const contentType = extensionTypes[extension] || responseType;
+    if (!allowedTypes.has(contentType)) {
+      const error = new Error(`The uploaded POD file type for ${document.file_name || document.document_no} is not supported for email.`);
+      error.status = 422;
+      throw error;
+    }
+    const name = String(document.file_name || `${document.document_no}${contentType === "application/pdf" ? ".pdf" : contentType === "image/png" ? ".png" : ".jpg"}`)
+      .replace(/[\\/\r\n\u0000-\u001f]/g, "_").slice(0, 180);
+    attachments.push({ name, contentType, contentBytes: content.toString("base64") });
+    totalBytes += content.length;
+  }
+  return attachments;
+}
+
 app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, response, next) => {
   try {
     const jobNo = String(request.body?.jobNo || request.body?.job_no || "").trim();
@@ -4499,8 +4566,10 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
       return response.status(403).json({ ok: false, error: "You do not have access to send updates for this shipment branch." });
     }
 
-    let customerCode = "";
-    try { customerCode = JSON.parse(shipment.notes || "{}").customerCode || ""; } catch {}
+    let shipmentMetadata = {};
+    try { shipmentMetadata = JSON.parse(shipment.notes || "{}"); } catch {}
+    const customerCode = shipmentMetadata.customerCode || "";
+    shipment.customer_reference = String(shipmentMetadata.customerReference || "").trim();
     const customer = (await query(
       `select name, email
          from customers
@@ -4524,11 +4593,13 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
       [shipment.job_no]
     )).rows[0] || null;
 
+    const attachPod = request.body?.attachPod === true;
+    const podAttachments = attachPod ? await shipmentPodEmailAttachments(shipment.job_no) : [];
     const mail = await sendMicrosoftGraphMail({
       to: recipient,
-      subject: `Apollo Connected | Shipment Update | ${shipment.job_no} | ${shipment.status}`,
+      subject: `Apollo Connected | Shipment Update | ${shipment.airway_bill_no || `Shipment ${shipment.job_no}`} | ${shipment.status || "Updated"}`,
       html: brandedShipmentEmail({ shipment, latestHistory }),
-      attachments: emailAttachments()
+      attachments: [...emailAttachments(), ...podAttachments]
     });
 
     try {
@@ -4539,7 +4610,7 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
           String(user.user_name || request.appSession?.userName || "system"),
           "Sent shipment status email",
           shipment.job_no,
-          JSON.stringify({ from: mail.from, to: mail.to, status: shipment.status, branch: shipment.branch })
+          JSON.stringify({ from: mail.from, to: mail.to, status: shipment.status, branch: shipment.branch, podAttachments: podAttachments.map((item) => item.name) })
         ]
       );
     } catch (auditError) {
@@ -4551,6 +4622,7 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
       recipient,
       jobNo: shipment.job_no,
       status: shipment.status,
+      podAttachmentCount: podAttachments.length,
       from: mail.from,
       to: mail.to
     });
