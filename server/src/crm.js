@@ -108,6 +108,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
   }
 
   router.use(loadCrmUser);
+  require("./crm-planning").registerPlanning({router,query,accountScope});
   require('./crm-database').registerDatabase({ router, query, accountScope });
 
   function requestIp(request) {
@@ -487,6 +488,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
       const account=await requireAccount(request,response,accountId); if(!account)return;
       const normalized=config.normalize(body, request.crmUser, account);
       if (config.entity === "opportunity" && !request.crmUser.permissions.manageAssignments) normalized.owner_user_name = account.assigned_to;
+      if (config.entity === "visit" && !(await require("./crm-planning").validateVisit(query,normalized,request.crmUser,response))) return;
       if (!(await validateLinkedRecord(response, config, normalized))) return;
       const columns=Object.keys(normalized); const values=Object.values(normalized);
       const result=await query(`insert into ${config.table} (${columns.join(",")}) values (${values.map((_,i)=>`$${i+1}`).join(",")}) returning *`,values);
@@ -503,6 +505,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
       const account=await requireAccount(request,response,current.account_id); if(!account)return;
       const merged={...current,...request.body,accountId:current.account_id}; const normalized=config.normalize(merged,request.crmUser,account);
       if (config.entity === "opportunity" && !request.crmUser.permissions.manageAssignments) normalized.owner_user_name = account.assigned_to;
+      if (config.entity === "visit" && !(await require("./crm-planning").validateVisit(query,normalized,request.crmUser,response,current.salesperson||current.created_by))) return;
       if (!(await validateLinkedRecord(response, config, normalized))) return;
       delete normalized.account_id; delete normalized.created_by;
       const columns=Object.keys(normalized); const values=Object.values(normalized); values.push(id);
@@ -515,7 +518,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
   const linkedConfigs={
     contacts:{table:"crm_contacts",alias:"c",entity:"contact",label:"contact",normalize:(b,u)=>({account_id:Number(b.accountId||b.account_id),full_name:cleanText(b.fullName||b.full_name,250),job_title:cleanText(b.jobTitle||b.job_title,200),department:cleanText(b.department,160),email:cleanText(b.email,250),mobile:cleanText(b.mobile,120),phone:cleanText(b.phone,120),whatsapp:cleanText(b.whatsapp,120),linkedin:cleanText(b.linkedin,500),is_primary:bool(b.isPrimary??b.is_primary),influence_level:cleanText(b.influenceLevel||b.influence_level,80),preferred_contact_method:cleanText(b.preferredContactMethod||b.preferred_contact_method,80),birthday:cleanDate(b.birthday),notes:cleanText(b.notes,5000),created_by:u.user_name})},
     opportunities:{table:"crm_opportunities",alias:"o",entity:"opportunity",label:"opportunity",normalize:(b,u,a)=>({account_id:Number(b.accountId||b.account_id),opportunity_no:cleanText(b.opportunityNo||b.opportunity_no,80),title:cleanText(b.title,300),owner_user_name:cleanText(b.ownerUserName||b.owner_user_name||a.assigned_to,200),stage:cleanText(b.stage||"Qualification",100),status:cleanText(b.status||"Open",80),service_type:cleanText(b.serviceType||b.service_type,160),origin:cleanText(b.origin,160),destination:cleanText(b.destination,160),estimated_value:cleanNumber(b.estimatedValue||b.estimated_value),currency:cleanText(b.currency||"AED",12),probability:Math.max(0,Math.min(100,cleanInteger(b.probability,25))),expected_close_date:cleanDate(b.expectedCloseDate||b.expected_close_date),competitor:cleanText(b.competitor,250),next_step:cleanText(b.nextStep||b.next_step,1000),next_step_date:cleanDate(b.nextStepDate||b.next_step_date),lost_reason:cleanText(b.lostReason||b.lost_reason,1000),notes:cleanText(b.notes,5000),created_by:u.user_name})},
-    visits:{table:"crm_visits",alias:"v",entity:"visit",label:"visit",normalize:(b,u)=>({account_id:Number(b.accountId||b.account_id),contact_id:Number(b.contactId||b.contact_id)||null,visit_date:cleanDate(b.visitDate||b.visit_date)||new Date().toISOString().slice(0,10),visit_time:cleanText(b.visitTime||b.visit_time,20),visit_type:cleanText(b.visitType||b.visit_type||"Client Visit",100),location:cleanText(b.location,500),attendees:cleanText(b.attendees,1000),purpose:cleanText(b.purpose,3000),outcome:cleanText(b.outcome,5000),next_step:cleanText(b.nextStep||b.next_step,2000),follow_up_date:cleanDate(b.followUpDate||b.follow_up_date),notes:cleanText(b.notes,5000),created_by:u.user_name})},
+    visits:{table:"crm_visits",alias:"v",entity:"visit",label:"visit",normalize:(b,u)=>({...require("./crm-planning").visitFields(b,u),account_id:Number(b.accountId||b.account_id),contact_id:Number(b.contactId||b.contact_id)||null,visit_date:cleanDate(b.visitDate||b.visit_date)||new Date().toISOString().slice(0,10),visit_time:cleanText(b.visitTime||b.visit_time,20),visit_type:cleanText(b.visitType||b.visit_type||"Client Visit",100),location:cleanText(b.location,500),attendees:cleanText(b.attendees,1000),purpose:cleanText(b.purpose,3000),outcome:cleanText(b.outcome,5000),next_step:cleanText(b.nextStep||b.next_step,2000),follow_up_date:cleanDate(b.followUpDate||b.follow_up_date),notes:cleanText(b.notes,5000),created_by:u.user_name})},
     meetings:{table:"crm_meetings",alias:"m",entity:"meeting",label:"meeting minutes",normalize:(b,u)=>({account_id:Number(b.accountId||b.account_id),contact_id:Number(b.contactId||b.contact_id)||null,meeting_date:cleanDate(b.meetingDate||b.meeting_date)||new Date().toISOString().slice(0,10),meeting_time:cleanText(b.meetingTime||b.meeting_time,20),meeting_type:cleanText(b.meetingType||b.meeting_type||"In Person",100),subject:cleanText(b.subject,500),attendees:cleanText(b.attendees,1500),minutes:cleanText(b.minutes,15000),decisions:cleanText(b.decisions,8000),action_items:cleanText(b.actionItems||b.action_items,8000),follow_up_date:cleanDate(b.followUpDate||b.follow_up_date),document_link:cleanText(b.documentLink||b.document_link,1000),created_by:u.user_name})}
   };
 

@@ -209,6 +209,7 @@ async function resolveShipmentCreatorMention(query, user, message) {
 
 function classifyDomain(message) {
   const text = lower(message);
+  if (/\b(visits?|visited|opportunit(?:y|ies)|salespeople|salesperson|sales team|sales brief|sales summary)\b/.test(text)) return "crm";
   if (/\b(hr|human resources|leave|holiday|payslip|employee|annual leave|sick leave|vacation|absence|attendance)\b/.test(text)) return "hr";
   if (/\b(operation|operations|shipment|shipments|ship|shipped|shipping|job|jobs|tcn|awb|waybill|pod|border|transit|delivered|delivery|booking|booked|manifest|load|trip|truck|customs|clearance|origin|destination|destined|lane|route|freight|cargo|consignee|shipper|warehouse|delay|created today|created yesterday|bahrain|doha|qatar|riyadh|jeddah|dammam|saudi)\b/.test(text) || /\bAFS[-/A-Z0-9]*\d{3,}\b/i.test(message)) return "operations";
   if (/\b(crm|prospect|pipeline|opportunit|sales|business development|bdm|sales visit|meeting minute|follow[- ]?up|lead|clients?|customers?|accounts?|customer account|quotation|quote)\b/.test(text)) return "crm";
@@ -907,6 +908,11 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
       // reuse the previous USER question, but prior AI answers are never treated as facts.
       effectiveMessage = routingMessage(message, request.body?.history);
       domain = classifyDomain(effectiveMessage);
+      if (domain === 'crm' && /\b(visits?|visited|opportunit(?:y|ies)|pipeline|sales|salesperson|salespeople|follow[- ]?ups?)\b/i.test(effectiveMessage)) {
+        const direct = await require('./crm-ai-brief').crmBrief(query,user,effectiveMessage,crmScope,businessTimezone);
+        status='ok-direct'; outputChars=direct.answer.length; scopeLabel=direct.label||'CRM permission-scoped';
+        return response.json({ok:true,answer:direct.answer,actions:[],domain,scopeLabel,sourceSummary:direct.sourceSummary||'CRM access check',retrievedAt:new Date().toISOString(),readOnly:true,requestId,deterministic:true});
+      }
 
       if (["general", "workspace", "operations"].includes(domain) && hasOperationsSummary(user)) {
         shipmentCustomer = await resolveShipmentCustomerMention(query, user, effectiveMessage);

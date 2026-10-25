@@ -100,7 +100,7 @@ async function load(key, force = false) {
 }
 
 function ensure(...keys) { keys.forEach(key => { if (cache[key] === null && !cache.loading.has(key)) load(key); }); }
-function invalidate(...keys) { keys.forEach(key => cache[key] = null); }
+function invalidate(...keys) { keys.forEach(key => cache[key] = null); filterData=null; filterError=''; }
 
 function shell(inner, { title = "Sales CRM", subtitle = "Controlled customer ownership, activity and pipeline visibility.", actions = "" } = {}) {
   const s = crmSession();
@@ -141,7 +141,7 @@ function renderDashboard() {
     </section>
     <section class="crm-grid-2">${panel("Priority Follow-ups","Open tasks requiring attention",taskRows,`<button data-crm-action="new-task">New Follow-up</button>`)}${panel("Recent Activity","Immutable CRM audit trail",events)}</section>
     ${panel("Pipeline Snapshot","Most recent open opportunities",`<div class="crm-pipeline" style="grid-template-columns:repeat(3,minmax(230px,1fr))">${pipeline}</div>`,`<button data-crm-nav="Opportunities">Open Pipeline</button>`)}`,
-    {title:"CRM Dashboard",subtitle:"Accounts remain company property. Sales access follows assignment and server-side permissions.",actions:`<button data-crm-action="new-account">New Account</button><button class="secondary-button" data-crm-action="new-visit">Log Visit</button>`});
+    {title:"CRM Dashboard",subtitle:"Accounts remain company property. Sales access follows assignment and server-side permissions.",actions:`<button data-crm-action="new-account">New Account</button><button class="secondary-button" data-crm-action="new-visit">Schedule / Log Visit</button>`});
 }
 
 function renderAccounts() {
@@ -203,14 +203,14 @@ function renderOpportunities() {
   const rows=cache.opportunities; const stages=["Qualification","Discovery","Proposal","Negotiation","Won"];
   const columns=stages.map(stage=>{const items=rows.filter(r=>String(r.stage||"").toLowerCase()===stage.toLowerCase() && String(r.status||"Open").toLowerCase()!=="lost"); const total=items.reduce((a,r)=>a+Number(r.estimated_value||0),0); return `<section class="crm-stage"><div class="crm-stage-head"><strong>${esc(stage)}</strong><span>${items.length} · ${money(total,"AED")}</span></div>${items.length?items.map(r=>`<div class="crm-opportunity-card" data-crm-action="edit-opportunity" data-id="${r.id}"><strong>${esc(r.title)}</strong><span>${esc(r.company_name)}</span><span>${esc(text(r.service_type))} · ${esc(text(r.origin,""))}${r.origin&&r.destination?" → ":""}${esc(text(r.destination,""))}</span><span>Owner: ${esc(text(r.owner_user_name||r.assigned_to))}</span><div class="value">${money(r.estimated_value,r.currency)} · ${Number(r.probability||0)}%</div>${reviewButton("opportunities",r.id)}</div>`).join(""):empty("No opportunities")}</section>`}).join("");
   const exportButton=crmSession().crmExportAccess?`<button class="secondary-button" data-crm-export="opportunities">Export CSV</button>`:"";
-  return shell(`${salespersonFilter("opportunities")}${panel("Pipeline Board","Drag-free by design: stage changes are recorded as auditable edits.",`<div class="crm-pipeline">${columns}</div>`)}${rows.some(r=>String(r.status||"").toLowerCase()==="lost")?panel("Lost Opportunities","Retained for analysis instead of being deleted",`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Opportunity</th><th>Account</th><th>Value</th><th>Reason</th><th>Owner</th><th></th></tr></thead><tbody>${rows.filter(r=>String(r.status||"").toLowerCase()==="lost").map(r=>`<tr><td>${esc(r.title)}</td><td>${esc(r.company_name)}</td><td>${money(r.estimated_value,r.currency)}</td><td>${esc(text(r.lost_reason))}</td><td>${esc(text(r.owner_user_name))}</td><td>${reviewButton("opportunities",r.id)}</td></tr>`).join("")}</tbody></table></div>`):""}`,
+  return shell(`${panel("Pipeline Board","Drag-free by design: stage changes are recorded as auditable edits.",`<div class="crm-pipeline">${columns}</div>`)}${rows.some(r=>String(r.status||"").toLowerCase()==="lost")?panel("Lost Opportunities","Retained for analysis instead of being deleted",`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Opportunity</th><th>Account</th><th>Value</th><th>Reason</th><th>Owner</th><th></th></tr></thead><tbody>${rows.filter(r=>String(r.status||"").toLowerCase()==="lost").map(r=>`<tr><td>${esc(r.title)}</td><td>${esc(r.company_name)}</td><td>${money(r.estimated_value,r.currency)}</td><td>${esc(text(r.lost_reason))}</td><td>${esc(text(r.owner_user_name))}</td><td>${reviewButton("opportunities",r.id)}</td></tr>`).join("")}</tbody></table></div>`):""}`,
   {title:"Opportunities",subtitle:"Pipeline value, probability, lanes, service type, competitor and next step are captured per opportunity.",actions:`<button data-crm-action="new-opportunity">New Opportunity</button>${exportButton}`});
 }
 
 function renderVisits() {
-  ensure("visits","accounts","contacts"); if(!cache.visits) return shell(loading("visits"),{title:"Sales Visits",subtitle:"Proof of field activity with outcomes and next steps."});
-  const rows=cache.visits; const table=rows.length?`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Date</th><th>Account</th><th>Contact</th><th>Type</th><th>Purpose</th><th>Outcome</th><th>Follow-up</th><th>Logged By</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td class="crm-primary">${date(r.visit_date)}<span class="crm-sub">${esc(text(r.visit_time,""))}</span></td><td>${esc(r.company_name)}</td><td>${esc(text(r.contact_name))}</td><td>${badge(r.visit_type,"navy")}</td><td>${esc(text(r.purpose))}</td><td>${esc(text(r.outcome))}</td><td>${date(r.follow_up_date)}<span class="crm-sub">${esc(text(r.next_step,""))}</span></td><td>${esc(text(r.created_by))}</td><td><button class="secondary-button" data-crm-action="edit-visit" data-id="${r.id}">Edit</button>${reviewButton("visits",r.id)}</td></tr>`).join("")}</tbody></table></div>`:empty("No client visits logged yet.");
-  return shell(salespersonFilter("visits")+table,{title:"Sales Visits",subtitle:"Visits stay attached to the account, even if the salesperson later leaves Apollo.",actions:`<button data-crm-action="new-visit">Log Visit</button>`});
+  ensure("visits","accounts","contacts","users"); if(!cache.visits) return shell(loading("visits"),{title:"Sales Visits",subtitle:"Planned visits, actual completion and follow-ups."});
+ const rows=[...cache.visits].sort((a,b)=>String(a.visit_date).localeCompare(String(b.visit_date))||String(a.visit_time).localeCompare(String(b.visit_time))); const table=rows.length?`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Scheduled / Actual</th><th>Account</th><th>Contact</th><th>Status / Type</th><th>Purpose</th><th>Outcome</th><th>Follow-up</th><th>Salesperson</th><th></th></tr></thead><tbody>${rows.map(r=>`<tr><td class="crm-primary">${date(r.visit_date)}<span class="crm-sub">${esc(text(r.visit_time,""))}</span><span class="crm-sub">Actual: ${date(r.actual_visit_date)}</span></td><td>${esc(r.company_name)}</td><td>${esc(text(r.contact_name))}</td><td>${badge(r.visit_status||"Unclassified",statusTone(r.visit_status))}<span class="crm-sub">${esc(r.visit_type)}</span></td><td>${esc(text(r.purpose))}</td><td>${esc(text(r.outcome))}</td><td>${date(r.follow_up_date)}<span class="crm-sub">${esc(text(r.next_step,""))}</span></td><td>${esc(text(r.salesperson||r.created_by))}</td><td><button class="secondary-button" data-crm-action="edit-visit" data-id="${r.id}">Edit</button>${reviewButton("visits",r.id)}</td></tr>`).join("")}</tbody></table></div>`:empty("No visits match these filters.");
+  return shell(table,{title:"Sales Visits",subtitle:"Visits stay attached to the account, even if the salesperson later leaves Apollo.",actions:`<button data-crm-action="new-visit">Schedule / Log Visit</button>`});
 }
 
 function renderMeetings() {
@@ -223,7 +223,7 @@ function renderTasks() {
   ensure("tasks","accounts","opportunities","users"); if(!cache.tasks) return shell(loading("tasks"),{title:"Follow-ups",subtitle:"A disciplined next-action queue for sales execution."});
   const rows=cache.tasks; const open=rows.filter(r=>String(r.status||"").toLowerCase()!=="completed"), completed=rows.filter(r=>String(r.status||"").toLowerCase()==="completed");
   const taskTable=list=>list.length?`<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Task</th><th>Account</th><th>Opportunity</th><th>Due</th><th>Priority</th><th>Assigned To</th><th>Status</th><th></th></tr></thead><tbody>${list.map(r=>`<tr><td class="crm-primary">${esc(r.title)}<span class="crm-sub">${esc(text(r.description,""))}</span></td><td>${esc(text(r.company_name))}</td><td>${esc(text(r.opportunity_title))}</td><td>${date(r.due_date)}</td><td>${badge(r.priority,String(r.priority||"").toLowerCase()==="high"?"red":"navy")}</td><td>${esc(text(r.assigned_to))}</td><td>${badge(r.status,statusTone(r.status))}</td><td>${String(r.status||"").toLowerCase()!=="completed"?`<button class="crm-success" data-crm-action="complete-task" data-id="${r.id}">Complete</button>`:""}<button class="secondary-button" data-crm-action="edit-task" data-id="${r.id}">Edit</button></td></tr>`).join("")}</tbody></table></div>`:empty("None.");
-  return shell(`${panel("Open Follow-ups",`${open.length} items requiring action`,taskTable(open))}${panel("Completed","Retained for accountability and performance review",taskTable(completed.slice(0,100)))}`,
+  return shell(`${panel("Open Follow-ups",`${open.length} items requiring action`,taskTable(open))}${panel("Completed","Retained for accountability and performance review",taskTable(completed))}`,
   {title:"Follow-ups",subtitle:"Tasks can be assigned by management, while sales executives remain limited to their own customer universe.",actions:`<button data-crm-action="new-task">New Follow-up</button>`});
 }
 
@@ -328,8 +328,11 @@ function openOpportunity(id=null){const r=id?recordBy("opportunities",id):{}; mo
   ${field("Expected Close","expectedCloseDate",date(r.expected_close_date)==="—"?"":date(r.expected_close_date),"date")}${field("Competitor","competitor",r.competitor||"")}${field("Next Step Date","nextStepDate",date(r.next_step_date)==="—"?"":date(r.next_step_date),"date")}
   ${textarea("Next Step","nextStep",r.next_step||"")}${textarea("Lost Reason","lostReason",r.lost_reason||"")}${textarea("Notes","notes",r.notes||"")}<input type="hidden" name="id" value="${esc(id||"")}">`,{formType:"opportunity",saveLabel:id?"Save Opportunity":"Create Opportunity"});}
 
-function openVisit(id=null){const r=id?recordBy("visits",id):{}; modal(id?"Edit Sales Visit":"Log Sales Visit",`
-  <label>Account<select name="accountId" required><option value="">Select account</option>${accountOptions(r.account_id)}</select></label><label>Client Contact<select name="contactId"><option value="">No contact selected</option>${contactOptions(r.contact_id,r.account_id)}</select></label>${field("Visit Date","visitDate",date(r.visit_date)==="—"?today():date(r.visit_date),"date")}
+function openVisit(id=null){const r=id?recordBy("visits",id):{}; ensure("users"); modal(id?"Edit Sales Visit":"Schedule / Log Visit",`
+  ${select("Visit Status","visitStatus",["Planned","Completed","Cancelled","No-show","Unclassified"],r.visit_status||"Planned")}
+  ${field("Actual Visit Date (completed only)","actualVisitDate",date(r.actual_visit_date)==="—"?"":date(r.actual_visit_date),"date")}
+  <label>Salesperson<select name="salesperson"><option value="${esc(r.salesperson||r.created_by||crmSession().userName)}">${esc(r.salesperson||r.created_by||crmSession().userName)}</option>${crmSession().crmManageAssignments?userOptions():''}</select></label>
+  <label>Account<select name="accountId" required><option value="">Select account</option>${accountOptions(r.account_id)}</select></label><label>Client Contact<select name="contactId"><option value="">No contact selected</option>${contactOptions(r.contact_id,r.account_id)}</select></label>${field("Scheduled Date","visitDate",date(r.visit_date)==="—"?today():date(r.visit_date),"date")}
   ${field("Visit Time","visitTime",r.visit_time||"","time")}${select("Visit Type","visitType",["Client Visit","Site Visit","Coffee / Relationship","Presentation","Tender Meeting"],r.visit_type||"Client Visit")}
   ${field("Location","location",r.location||"")}${field("Attendees","attendees",r.attendees||"")}${textarea("Purpose","purpose",r.purpose||"")}${textarea("Outcome","outcome",r.outcome||"")}${field("Follow-up Date","followUpDate",date(r.follow_up_date)==="—"?"":date(r.follow_up_date),"date")}${textarea("Next Step","nextStep",r.next_step||"")}${textarea("Notes","notes",r.notes||"")}<input type="hidden" name="id" value="${esc(id||"")}">`,{formType:"visit",saveLabel:id?"Save Visit":"Log Visit"});}
 
@@ -398,12 +401,63 @@ function bind(){
   });
 }
 
+let filterData=null,filterBusy=false,filterError='',panelFilters={};
+const dateFields={accounts:'created_at',contacts:'created_at',opportunities:'expected_close_date',visits:'visit_date',meetings:'meeting_date',tasks:'due_date',activity:'created_at'};
+const dateLabels={accounts:'Account created',contacts:'Contact created',opportunities:'Expected close',visits:'Scheduled visit',meetings:'Meeting date',tasks:'Due date',activity:'Activity date'};
+function weekRange(offset=0){const now=new Date();const local=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuwait',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);const d=new Date(local+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-d.getUTCDay()+offset*7);const from=d.toISOString().slice(0,10);d.setUTCDate(d.getUTCDate()+6);return [from,d.toISOString().slice(0,10)];}
+function panelMatch(section,r,f,accounts){
+ const a=section==='accounts'?r:accounts.find(a=>String(a.id)===String(r.account_id));
+ const owner=section==='visits'?(r.salesperson||r.created_by):section==='meetings'?r.created_by:section==='activity'?r.actor_user_name:section==='opportunities'?(r.owner_user_name||a?.assigned_to):section==='tasks'?r.assigned_to:(r.assigned_to||a?.assigned_to||r.user_name);
+ const entity=String(r.branch||a?.branch||r.branch_access||'').toUpperCase();
+ const entityMatch=!f.entity||(f.entity==='DXB'?/DXB|DUBAI|UAE/.test(entity):/KWI|KUWAIT/.test(entity));
+ const status=r.visit_status||r.status||r.action||r.account_status||'';
+ const dt=String(r[section==='visits'&&f.basis==='actual'?'actual_visit_date':dateFields[section]||'created_at']||'').slice(0,10);
+ return (!f.search||Object.values(r).join(' ').toLowerCase().includes(f.search.toLowerCase()))&&(!f.owner||String(owner).toLowerCase()===f.owner.toLowerCase())&&entityMatch&&(!f.customer||String(a?.id||r.account_id)===f.customer)&&(!f.status||status===f.status)&&(!f.from||(dt&&dt>=f.from))&&(!f.to||(dt&&dt<=f.to))&&(!f.overdue||(r.visit_status==='Planned'&&dt<today()));
+}
+function panelToolbar(section,source){
+ const f=panelFilters[section]||{};const accounts=filterData?.accounts||[];const rows=source||[];
+ const names=new Set();for(const r of rows){const a=accounts.find(a=>String(a.id)===String(r.account_id));const n=section==='visits'?(r.salesperson||r.created_by):section==='meetings'?r.created_by:section==='activity'?r.actor_user_name:section==='opportunities'?(r.owner_user_name||a?.assigned_to):section==='tasks'?r.assigned_to:r.assigned_to||a?.assigned_to||r.user_name;if(n)names.add(n);}
+ if(section==='dashboard'||section==='reports')accounts.forEach(a=>names.add(a.assigned_to));
+ const options=(values,selected)=>'<option value="">All</option>'+values.map(v=>`<option value="${esc(v)}" ${v===selected?'selected':''}>${esc(v)}</option>`).join('');
+ const attr=k=>`data-panel="${section}" data-panel-field="${k}"`;
+ const summary=section==='dashboard'||section==='reports';
+ return `<section class="crm-toolbar"><label>Search<input ${attr('search')} value="${esc(f.search||'')}"></label><label>${section==='activity'?'Actor':section==='meetings'?'Recorded by':'Salesperson'}<select ${attr('owner')}>${options([...names].sort(),f.owner)}</select></label><label>Entity<select ${attr('entity')}>${options(['DXB','KWI'],f.entity)}</select></label>${!['team','admin'].includes(section)?`<label>Customer<select ${attr('customer')}><option value="">All</option>${accounts.map(a=>`<option value="${a.id}" ${String(a.id)===f.customer?'selected':''}>${esc(a.company_name)}</option>`).join('')}</select>`:''}
+ ${!summary?`<label>Status / action<select ${attr('status')}>${options([...new Set(rows.map(r=>r.visit_status||r.status||r.action||r.account_status).filter(Boolean))].sort(),f.status)}</select></label>`:''}
+ ${dateFields[section]||summary?`<label>${summary?'Dates apply to each record’s business date':dateLabels[section]} — from<input type="date" ${attr('from')} value="${esc(f.from||'')}"></label><label>To<input type="date" ${attr('to')} value="${esc(f.to||'')}"></label>`:''}
+ ${section==='visits'?`<label>Date basis<select ${attr('basis')}><option value="scheduled">Scheduled</option><option value="actual" ${f.basis==='actual'?'selected':''}>Actual completed date</option></select></label><button data-panel-preset="week" data-panel="visits">This week</button><button data-panel-preset="next" data-panel="visits">Next week</button><button data-panel-preset="overdue" data-panel="visits">Overdue planned</button><button data-panel-preset="completed" data-panel="visits">Completed</button><span>Weeks: Sunday–Saturday. Times as entered by staff.</span>`:''}<button data-panel-preset="reset" data-panel="${section}">Reset filters</button></section>`;
+}
+function filteredRender(section,renderer){
+ if(!filterData){if(!filterBusy&&!filterError){filterBusy=true;request('/filter-data').then(r=>{filterData=r.data;Object.assign(cache,r.data);}).catch(e=>filterError=e.message).finally(()=>{filterBusy=false;refresh();});}return shell(filterError?`<div class="crm-error">${esc(filterError)}<button data-panel-preset="reload" data-panel="${section}">Retry</button></div>`:loading('filters'),{title:'CRM'});}
+ if(section==='team'||section==='admin')ensure(section==='team'?'users':'adminUsers');
+ const f=panelFilters[section]||{};const backup={};for(const k of Object.keys(filterData)){backup[k]=cache[k];cache[k]=filterData[k].filter(r=>panelMatch(k,r,f,filterData.accounts));}
+ for(const k of ['users','adminUsers']){backup[k]=cache[k];if(cache[k])cache[k]=cache[k].filter(r=>panelMatch(section,r,f,filterData.accounts));}
+ backup.dashboard=cache.dashboard;backup.reports=cache.reports;
+ const opp=cache.opportunities.filter(o=>String(o.status).toLowerCase()==='open');const sum=list=>list.reduce((n,o)=>n+Number(o.estimated_value||0),0);
+ const currencies=[...new Set(opp.map(o=>o.currency||'AED'))];const mixed=currencies.length>1||currencies.some(c=>c!=='AED');
+ cache.dashboard={summary:{accounts:cache.accounts.length,prospects:cache.accounts.filter(a=>/prospect|lead/i.test(a.status)).length,open_opportunities:opp.length,pipeline_value:mixed?0:sum(opp),weighted_pipeline:mixed?0:opp.reduce((n,o)=>n+Number(o.estimated_value||0)*Number(o.probability||0)/100,0),actions_due:cache.tasks.filter(t=>t.status!=='Completed'&&t.due_date&&String(t.due_date).slice(0,10)<=new Date(Date.now()+7*864e5).toISOString().slice(0,10)).length},tasks:cache.tasks.filter(t=>t.status!=='Completed').sort((a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999'))),activity:[...cache.activity].reverse().slice(0,20)};
+ const groups=(rows,key)=>[...new Set(rows.map(r=>r[key]||'Unspecified'))];
+ cache.reports={byOwner:groups(cache.accounts,'assigned_to').map(n=>({assigned_to:n,accounts:cache.accounts.filter(a=>a.assigned_to===n).length,open_opportunities:opp.filter(o=>(o.owner_user_name||o.account_owner)===n).length,pipeline_value:mixed?0:sum(opp.filter(o=>(o.owner_user_name||o.account_owner)===n)),visits:cache.visits.filter(v=>(v.salesperson||v.created_by)===n&&v.visit_status==='Completed').length,meetings:cache.meetings.filter(m=>m.created_by===n).length})),byStage:groups(opp,'stage').map(stage=>({stage,opportunities:opp.filter(o=>o.stage===stage).length,value:mixed?0:sum(opp.filter(o=>o.stage===stage))})),bySource:groups(cache.accounts,'source').map(source=>({source,accounts:cache.accounts.filter(a=>(a.source||'Unspecified')===source).length}))};
+ let html;try{html=renderer();}finally{Object.assign(cache,backup);}
+ // Combined filters replace the legacy independent account search/status controls.
+ if(section==='accounts')html=html.replace(/<label>Search<input class="crm-search"[\s\S]*?<\/select><\/label>/,'');
+ if(section==='reports')html=html.replaceAll('Visits (30d)','Completed visits').replaceAll('Meetings (30d)','Meetings').replaceAll('Accounts and 30-day relationship activity','Selected accounts and activity');
+ if(mixed&&(section==='dashboard'||section==='reports'))html=html.replaceAll('AED 0','Not aggregated');
+ const source=section==='team'?backup.users:section==='admin'?backup.adminUsers:filterData[section];
+ const toolbar=panelToolbar(section,source);
+ const notice=(section==='dashboard'||section==='reports')&&mixed?'<p class="crm-inline-note">Pipeline monetary totals are not combined across non-AED or mixed currencies. Counts remain accurate.</p>':'';
+ return toolbar+notice+html;
+}
+function bindPanelFilters(){
+ document.addEventListener('change',e=>{const t=e.target;if(!t.dataset.panelField)return;const f=panelFilters[t.dataset.panel]||(panelFilters[t.dataset.panel]={});f[t.dataset.panelField]=t.value;f.overdue=false;refresh();});
+ document.addEventListener('click',e=>{const b=e.target.closest('[data-panel-preset]');if(!b)return;const s=b.dataset.panel,p=b.dataset.panelPreset;let f=panelFilters[s]||(panelFilters[s]={});if(p==='reset')panelFilters[s]={};else if(p==='reload'){filterData=null;filterError='';}else if(p==='week'||p==='next'){[f.from,f.to]=weekRange(p==='next'?1:0);f.status='Planned';f.basis='scheduled';f.overdue=false;}else if(p==='overdue'){f.from='';f.to='';f.overdue=true;f.status='Planned';f.basis='scheduled';}else if(p==='completed'){f.status='Completed';f.basis='actual';f.overdue=false;}refresh();});
+}
 bind();
+bindPanelFilters();
 
 window.ApolloCRM = {
-  renderDashboard, renderAccounts, renderContacts, renderOpportunities, renderVisits, renderMeetings,
-  renderTasks, renderActivity, renderReports, renderTeam, renderAdmin,
-  invalidate: () => { salespersonFilters.opportunities="";salespersonFilters.visits=""; Object.keys(cache).forEach(k=>{if(!["loading","errors"].includes(k))cache[k]=null;}); }
+  renderDashboard:()=>filteredRender("dashboard",renderDashboard), renderAccounts:()=>filteredRender("accounts",renderAccounts), renderContacts:()=>filteredRender("contacts",renderContacts), renderOpportunities:()=>filteredRender("opportunities",renderOpportunities), renderVisits:()=>filteredRender("visits",renderVisits), renderMeetings:()=>filteredRender("meetings",renderMeetings),
+  renderTasks:()=>filteredRender("tasks",renderTasks), renderActivity:()=>filteredRender("activity",renderActivity), renderReports:()=>filteredRender("reports",renderReports), renderTeam:()=>filteredRender("team",renderTeam), renderAdmin:()=>filteredRender("admin",renderAdmin),
+  invalidate: () => { filterData=null; panelFilters={}; salespersonFilters.opportunities="";salespersonFilters.visits=""; Object.keys(cache).forEach(k=>{if(!["loading","errors"].includes(k))cache[k]=null;}); }
 };
 
 // If the CRM module loads after the main runtime has already rendered a CRM session,
