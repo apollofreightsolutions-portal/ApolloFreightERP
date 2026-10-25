@@ -108,6 +108,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
   }
 
   router.use(loadCrmUser);
+  require('./crm-database').registerDatabase({ router, query, accountScope });
 
   function requestIp(request) {
     return cleanText(request.headers["x-forwarded-for"] || request.ip || "", 200).split(",")[0].trim();
