@@ -12,7 +12,7 @@ import("./hs-code-customer-portal.js").catch((error) => {
 });
 
 
-import("./crm-portal.js?v=apollo-v26-crm-excel-20261020").catch((error) => {
+import("./crm-portal.js?v=apollo-v261-database-20261024").catch((error) => {
   console.warn("CRM Portal is unavailable.", error);
 });
 
