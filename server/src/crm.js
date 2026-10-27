@@ -2,6 +2,7 @@ const express = require("express");
 const { registerCrmReviews } = require("./crm-reviews");
 
 function createCrmRouter({ query, requireAppAuth, sendMail }) {
+  const notifyAssignment = require('./crm-assignment-mail').assignmentMailer({query,sendMail});
   const router = express.Router();
   router.use(requireAppAuth);
 
@@ -109,7 +110,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
 
   router.use(loadCrmUser);
   require("./crm-planning").registerPlanning({router,query,accountScope});
-  require('./crm-database').registerDatabase({ router, query, accountScope });
+  require('./crm-database').registerDatabase({ router, query, accountScope, notifyAssignment });
 
   function requestIp(request) {
     return cleanText(request.headers["x-forwarded-for"] || request.ip || "", 200).split(",")[0].trim();
@@ -346,7 +347,8 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
          values (${values.map((_, i) => `$${i + 1}`).join(",")}) returning *`, values);
       const row = result.rows[0];
       await audit(request, { entityType: "account", entityId: row.id, accountId: row.id, action: "CREATE", summary: `Created account ${row.company_name}`, details: { accountCode: row.account_code, assignedTo: row.assigned_to } });
-      response.status(201).json({ ok: true, row });
+      const notification = await notifyAssignment({owner:row.assigned_to,actor:request.crmUser.user_name,accounts:[row]});
+      response.status(201).json({ ok: true, row, ...notification });
     } catch (error) { next(error); }
   });
 
@@ -395,7 +397,8 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
         await transferAccountWork(id, current.assigned_to, row.assigned_to);
       }
       await audit(request, { entityType: "account", entityId: id, accountId: id, action: "UPDATE", summary: `Updated account ${row.company_name}`, details: { assignedFrom: current.assigned_to, assignedTo: row.assigned_to } });
-      response.json({ ok: true, row });
+      const notification = await notifyAssignment({owner:row.assigned_to,actor:request.crmUser.user_name,accounts:String(current.assigned_to).toLowerCase()!==String(row.assigned_to).toLowerCase()?[row]:[]});
+      response.json({ ok: true, row, ...notification });
     } catch (error) { next(error); }
   });
 
@@ -614,7 +617,7 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
       const fromUser=cleanText(request.body?.fromUser,200); const toUser=cleanText(request.body?.toUser,200); const accountIds=Array.isArray(request.body?.accountIds)?request.body.accountIds.map(Number).filter(Boolean):[];
       if(!toUser)return response.status(400).json({ok:false,error:"Select the salesperson who will receive the accounts."});
       const target=(await query(`select user_name from app_users where lower(user_name)=lower($1) and (crm_portal_access=true or lower(trim(role))='admin') and lower(account_status)='active' limit 1`,[toUser])).rows[0]; if(!target)return response.status(400).json({ok:false,error:"The new owner must be an active CRM user."});
-      const values=[target.user_name,request.crmUser.user_name]; let where="a.archived_at is null";
+      const values=[target.user_name,request.crmUser.user_name]; let where="a.archived_at is null and "+accountScope('a',request.crmUser,values);
       if(accountIds.length){values.push(accountIds);where+=` and a.id=any($${values.length}::bigint[])`;} else if(fromUser){values.push(fromUser);where+=` and lower(a.assigned_to)=lower($${values.length})`;} else return response.status(400).json({ok:false,error:"Select a current owner or specific accounts to reassign."});
       const result=await query(`
         with selected as (
@@ -634,7 +637,8 @@ function createCrmRouter({ query, requireAppAuth, sendMail }) {
         await transferAccountWork(row.id,row.previous_owner,row.assigned_to);
         await audit(request,{entityType:"account",entityId:row.id,accountId:row.id,action:"REASSIGN",summary:`Reassigned ${row.company_name} to ${row.assigned_to}`,details:{fromUser:row.previous_owner,toUser:row.assigned_to}});
       }
-      response.json({ok:true,count:result.rowCount,rows:result.rows});
+      const notification=await notifyAssignment({owner:target.user_name,actor:request.crmUser.user_name,accounts:result.rows.filter(r=>String(r.previous_owner).toLowerCase()!==String(r.assigned_to).toLowerCase())});
+      response.json({ok:true,count:result.rowCount,rows:result.rows,...notification});
     }catch(error){next(error)}
   });
 

@@ -16,11 +16,13 @@ function extractSpreadsheetInvoice(file) {
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
       const labels = row.map(label);
-      const desc = labels.findIndex(s => /^(description|itemdescription|descriptionofgoods|goodsdescription|productdescription)$/.test(s));
-      const codes = labels.map((s, i) => /^(?:\d+digit)?(?:hscode|hscodes|hstariffcode|tariffcode)(?:\d+digit)?$/.test(s) ? i : -1).filter(i => i >= 0);
-      if (desc >= 0 && codes.length) {
+      const desc = labels.findIndex(s => /^(description|itemdescription|descriptionofgoods|goodsdescription|productdescription|itemname|productname|commoditydescription|materialdescription|articledescription|descriptionofitem)$/.test(s));
+      const codes = labels.map((s, i) => /^(?:\d+digit)?(?:hs|hscode|hscodes|hscodeno|hstariffcode|tariffcode|tariffno|customstariff|commoditycode|harmonizedcode|harmonisedcode|hscodekuwait)(?:\d+digit)?$/.test(s) ? i : -1).filter(i => i >= 0);
+      const qty = labels.findIndex(s => /^(qty|quantity|pieces|pcs|totalqty|qtypcs|quantitypcs)$/.test(s));
+      // Missing HS codes are a valid extraction, not clearance: the matcher flags every missing code.
+      if (desc >= 0 && (codes.length || qty >= 0)) {
         columns = {desc, codes: codes.sort((a,b) => Number(labels[b].includes('12digit')) - Number(labels[a].includes('12digit'))),
-          qty: labels.findIndex(s => /^(qty|quantity|pieces|pcs)$/.test(s)),
+          qty,
           unit: labels.findIndex(s => /^(unit|uom)$/.test(s))};
         found = true;
         continue;

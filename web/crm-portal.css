@@ -154,3 +154,4 @@
   background: #f1f3f5;
   color: #071827;
 }
+.crm-bulkbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#fff3e8;border:1px solid #ed6429;border-radius:10px;padding:12px;margin:12px 0}.crm-bulkbar[hidden]{display:none}.crm-table input[type=checkbox]{width:18px;height:18px;accent-color:#ed6429}

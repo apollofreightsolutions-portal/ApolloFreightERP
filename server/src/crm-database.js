@@ -26,7 +26,7 @@ function mapRows(parsed, mapping) {
     return out;
   });
 }
-function registerDatabase({router,query,accountScope}) {
+function registerDatabase({router,query,accountScope,notifyAssignment}) {
   const guard=(req,res,next)=>req.crmUser.permissions.manageAssignments&&req.crmUser.permissions.viewAllAccounts?next():res.status(403).json({error:'Database import and bulk assignment require account-assignment and all-account access.'});
   const wrap=fn=>async(req,res,next)=>{try{await fn(req,res);}catch(e){if(e.code)return next(e);res.status(400).json({error:e.message});}};
   router.post('/database/inspect',guard,wrap(async(req,res)=>{const p=readBook(req.body);res.json({sheets:p.sheets,sheet:p.sheet,headers:p.headers,sample:p.rows.slice(0,5),count:p.rows.length,fields});}));
@@ -57,18 +57,36 @@ function registerDatabase({router,query,accountScope}) {
     }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
   }));
   router.get('/database/accounts',guard,wrap(async(req,res)=>res.json({rows:(await query('select id,company_name,branch,assigned_to from crm_accounts where archived_at is null order by company_name')).rows})));
-  router.post('/database/assign',guard,wrap(async(req,res)=>{
+  router.get('/assignment-batches/:id',wrap(async(req,res)=>{
+    if(!/^[a-f0-9-]{36}$/i.test(req.params.id))throw Error('Invalid assignment link.');
+    const batch=(await query("select details_json from crm_audit_log where entity_type='assignment_batch' and entity_id=$1 and action='ASSIGNMENT_NOTIFICATION' limit 1",[req.params.id])).rows[0];
+    if(!batch)return res.status(404).json({error:'Assignment not found.'});
+    const detail=typeof batch.details_json==='string'?JSON.parse(batch.details_json):batch.details_json;
+    const values=[detail.ids||[]],scope=accountScope('a',req.crmUser,values);
+    const rows=(await query(`select a.id from crm_accounts a where a.id=any($1::bigint[]) and a.archived_at is null and ${scope}`,values)).rows;
+    res.json({ok:true,ids:rows.map(r=>r.id)});
+  }));
+  router.post(['/database/assign','/accounts/bulk'],guard,wrap(async(req,res)=>{
     const ids=[...new Set(req.body.ids||[])];if(!ids.length||ids.length>5000||ids.some(id=>!Number.isSafeInteger(id)||id<=0))throw new Error('Select 1–5,000 accounts.');
-    const branch=clean(req.body.branch),owner=clean(req.body.owner);if(branch&&!['DXB','KWI'].includes(branch))throw new Error('Invalid entity.');if(!branch&&!owner)throw new Error('Choose an owner or entity.');
+    const branch=clean(req.body.branch),owner=clean(req.body.owner),status=clean(req.body.status);if(branch&&!['DXB','KWI'].includes(branch))throw new Error('Invalid entity.');if(status&&!['Prospect','Lead','Active','Dormant'].includes(status))throw Error('Invalid account status.');if(!branch&&!owner&&!status)throw new Error('Choose an owner, entity or status.');
+    let changedOwners=[];
     const c=await getPool().connect();try{await c.query('BEGIN');
+      if(branch)await c.query('select pg_advisory_xact_lock(261104)');
       if(owner&&!(await c.query("select 1 from app_users where user_name=$1 and lower(account_status)='active' and (crm_portal_access=true or lower(trim(role))='admin')",[owner])).rows.length)throw new Error('Invalid salesperson.');
-      const old=(await c.query('select id,assigned_to from crm_accounts where id=any($1::bigint[]) and archived_at is null for update',[ids])).rows;
+      const old=(await c.query('select id,assigned_to,company_name,branch,status from crm_accounts where id=any($1::bigint[]) and archived_at is null order by id for update',[ids])).rows;
       if(old.length!==ids.length)throw new Error('Some selected accounts are no longer available.');
-      for(const a of old){await c.query("update crm_accounts set assigned_to=coalesce(nullif($2,''),assigned_to),branch=coalesce(nullif($3,''),branch),assigned_by=$4,assigned_at=now(),updated_at=now() where id=$1",[a.id,owner,branch,req.crmUser.user_name]);
+      if(branch){
+        const all=(await c.query('select id,company_name,branch from crm_accounts')).rows;const names=new Set();
+        for(const a of all){const target=ids.includes(Number(a.id))?branch:a.branch;const k=key(a.company_name)+'|'+key(target);if(names.has(k)&&old.some(o=>key(o.company_name)===key(a.company_name)))throw Error('Entity change would leave duplicate company names in one entity. Resolve those accounts first.');names.add(k);}
+      }
+      for(const a of old){await c.query("update crm_accounts set assigned_to=coalesce(nullif($2,''),assigned_to),branch=coalesce(nullif($3,''),branch),assigned_by=case when $2<>'' and lower(assigned_to)<>lower($2) then $4 else assigned_by end,assigned_at=case when $2<>'' and lower(assigned_to)<>lower($2) then now() else assigned_at end,status=coalesce(nullif($5,''),status),updated_at=now() where id=$1",[a.id,owner,branch,req.crmUser.user_name,status]);
         if(owner){await c.query("update crm_opportunities set owner_user_name=$2 where account_id=$1 and lower(owner_user_name)=lower($3)",[a.id,owner,a.assigned_to]);await c.query("update crm_tasks set assigned_to=$2 where account_id=$1 and lower(assigned_to)=lower($3) and lower(status)<>'completed'",[a.id,owner,a.assigned_to]);}
-        await c.query("insert into crm_audit_log(entity_type,entity_id,account_id,action,actor_user_name,summary,details_json) values('account',$1,$2,'BULK_ASSIGN',$3,'Updated owner/entity',$4)",[String(a.id),a.id,req.crmUser.user_name,JSON.stringify({from:a.assigned_to,owner,branch})]);}
-      await c.query('COMMIT');res.json({ok:true,count:ids.length});
+        await c.query("insert into crm_audit_log(entity_type,entity_id,account_id,action,actor_user_name,summary,details_json) values('account',$1,$2,'BULK_ASSIGN',$3,'Updated owner/entity/status',$4)",[String(a.id),a.id,req.crmUser.user_name,JSON.stringify({from:a.assigned_to,previousBranch:a.branch,previousStatus:a.status,owner,branch,status})]);}
+      changedOwners=old.filter(a=>owner&&key(a.assigned_to)!==key(owner)).map(a=>({...a,branch:branch||a.branch}));
+      await c.query('COMMIT');
     }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
+    const notification=notifyAssignment?await notifyAssignment({owner,actor:req.crmUser.user_name,accounts:changedOwners}):{emailStatus:'not_sent'};
+    res.json({ok:true,count:ids.length,...notification});
   }));
   router.get('/database/export',wrap(async(req,res)=>{
     if(!req.crmUser.permissions.exportAccess)return res.status(403).json({error:'Export permission required.'});
