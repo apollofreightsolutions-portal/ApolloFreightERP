@@ -4308,3 +4308,141 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
   outline-offset: 1px;
   border-color: #f05a22;
 }
+
+.app-shell:not(.hr-portal-theme) .reporting-scope-panel {
+  padding: 15px 18px;
+  border: 1px solid #eadfd6;
+  border-left: 4px solid var(--accent);
+  background: linear-gradient(105deg, #fff8f2 0%, #fff 52%);
+}
+
+.reporting-scope-layout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.reporting-scope-copy {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.reporting-scope-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.reporting-scope-heading > strong {
+  font-size: 15px;
+}
+
+.reporting-scope-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: #3d8b68;
+  box-shadow: 0 0 0 3px rgba(61, 139, 104, 0.12);
+}
+
+.reporting-scope-state {
+  padding: 4px 8px;
+  border: 1px solid #d8e9df;
+  border-radius: 999px;
+  background: #f0f8f3;
+  color: #347255;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reporting-scope-panel.is-included .reporting-scope-dot {
+  background: #d97722;
+  box-shadow: 0 0 0 3px rgba(217, 119, 34, 0.13);
+}
+
+.reporting-scope-panel.is-included .reporting-scope-state {
+  border-color: #f0d8be;
+  background: #fff4e8;
+  color: #99520f;
+}
+
+.reporting-scope-summary {
+  margin: 0;
+  color: #344252;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.reporting-scope-summary strong {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.reporting-scope-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.reporting-scope-toggle {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: #fff;
+  color: #344252;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.reporting-scope-toggle:hover {
+  border-color: var(--accent);
+  background: #fffaf6;
+}
+
+.reporting-scope-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.reporting-scope-alert {
+  margin: 3px 0 0;
+  color: var(--red-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 680px) {
+  .reporting-scope-layout {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .reporting-scope-toggle {
+    align-self: flex-start;
+  }
+
+  .reporting-scope-details {
+    gap: 4px 12px;
+  }
+}
