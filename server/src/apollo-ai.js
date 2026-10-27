@@ -415,6 +415,12 @@ function operationFilters(user, message, values, alias, businessTimezone, option
   const scope = shipmentVisibilityScope(user, values, alias);
   const conditions = [scope.sql];
   const labels = [scope.label];
+  // Match ERP live-reporting defaults without preventing direct historical job/document lookup.
+  const includesHistory = /\b(?:include|including)\s+(?:pre[ -]?live|historical|testing|test records)|\ball history\b/i.test(message);
+  if (!extractReference(message) && !includesHistory) {
+    conditions.push(`(${alias}.reporting_mode='live' or ${alias}.created_at is null or ${alias}.created_at >= timestamptz '2026-09-01 00:00:00+03')`);
+    labels.push('Live reporting — pre-live records excluded');
+  } else labels.push('Historical records included when permitted');
   const branch = requestedBranch(message);
   if (branch) { values.push(branch); conditions.push(`lower(${alias}.branch)=lower($${values.length})`); labels.push(branch); }
   const date = dateIntent(message);

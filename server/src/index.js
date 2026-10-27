@@ -941,6 +941,7 @@ async function demoCustomerPortalSnapshot(identifier) {
 const resources = {
   shipments: {
     table: "shipments",
+    readonlyFields: ["reporting_mode"],
     key: "job_no",
     order: "created_at desc",
     fields: [
@@ -1538,7 +1539,7 @@ async function getRows(resourceName, config) {
   // Dashboard KPIs and live shipment boards must be calculated from the complete
   // shipment history. Keep the defensive cap for ancillary resources, but never
   // truncate shipments or their status history at 500 rows.
-  const limitClause = resourceName === "shipments" || resourceName === "shipmentStatusHistory" ? "" : "limit 500";
+  const limitClause = ["shipments", "shipmentStatusHistory", "shipment-status-history", "invoices", "additional-charges", "consolidations", "documents"].includes(resourceName) ? "" : "limit 500";
   let result;
   try {
     result = await query(
@@ -4732,6 +4733,8 @@ app.use("/api/customer/compliance", createCustomerComplianceRouter({ query, requ
 app.use("/api/chat", createConnectedChatRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth, sendMail: sendMicrosoftGraphMail }));
 
+require('./shipment-reporting').registerShipmentReporting({app,requireErpPortalAuth,getPool});
+
 app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];
@@ -4756,6 +4759,9 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
     }
     response.json(result);
   } catch (error) {
+    if (['shipments','invoices','additional-charges','consolidations'].includes(resourceName) && isDatabaseSetupError(error)) {
+      return response.status(503).json({ok:false,error:'Live operational data is unavailable. Verify database migrations, including SQL 051 for V29.2. Demo figures were not substituted.'});
+    }
     if (resourceName !== 'users' && isDatabaseSetupError(error)) {
       return response.json(demoResponse(resourceName));
     }

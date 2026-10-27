@@ -81,7 +81,7 @@ function renderResult(panel, result, analysisId) {
   if (ready) {
     panel.innerHTML = `<div class="apollo-shield"><div class="apollo-shield-mark">APOLLO</div><div><h3>Apollo Shield — Ready to Book</h3><p>All ${Number(result.totalLineItems || 0)} detected line item(s) passed the Kuwait HS pre-check at ${READY_THRESHOLD}%+ match confidence with no import restriction/prohibition flagged in the configured master.</p></div></div>
       <div class="apollo-compliance-summary"><span class="apollo-compliance-pill">${Number(result.totalLineItems || 0)} HS line(s) checked</span><span class="apollo-compliance-pill">${cargo.length} cargo line(s) extracted</span></div>
-      <div class="apollo-extracted">Shipment details were copied into the booking fields where available. Please verify them before booking.</div>
+      <div class="apollo-extracted">Shipment details were copied into the booking fields where available. Please verify them before booking. ${(result.warnings || []).map(esc).join(" ")}</div>
       <div class="apollo-compliance-disclaimer">${esc(result.disclaimer || "")}</div>`;
     return;
   }
@@ -90,7 +90,7 @@ function renderResult(panel, result, analysisId) {
     const confidence = Number(suggestion?.confidence || item.confidence || 0);
     const kind = item.status === "BLOCKED" ? "blocked" : item.status === "REVIEW" ? "review" : "";
     return `<div class="apollo-attention-item ${kind}">
-      <div class="apollo-attention-desc">${esc(item.description || "Unnamed line item")}${item.sourceRow ? ` — ${esc(item.sourceSheet || "Sheet")}, row ${Number(item.sourceRow)}` : ""}</div>
+      <div class="apollo-attention-desc">${esc(item.description || "Unnamed line item")} — ${esc(item.sourceFile || "Document")}${item.sourceRow ? ` — ${esc(item.sourceSheet || "Sheet")}, row ${Number(item.sourceRow)}` : ""}${item.sourcePage ? `, page ${Number(item.sourcePage)}` : ""}</div>
       <div class="apollo-attention-grid">
         <div><strong>Submitted HS</strong>${esc(formatCode(item.submittedHsCode))}</div>
         <div><strong>Master description</strong>${esc(item.matchedMaster?.description || "Code not found")}</div>
@@ -106,7 +106,8 @@ function renderResult(panel, result, analysisId) {
   }).join("");
   panel.innerHTML = `<h3 class="apollo-attention-title">HS / description attention required</h3><p class="apollo-attention-note">${Number(result.totalLineItems || 0)} invoice lines checked. Items needing attention are shown below. A low description match is a review flag, not proof that the HS code is wrong. Percentages are text-match scores, not classification probabilities.</p>
     <div class="apollo-compliance-summary"><span class="apollo-compliance-pill">${Number(result.passedLineItems || 0)} passed</span><span class="apollo-compliance-pill">${attention.length} need attention</span><span class="apollo-compliance-pill">Ready threshold ${READY_THRESHOLD}%</span></div>
-    ${cards || `<div class="apollo-compliance-error">No line items could be validated from the uploaded documents.</div>`}
+    ${result.extractionComplete === false ? `<div class="apollo-compliance-error"><strong>Document reading is incomplete or unverified.</strong> The rows below are not a complete clearance. Apollo must review the original documents before approval.</div>` : ""}
+    ${cards || `<div class="apollo-compliance-error">Extracted codes passed, but the complete document requires Apollo review.</div>`}
     <div class="apollo-extracted">Cargo/shipment details were extracted where available. Verify the populated booking fields before submission. ${(result.warnings || []).map(esc).join(" ")}</div>
     <div class="apollo-compliance-disclaimer">${esc(result.disclaimer || "")}</div>`;
 }
@@ -164,7 +165,7 @@ async function analyze(form, panel, button) {
       const mimeType = /\.xlsx$/i.test(lowerName) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : /\.xlsm$/i.test(lowerName) ? "application/vnd.ms-excel.sheet.macroenabled.12" : /\.xls$/i.test(lowerName) ? "application/vnd.ms-excel" : suppliedMime;
       payloadFiles.push({ fileName: file.name, mimeType, contentBase64: await readBase64(file) });
     }
-    const response = await api("/api/customer/compliance/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, files: payloadFiles }), timeoutMs: 45000 });
+    const response = await api("/api/customer/compliance/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destination, files: payloadFiles }), timeoutMs: 120000 });
     const hidden = form.querySelector("input[name='complianceAnalysisId']");
     if (hidden) hidden.value = response.analysisId || "";
     renderResult(panel, response.result || {}, response.analysisId || "");

@@ -80,6 +80,7 @@ let statusEmailAttachPodChecked = false;
 let sharedShipmentRefreshInProgress = false;
 let sharedShipmentRefreshEventsBound = false;
 let liveShipmentDataReady = false;
+let liveBillingDataReady = false;
 
 const loginScreen = document.querySelector("#loginScreen");
 const appShell = document.querySelector("#appShell");
@@ -1593,20 +1594,56 @@ function defaultUserBranch() {
   return branchOptions()[0];
 }
 
-function recordDate(record) {
-  return record.bookingDate || record.tripDate || record.date || record.createdDate || record.effectiveFrom || record.dateTime?.slice(0, 10) || "";
+let includePreliveRecords = false;
+function reportingSubject(row) { return Boolean(row && (row.jobNo || row.invoiceNo || row.refNo || row.loadNo)); }
+function reportingClass(row) { return ApolloShipmentReporting.classification(row, state.shipments || []); }
+function reportingVisible(row) { return !reportingSubject(row) || includePreliveRecords || !reportingClass(row).excluded; }
+function resetReportPages() { state.ui.tablePages={}; state.ui.reportPreview=null; }
+function reportingControls() {
+  if(isCustomerSession()||isHrSession()||isCrmSession()||!['Dashboard','Shipment / Airway','Shipment Status','POD / Delivery','Billing / Invoices','Reports','Manifest'].includes(activeModule))return '';
+  const excluded=visibleRows(state.shipments).filter(row=>reportingClass(row).excluded).length;
+  const bills=visibleRows(state.invoices).filter(row=>reportingClass(row).excluded).length;
+  return `<section class="panel" style="padding:12px 18px;border-left:4px solid #e56b28"><label style="display:flex;gap:10px;align-items:center"><input type="checkbox" data-include-prelive ${includePreliveRecords?'checked':''}> Include pre-live records</label><small>${includePreliveRecords?'Historical/testing records ARE INCLUDED in the displayed figures.':'Live reporting: pre-live/testing records excluded.'} ${excluded} accessible shipments and ${bills} linked/older invoices classified pre-live. Cutoff: created before 1 Sep 2026, Kuwait time. No records or amounts have been deleted. Date filters use booking/invoice dates.</small>${!liveShipmentDataReady?'<p role="alert">Waiting for verified live data. Do not rely on cached figures until the connection is confirmed.</p>':''}</section>`;
+}
+function reportingLabel(row,allowAction=false) {
+  if(!reportingSubject(row))return '';
+  const c=reportingClass(row);
+  const oldJob=Boolean(row.jobNo)&&ApolloShipmentReporting.beforeCutoff(row);
+  if(!c.excluded&&!oldJob&&!c.label.startsWith('Mixed'))return '';
+  return `<small style="display:block;color:#9a4c12">${escapeHtml(c.label)}</small>${oldJob&&allowAction&&isAdminSession()?`<button type="button" class="ghost-button" data-action="reporting-mode" data-id="${escapeHtml(row.jobNo)}">${c.excluded?'Restore to live reporting':'Return to pre-live'}</button>`:''}`;
+}
+function pageSizeFor(scope){return ApolloShipmentReporting.page(0,1,state.ui.tablePageSizes?.[scope]).size;}
+function paginationMarkup(scope,total,current,size){
+  const p=ApolloShipmentReporting.page(total,current,size),s=escapeHtml(scope);
+  state.ui.tablePages[scope]=p.current;
+  const button=(label,page,disabled)=>`<button type="button" class="secondary-button" data-action="table-page" data-page-scope="${s}" data-page="${page}" ${disabled?'disabled':''}>${label}</button>`;
+  return `<div class="table-pagination" style="display:flex;flex-wrap:wrap;gap:12px"><span>Showing ${total?p.start+1:0}–${p.end} of ${total} matching records</span><div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">${button('First',1,p.current===1)}${button('Previous',p.current-1,p.current===1)}<label>Page <input aria-label="Page number" data-page-number type="number" min="1" max="${p.pages}" value="${p.current}" style="width:70px"></label><span>of ${p.pages}</span>${button('Go','input',false)}${button('Next',p.current+1,p.current===p.pages)}${button('Last',p.pages,p.current===p.pages)}<label>Rows <select data-page-size data-page-scope="${s}">${[15,30,50,100].map(n=>`<option ${n===p.size?'selected':''}>${n}</option>`).join('')}</select></label></div></div>`;
+}
+function renderPagedScope(scope){
+ if(scope.startsWith('metric:'))return openDashboardMetricDialog(scope.slice(7));
+ if(scope==='shipment:customer-history'&&state.ui.customerShipmentHistory?.customerCode)return openCustomerShipmentHistory(state.ui.customerShipmentHistory.customerCode,state.ui.customerShipmentHistory);
+ render();
+}
+function handleReportingChange(event){
+ const field=event.target;
+ if(field.matches('[data-include-prelive]')){includePreliveRecords=field.checked;resetReportPages();render();}
+ if(field.matches('[data-page-size]')){const scope=field.dataset.pageScope;state.ui.tablePageSizes=state.ui.tablePageSizes||{};state.ui.tablePageSizes[scope]=Number(field.value);state.ui.tablePages=state.ui.tablePages||{};state.ui.tablePages[scope]=1;renderPagedScope(scope);}
 }
 
-function filteredRows(rows) {
+function recordDate(record) {
+  return String(record.bookingDate || record.tripDate || record.date || record.createdDate || record.effectiveFrom || record.dateTime || record.createdAt || '').slice(0,10);
+}
+
+function filteredRows(rows, range = {}) {
   const query = globalSearch.value.trim().toLowerCase();
-  const from = fromDate.value;
-  const to = toDate.value;
-  return rows.filter((row) => {
+  const from = range.from ?? fromDate.value;
+  const to = range.to ?? toDate.value;
+  return rows.filter(reportingVisible).filter((row) => {
     const date = recordDate(row);
     const derivedSearchText = row?.type === "POD" ? documentLinkedToText(row) : "";
     const textMatch = !query || `${Object.values(row).join(" ")} ${derivedSearchText}`.toLowerCase().includes(query);
-    const fromMatch = !from || !date || date >= from;
-    const toMatch = !to || !date || date <= to;
+    const fromMatch = !from || (!date ? !reportingSubject(row) : date >= from);
+    const toMatch = !to || (!date ? !reportingSubject(row) : date <= to);
     return textMatch && fromMatch && toMatch && adminBranchFilterMatch(row);
   });
 }
@@ -1734,7 +1771,7 @@ function incomingShipmentsForCurrentBranch() {
 }
 
 function incomingShipmentPanel() {
-  const rows = incomingShipmentsForCurrentBranch();
+  const rows = filteredRows(incomingShipmentsForCurrentBranch());
   const branchLabel = canViewAllBranches() ? "All receiving branches" : String(currentSession()?.branchAccess || defaultUserBranch());
   return `<section class="split-grid single-panel incoming-shipment-panel"><article class="panel">${panelHeader("Upcoming / Incoming Shipments", branchLabel)}<p class="empty-state">Shipments appear here after they are marked Dispatched, In Transit, or Departed for Kuwait/KWI or Dubai/DXB. Status updates here change the same main shipment record.</p>${shipmentStatusTable(rows)}</article></section>`;
 }
@@ -1850,14 +1887,16 @@ async function boot() {
     showLogin();
   });
   changePasswordButton?.addEventListener("click", openChangePasswordDialog);
-  globalSearch.addEventListener("input", render);
-  applyFilters.addEventListener("click", render);
+  globalSearch.addEventListener("input", () => { resetReportPages(); render(); });
+  applyFilters.addEventListener("click", () => { resetReportPages(); render(); });
   branchFilterPanel?.addEventListener("change", handleAdminBranchFilterChange);
   resetFilters.addEventListener("click", () => {
     globalSearch.value = "";
     fromDate.value = "";
     toDate.value = "";
     state.ui.adminBranchFilter = ["Both"];
+    state.ui.columnFilters = {};
+    resetReportPages();
     saveState();
     render();
   });
@@ -1868,6 +1907,8 @@ async function boot() {
   moduleContent.addEventListener("click", handleModuleClick);
   moduleContent.addEventListener("click", handleModuleLinkClick);
   moduleContent.addEventListener("input", handleColumnFilterInput);
+  moduleContent.addEventListener("change", handleReportingChange);
+  recordDialog?.addEventListener("change", handleReportingChange);
   moduleContent.addEventListener("input", (event) => {
     const recordSelector = event.target.closest("[data-load-select], [data-delete-select]");
     if (!recordSelector) return;
@@ -2307,6 +2348,7 @@ function handleAdminBranchFilterChange(event) {
     if (bothField) bothField.checked = false;
   }
   state.ui.adminBranchFilter = Array.from(branchFilterPanel.querySelectorAll("input[name='adminBranchFilter']:checked")).map((input) => input.value);
+  resetReportPages();
   saveState();
   render();
 }
@@ -2831,6 +2873,7 @@ async function switchPortal(target) {
 }
 
 function showLogin() {
+  includePreliveRecords = false;
   statusEmailAttachPodChecked = false;
   customerPortalData = null;
   loginScreen.classList.remove("is-hidden");
@@ -2842,6 +2885,8 @@ function showLogin() {
 function showApp() {
   announcementReadStateReady = false;
   liveShipmentDataReady = false;
+  liveBillingDataReady = false;
+  includePreliveRecords = false;
   loginScreen.classList.add("is-hidden");
   appShell.classList.remove("is-hidden");
   document.body.dataset.apolloPortal = isCustomerSession() ? "customer" : isHrSession() ? "employee" : isCrmSession() ? "crm" : "company";
@@ -2888,6 +2933,7 @@ async function refreshSharedShipmentData() {
     state.shipments = (shipments.rows || []).map(apiShipment);
     state.documents = (documents.rows || []).map(apiDocument);
     state.invoices = (invoices.rows || []).map(apiInvoice);
+    liveBillingDataReady = true;
     state.shipmentStatusHistory = (shipmentStatusHistory.rows || []).map(apiShipmentStatusHistory);
     liveShipmentDataReady = true;
     saveState();
@@ -3037,12 +3083,14 @@ async function syncFromApi() {
       }
       renderErpAnnouncementsDropdown();
       liveShipmentDataReady = Boolean(rowsAt(1));
+      liveBillingDataReady = Boolean(rowsAt(8));
     }
     if (!databaseReady) announcementReadStateReady = true;
     saveState();
     maybePlayAdminNotification();
   } catch (error) {
     liveShipmentDataReady = false;
+    liveBillingDataReady = false;
     announcementReadStateReady = true;
     state.api = { status: "API offline", database: "local data", mode: "browser", error: error.message };
   } finally {
@@ -3125,6 +3173,8 @@ function apiShipment(row) {
     row.notes || ""
   );
   const shipmentMeta = parseJsonMeta(row.notes || "{}");
+  item.createdAt = row.created_at || '';
+  item.reportingMode = row.reporting_mode || 'auto';
   item.shipmentVia = shipmentMeta.shipmentVia || shipmentMeta.transportMode || "";
   item.transporter = row.transporter || "";
   item.transporterCode = row.transporter_code || "";
@@ -3154,6 +3204,7 @@ function apiLoad(row) {
     row.created_by || "admin",
     row.notes || ""
   );
+  item.createdAt = row.created_at || '';
   recalculateLoad(item);
   return item;
 }
@@ -3184,7 +3235,7 @@ function apiDocument(row) {
 }
 
 function apiAdditionalCharge(row) {
-  return additionalCharge(
+  const item = additionalCharge(
     row.ref_no,
     row.shipment_no,
     String(row.charge_date || today()).slice(0, 10),
@@ -3204,6 +3255,8 @@ function apiAdditionalCharge(row) {
     row.approval_notes || "",
     row.created_by || row.requested_by || "admin"
   );
+  item.createdAt = row.created_at || '';
+  return item;
 }
 
 function apiShipmentRequest(row) {
@@ -3274,6 +3327,7 @@ function apiQuotation(row) {
 function apiInvoice(row) {
   const item = invoice(row.invoice_no, row.customer, row.shipment_no, Number(row.revenue || 0), Number(row.supplier_cost || 0), row.status, String(row.date || today()).slice(0, 10), row.created_by || "admin");
   const snapshot = parseJsonMeta(row.invoice_snapshot_json || "{}");
+  item.createdAt = row.created_at || '';
   item.customerCode = row.customer_code || "";
   item.tariffNo = row.tariff_no || "";
   item.tariffName = row.tariff_name || "";
@@ -3740,7 +3794,9 @@ function render() {
     "Team & Assignments": () => renderCrmModule("renderTeam", "Team & Assignments"),
     "CRM Security": () => renderCrmModule("renderAdmin", "CRM Security")
   };
-  moduleContent.innerHTML = (renderers[activeModule] || renderDashboard)();
+  const needsLive = !isCustomerSession()&&!isHrSession()&&!isCrmSession()&&['Dashboard','Shipment / Airway','Shipment Status','POD / Delivery','Billing / Invoices','Reports','Manifest'].includes(activeModule);
+  const reportUnavailable=needsLive&&(!liveShipmentDataReady||(['Dashboard','Billing / Invoices'].includes(activeModule)&&!liveBillingDataReady));
+  moduleContent.innerHTML = reportingControls() + (reportUnavailable ? `<section class="panel"><h2>Live data not ready</h2><p>Waiting for current shipment/billing data. Cached or demo figures are not shown as live reports. If this persists, ask IT to check the API message above and apply SQL 051 for V29.2.</p><button type="button" data-action="retry-live-data">Retry connection</button></section>` : (renderers[activeModule] || renderDashboard)());
   if (statusFormState.size) {
     moduleContent.querySelectorAll("form[data-form='status'][data-status-draft-key]").forEach((form) => {
       const values = statusFormState.get(form.dataset.statusDraftKey);
@@ -4131,12 +4187,12 @@ function dashboardDateRange() {
 function dashboardScopedRows(rows) {
   const query = globalSearch.value.trim().toLowerCase();
   const { from, to } = dashboardDateRange();
-  return rows.filter((row) => {
+  return rows.filter(reportingVisible).filter((row) => {
     const date = recordDate(row);
     const derivedSearchText = row?.type === "POD" ? documentLinkedToText(row) : "";
     const textMatch = !query || `${Object.values(row).join(" ")} ${derivedSearchText}`.toLowerCase().includes(query);
-    const fromMatch = !from || !date || date >= from;
-    const toMatch = !to || !date || date <= to;
+    const fromMatch = !from || (!date ? !reportingSubject(row) : date >= from);
+    const toMatch = !to || (!date ? !reportingSubject(row) : date <= to);
     return textMatch && fromMatch && toMatch && adminBranchFilterMatch(row);
   });
 }
@@ -4160,7 +4216,7 @@ function dashboardBranchKpi(title, invoiceRows, metric, valueForRow, caption) {
 }
 
 function renderDashboard() {
-  const rows = dashboardScopedRows(visibleRows(state.shipments));
+  const rows = applyColumnFilters('shipment:dashboard',dashboardScopedRows(visibleRows(state.shipments)),dashboardShipmentColumns());
   const invoiceRows = dashboardInvoiceRows();
   const open = liveShipmentDataReady ? rows.filter(shipmentIsOpen).length : "—";
   const transit = liveShipmentDataReady ? rows.filter(shipmentIsInTransit).length : "—";
@@ -4173,10 +4229,10 @@ function renderDashboard() {
   const closedJobsCaption = liveShipmentDataReady ? "Delivered + live POD uploaded" : "Waiting for live data";
   const pendingRequests = dashboardScopedRows(allUserRequests()).filter((row) => String(row.status || "").toLowerCase() === "pending").length;
   const pendingCustomerRequests = dashboardScopedRows(state.shipmentRequests).filter((row) => ["SUBMITTED", "PENDING_REVIEW"].includes(String(row.status || "").toUpperCase())).length;
-  const pendingCharges = state.additionalCharges.filter((row) => row.status === "Pending Approval").length;
+  const pendingCharges = filteredRows(visibleRows(state.additionalCharges)).filter((row) => row.status === "Pending Approval").length;
   // The dashboard cards use the selected dashboard date range, while the table only renders a
   // recent slice of that same scoped set. The full unfiltered list remains in Shipment Register.
-  const recentRows = [...rows].sort((left, right) => String(right.bookingDate || "").localeCompare(String(left.bookingDate || ""))).slice(0, 50);
+  const recentRows = [...rows].sort((left, right) => String(right.bookingDate || "").localeCompare(String(left.bookingDate || "")));
   const dashboardTableNote = rows.length > recentRows.length
     ? `<p class="empty-state">Showing the most recent ${recentRows.length} of ${rows.length} shipments. Open Shipment Register for the full list.</p>`
     : "";
@@ -4219,8 +4275,8 @@ function renderDashboard() {
       <details class="panel collapsible-section dashboard-alert-panel">
         <summary>${panelHeader("Exception Alerts")}<span class="dashboard-alert-toggle" aria-hidden="true"></span></summary>
         <div class="alert-list">
-          ${alert("Jobs missing tariff/rate", "AFS-2605005 needs tariff selection before invoice.")}
-          ${alert("Delivered but not invoiced", "AFS-2605003 is delivered and waiting for billing.")}
+          ${alert("Jobs missing tariff/rate", `${rows.filter(r=>!r.tariffNo).length} shipment(s) in the selected scope have no tariff reference.`)}
+          ${alert("Delivered but not invoiced", `${rows.filter(r=>shipmentIsDelivered(r)&&shipmentIsUnbilled(r)).length} shipment(s) in the selected scope are delivered and unbilled.`)}
           ${alert("Pending POD", `${pod} shipments need POD upload or dispute update.`)}
           ${alert("Admin requests waiting", `${pendingRequests} pending request(s) need admin approval. Open User Management / Settings to review.`)}
           ${alert("Additional charges waiting", `${pendingCharges} additional charge entry/changes are waiting for approval.`)}
@@ -4284,7 +4340,7 @@ function dashboardMetricConfig(metric) {
     };
   }
 
-  const rows = dashboardScopedRows(visibleRows(state.shipments));
+  const rows = applyColumnFilters('shipment:dashboard',dashboardScopedRows(visibleRows(state.shipments)),dashboardShipmentColumns());
   if (metric === "open-shipments") {
     const selected = liveShipmentDataReady ? rows.filter(shipmentIsOpen) : [];
     return {
@@ -4387,6 +4443,7 @@ function exportDashboardMetricExcel(metric) {
   }
   const tableType = dashboardMetricTableType(metric);
   const scope = `metric:${metric}`;
+  config.rows=applySort(scope,applyColumnFilters(scope,config.rows,config.columns));
   const headers = config.columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("");
   const rows = config.rows.map((row, index) => {
     const cells = config.columns.map(([key]) => {
@@ -4426,7 +4483,7 @@ function openDashboardMetricDialog(metric, options = {}) {
             <button type="button" class="secondary-button" data-action="export-dashboard-metric" data-dashboard-metric="${escapeHtml(metric)}" ${config.rows.length ? "" : "disabled"}>Export Excel</button>
           </div>
           ${registerColumnSettingsMarkup(filterScope, `${config.title} columns`, config.columns)}
-          ${config.rows.length ? table(dashboardMetricTableType(metric), config.rows, config.columns, !metric.startsWith("customer-"), filterScope, false) : `<p class="empty-state">No matching records found.</p>`}
+          ${config.rows.length ? table(dashboardMetricTableType(metric), config.rows, config.columns, !metric.startsWith("customer-"), filterScope, true) : `<p class="empty-state">No matching records found.</p>`}
         </div>
       </div>
       </div>
@@ -4651,7 +4708,7 @@ function renderShipments() {
   return `
     <section class="shipment-module-layout">
       <article class="panel shipment-landscape-actions">${panelHeader("Shipment Actions", "Open and manage a saved shipment")} ${shipmentLandscapeActionsMarkup()}</article>
-      <article class="panel shipment-register-panel">${panelHeader("Shipment Register", "Editable records")} ${shipmentRegisterColumnsMarkup()} ${table("shipment", rows, shipmentColumns("shipment:register"))}</article>
+      <article class="panel shipment-register-panel">${panelHeader("Shipment Register", "Editable records")} ${shipmentRegisterColumnsMarkup()} ${table("shipment", rows, shipmentColumns("shipment:register"), false, "shipment:register")}</article>
     </section>
     ${adminDeletePanel("shipment", "Shipment", "Deleting a shipment also removes linked consolidation references, documents, invoices, and additional charges.")}`;
 }
@@ -4907,23 +4964,22 @@ function shipmentStatusTable(rows) {
   const columns = configurableColumns("shipment", shipmentStatusColumns(), scope);
   const filteredRows = applyColumnFilters(scope, rows, columns);
   const sortedRows = applySort(scope, filteredRows);
-  const pageSize = 15;
+  const pageSize = pageSizeFor(scope);
   state.ui.tablePages = state.ui.tablePages || {};
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const currentPage = Math.min(Math.max(1, Number(state.ui.tablePages[scope] || 1)), totalPages);
+  const {pages:totalPages,current:currentPage}=ApolloShipmentReporting.page(sortedRows.length,state.ui.tablePages[scope],pageSize);
   const pageRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const expandedJob = state.ui.expandedStatusJob || "";
   const expandedAwb = state.ui.expandedStatusAwb || "";
   const locked = isColumnWidthLocked(scope);
   const headCells = columns.map(([key, label]) => sortableHeaderCell("shipment", scope, key, label, locked)).join("");
-  const filterRow = columnFilterRowMarkup(scope, columns, false);
+  const filterRow = columnFilterRowMarkup(scope, columns, false, rows);
   const widths = (state.ui.columnWidths || {})[scope];
   const tableStyle = widths && Object.keys(widths).length ? ` style="table-layout:fixed"` : "";
   const hasActiveFilter = Object.values(state.ui.columnFilters?.[scope] || {}).some((term) => String(term || "").trim());
   const body = sortedRows.length
     ? pageRows.map((row, index) => shipmentStatusRowMarkup(row, index + ((currentPage - 1) * pageSize), columns, expandedJob, expandedAwb)).join("")
     : `<tr><td colspan="${columns.length}">${empty(hasActiveFilter ? "No records match the column filters." : "No records found.")}</td></tr>`;
-  const pager = totalPages > 1 ? `<div class="table-pagination"><span>Showing ${((currentPage - 1) * pageSize) + 1}-${Math.min(currentPage * pageSize, sortedRows.length)} of ${sortedRows.length}</span><div><button type="button" class="secondary-button" data-action="table-page" data-page-scope="${scope}" data-page="${currentPage - 1}" ${currentPage === 1 ? "disabled" : ""}>Previous</button><span>Page ${currentPage} / ${totalPages}</span><button type="button" class="secondary-button" data-action="table-page" data-page-scope="${scope}" data-page="${currentPage + 1}" ${currentPage === totalPages ? "disabled" : ""}>Next</button></div></div>` : "";
+  const pager = paginationMarkup(scope, sortedRows.length, currentPage, pageSize);
   return `${columnLockToggleMarkup(scope, locked)}<div class="table-wrap"><table${tableStyle}><thead><tr>${headCells}</tr>${filterRow}</thead><tbody>${body}</tbody></table></div>${pager}`;
 }
 
@@ -5066,7 +5122,7 @@ function formatShipmentTimelineDate(value) {
 }
 
 function renderReports() {
-  const rows = filteredRows(visibleRows(state.shipments));
+  const rows = reportRows(normalizedReportType(state.ui.reportType),state.ui.reportFromDate||'',state.ui.reportToDate||'');
   const revenue = rows.reduce((sum, row) => sum + Number(row.sell || 0), 0);
   const cost = rows.reduce((sum, row) => sum + Number(row.buyCost || 0), 0);
   const preview = state.ui.reportPreview;
@@ -5505,7 +5561,7 @@ function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()
   // permission. This Live-button filter uses explicit KWI/AFS serial markers when present,
   // falling back to the saved branch; this does not change record visibility or stored data.
   const visibleJobNos = new Set((state.shipments || [])
-    .filter((row) => dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row)))
+    .filter((row) => reportingVisible(row) && dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row)))
     .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
   const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
   const todayKey = today();
@@ -5592,10 +5648,9 @@ function table(type, rows, columns, showLoad = type !== "shipment", scope = type
   const configuredColumns = configurableColumns(type, columns, scope);
   const filteredRows = applyColumnFilters(scope, rows, configuredColumns);
   const sortedRows = sortable ? applySort(scope, filteredRows) : filteredRows;
-  const pageSize = 15;
+  const pageSize = sortable ? pageSizeFor(scope) : Math.max(1, sortedRows.length);
   state.ui.tablePages = state.ui.tablePages || {};
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const currentPage = Math.min(Math.max(1, Number(state.ui.tablePages[scope] || 1)), totalPages);
+  const {pages:totalPages,current:currentPage}=sortable?ApolloShipmentReporting.page(sortedRows.length,state.ui.tablePages[scope],pageSize):{pages:1,current:1};
   const pageRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const header = showLoad ? `<th>Load</th>` : "";
   const colSpan = configuredColumns.length + (showLoad ? 1 : 0);
@@ -5605,11 +5660,11 @@ function table(type, rows, columns, showLoad = type !== "shipment", scope = type
     : `<tr><td colspan="${colSpan}">${empty(hasActiveFilter ? "No records match the column filters." : "No records found.")}</td></tr>`;
   const locked = isColumnWidthLocked(scope);
   const headCells = configuredColumns.map(([key, label]) => sortable ? sortableHeaderCell(type, scope, key, label, locked) : `<th>${escapeHtml(label)}</th>`).join("");
-  const filterRow = columnFilterRowMarkup(scope, configuredColumns, showLoad);
+  const filterRow = sortable ? columnFilterRowMarkup(scope, configuredColumns, showLoad, rows) : '';
   const widths = (state.ui.columnWidths || {})[scope];
   const tableStyle = widths && Object.keys(widths).length ? ` style="table-layout:fixed"` : "";
   const lockToggle = sortable ? columnLockToggleMarkup(scope, locked) : "";
-  const pager = totalPages > 1 ? `<div class="table-pagination"><span>Showing ${((currentPage - 1) * pageSize) + 1}-${Math.min(currentPage * pageSize, sortedRows.length)} of ${sortedRows.length}</span><div><button type="button" class="secondary-button" data-action="table-page" data-page-scope="${escapeHtml(scope)}" data-page="${currentPage - 1}" ${currentPage === 1 ? "disabled" : ""}>Previous</button><span>Page ${currentPage} / ${totalPages}</span><button type="button" class="secondary-button" data-action="table-page" data-page-scope="${escapeHtml(scope)}" data-page="${currentPage + 1}" ${currentPage === totalPages ? "disabled" : ""}>Next</button></div></div>` : "";
+  const pager = sortable ? paginationMarkup(scope,sortedRows.length,currentPage,pageSize) : '';
   return `${scope === "shipment" ? "" : ""}${lockToggle}<div class="table-wrap"><table${tableStyle}><thead><tr>${headCells}${header}</tr>${filterRow}</thead><tbody>${body}</tbody></table></div>${pager}`;
 }
 
@@ -5619,15 +5674,26 @@ function table(type, rows, columns, showLoad = type !== "shipment", scope = type
 // text, a row must match all of them at once (AND, not OR). This runs independently per table
 // (scope), the same way sorting and pagination already do, so filtering the Shipment Register
 // doesn't touch the Manifest Register's filters.
-function columnFilterRowMarkup(scope, columns, showLoad) {
+function columnFilterRowMarkup(scope, columns, showLoad, rows=[]) {
   const filters = state.ui.columnFilters?.[scope] || {};
-  const cells = columns.map(([key]) => `<th><input type="text" class="column-filter-input" data-column-filter data-filter-scope="${escapeHtml(scope)}" data-filter-key="${escapeHtml(key)}" value="${escapeHtml(filters[key] || "")}" placeholder="Filter..." autocomplete="off" /></th>`).join("");
+  const cells = columns.map(([key]) => {
+    if(key==='slNo')return '<th></th>';
+    const attrs=`class="column-filter-input" data-column-filter data-filter-scope="${escapeHtml(scope)}" data-filter-key="${escapeHtml(key)}"`;
+    if(['status','podStatus','invoiceStatus'].includes(key)){
+      const choices=[...new Set(rows.map(r=>String(tableColumnValue(scope,key,r)||'')).filter(Boolean))].sort();
+      const selected=String(filters[key]||'').replace(/^=/,'');if(selected&&!choices.includes(selected))choices.push(selected);
+      return `<th><select ${attrs}><option value="">All statuses</option>${choices.map(v=>`<option value="=${escapeHtml(v)}" ${selected===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}</select></th>`;
+    }
+    return `<th><input type="text" ${attrs} value="${escapeHtml(filters[key] || "")}" placeholder="Filter..." autocomplete="off" /></th>`;
+  }).join("");
   return `<tr class="column-filter-row">${cells}${showLoad ? "<th></th>" : ""}</tr>`;
 }
 
 function tableColumnValue(scope, key, row) {
   const tableType = String(scope || "").split(":")[0];
   if (key === "consoleNo") return consoleNoForShipment(row?.jobNo);
+  if (key === "palletCount") return cargoPalletCount(row);
+  if (key === "truckDetails") return [row.vehicleNo,row.driverName,row.driverMobile].filter(Boolean).join(' / ');
   if (tableType === "document" && key === "linkedNo") return documentLinkedToText(row);
   return row?.[key];
 }
@@ -5637,8 +5703,10 @@ function applyColumnFilters(scope, rows, columns) {
   const activeEntries = Object.entries(filters).filter(([key, term]) => String(term || "").trim() && columns.some(([columnKey]) => columnKey === key));
   if (!activeEntries.length) return rows;
   return rows.filter((row) => activeEntries.every(([key, term]) => {
+    const raw=String(tableColumnValue(scope,key,row)??'').toLowerCase();
     const cellText = String(display(tableColumnValue(scope, key, row)) ?? "").toLowerCase();
-    return cellText.includes(String(term).trim().toLowerCase());
+    const needle=String(term).trim().toLowerCase();
+    return needle.startsWith('=') ? cellText===needle.slice(1) : cellText.includes(needle)||raw.includes(needle);
   }));
 }
 
@@ -6118,13 +6186,13 @@ function cellHtml(type, key, row, index = 0) {
     // (selects this manifest so its job list renders below the register), rather than the
     // generic openRecord edit dialog - preserving that existing behavior.
     const loadId = String(row.loadNo || "").trim();
-    return loadId ? `<button type="button" class="table-inline-link" data-action="view-load" data-id="${escapeHtml(loadId)}" aria-label="View jobs for manifest ${escapeHtml(loadId)}">${escapeHtml(loadId)}</button>` : "";
+    return loadId ? `<button type="button" class="table-inline-link" data-action="view-load" data-id="${escapeHtml(loadId)}" aria-label="View jobs for manifest ${escapeHtml(loadId)}">${escapeHtml(loadId)}</button>${reportingLabel(row)}` : "";
   }
   const clickableRegisterKey = { suppliers: "code", tariff: "tariffNo", invoice: "invoiceNo", document: "documentNo" }[type];
   if (clickableRegisterKey && key === clickableRegisterKey) {
     const id = String(row[key] || "").trim();
     if (!id) return escapeHtml(row[key] || "");
-    return `<button type="button" class="table-inline-link" data-record-open data-record-type="${escapeHtml(type)}" data-record-id="${escapeHtml(id)}" aria-label="Open ${escapeHtml(type)} ${escapeHtml(id)}">${escapeHtml(id)}</button>`;
+    return `<button type="button" class="table-inline-link" data-record-open data-record-type="${escapeHtml(type)}" data-record-id="${escapeHtml(id)}" aria-label="Open ${escapeHtml(type)} ${escapeHtml(id)}">${escapeHtml(id)}</button>${type==='invoice'?reportingLabel(row):''}`;
   }
   if (type === "audit" && key === "auditNumber") {
     const auditId = String(row.id || "").trim();
@@ -6144,7 +6212,7 @@ function cellHtml(type, key, row, index = 0) {
   if (type === "shipment" && (key === "jobNo" || key === "airwayBillNo")) {
     const value = display(row[key]);
     const visual = key === "jobNo" ? shipmentVisualState(row) : null;
-    return `${visual ? `<span class="shipment-register-indicator ${escapeHtml(visual.key)}" title="${escapeHtml(visual.label)}">${visual.icon}</span>` : ""}<button type="button" class="table-inline-link" data-shipment-open data-shipment-id="${escapeHtml(row.jobNo || "")}" data-shipment-field="${escapeHtml(key)}" aria-label="Open shipment ${escapeHtml(String(value))}">${escapeHtml(value)}</button>`;
+    return `${visual ? `<span class="shipment-register-indicator ${escapeHtml(visual.key)}" title="${escapeHtml(visual.label)}">${visual.icon}</span>` : ""}<button type="button" class="table-inline-link" data-shipment-open data-shipment-id="${escapeHtml(row.jobNo || "")}" data-shipment-field="${escapeHtml(key)}" aria-label="Open shipment ${escapeHtml(String(value))}">${escapeHtml(value)}</button>${key==='jobNo'?reportingLabel(row,true):''}`;
   }
 
   if (type === "shipment" && key === "consoleNo") {
@@ -6771,6 +6839,23 @@ async function handleModuleClick(event) {
   if (!button) return;
   const { action, type, id, mode } = button.dataset;
 
+  if(action==='retry-live-data'){await syncFromApi();return;}
+
+  if(action==='reporting-mode'){
+    if(!isAdminSession())return notifyDenied('Access denied','Only management administrators may change reporting classification.');
+    const row=state.shipments.find(r=>r.jobNo===id);if(!row)return;
+    const next=reportingClass(row).excluded?'live':'auto';
+    const reason=window.prompt(`${next==='live'?'Restore this genuine shipment to live reporting':'Return this shipment to pre-live reporting'}: ${id}. Enter the reason (nothing is deleted):`);
+    if(reason===null)return;
+    if(reason.trim().length<5)return notifyDenied('Reason required','Please give a reason of at least five characters.');
+    button.disabled=true;
+    try{
+      const result=await fetchJson(`/api/shipments/${encodeURIComponent(id)}/reporting`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:next,reason:reason.trim()})});
+      row.reportingMode=result.reportingMode;resetReportPages();saveState();render();notifySuccess('Reporting updated','Shipment and linked billing classification updated. Job data and amounts are unchanged.');
+    }catch(error){button.disabled=false;notifyDenied('Reporting change failed',error.message);}
+    return;
+  }
+
   if (action === "goto-module") {
     activeModule = button.dataset.module || activeModule;
     saveState();
@@ -6926,6 +7011,7 @@ async function handleModuleClick(event) {
       ? (current.direction === "asc" ? "desc" : "asc")
       : guessDefaultSortDirection(type, key);
     state.ui.sort[scope] = { key, direction };
+    state.ui.tablePages=state.ui.tablePages||{};state.ui.tablePages[scope]=1;
     saveState();
     render();
     return;
@@ -6934,7 +7020,10 @@ async function handleModuleClick(event) {
   if (action === "table-page") {
     const scope = button.dataset.pageScope || type || "register";
     state.ui.tablePages = state.ui.tablePages || {};
-    state.ui.tablePages[scope] = Math.max(1, Number(button.dataset.page || 1));
+    const input=button.closest('.table-pagination')?.querySelector('[data-page-number]');
+    const requested=button.dataset.page==='input'?Number(input?.value):Number(button.dataset.page||1);
+    const max=Number(input?.max)||Number.MAX_SAFE_INTEGER;
+    state.ui.tablePages[scope] = Math.min(max,Math.max(1,Math.floor(requested)||1));
     saveState();
     if (scope === "shipment:customer-history" && state.ui.customerShipmentHistory?.customerCode) {
       openCustomerShipmentHistory(state.ui.customerShipmentHistory.customerCode, state.ui.customerShipmentHistory);
@@ -11232,12 +11321,7 @@ function previewReport() {
 // confusing (not obviously connected to the report, easy to forget was even set). Falls back to
 // the global filter only when the report's own dates are left blank, so existing habits still work.
 function reportRows(reportType, reportFromDate = "", reportToDate = "") {
-  const rows = visibleRows(state.shipments).filter((row) => {
-    const date = recordDate(row);
-    const fromMatch = !reportFromDate || !date || date >= reportFromDate;
-    const toMatch = !reportToDate || !date || date <= reportToDate;
-    return fromMatch && toMatch && adminBranchFilterMatch(row);
-  });
+  const rows = filteredRows(visibleRows(state.shipments),{from:reportFromDate,to:reportToDate});
   if (reportType === "Open / in-transit / delivered") {
     return rows.filter((row) => ["Booked", "In-Transit", "Delivered"].includes(row.status));
   }
@@ -11298,6 +11382,8 @@ function exportReport() {
 
 function fullShipmentExportColumns() {
   return [
+    ["reportingClass", "Reporting classification"],
+    ["createdAt", "Created timestamp"],
     ["jobNo", "Job No"],
     ["airwayBillNo", "Airway Bill / BL No"],
     ["bookingDate", "Booking Date"],
@@ -11375,7 +11461,7 @@ function downloadCsv(preview) {
   const header = columns.map(([, label]) => `"${label.replace(/"/g, '""')}"`).join(",");
   const lines = preview.rows.map((row) =>
     columns
-      .map(([key]) => `"${String(display(row[key])).replace(/"/g, '""')}"`)
+      .map(([key]) => `"${String(key==='reportingClass'?reportingClass(row).label:display(row[key])).replace(/"/g, '""')}"`)
       .join(",")
   );
   const blob = new Blob([[header, ...lines].join("\n")], { type: "text/csv;charset=utf-8" });
@@ -11388,9 +11474,10 @@ function downloadCsv(preview) {
 
 function exportCollectionCsv(type) {
   const scope = type === "shipment" ? "shipment:register" : type;
-  const baseRows = type === "shipment" ? filteredRows(visibleRows(state.shipments)) : collectionFor(type);
-  const columns = configurableColumns(type, columnsForType(type), scope);
-  const rows = applySort(scope, applyColumnFilters(scope, baseRows, columns));
+  const baseRows = filteredRows(collectionFor(type));
+  const visibleColumns = configurableColumns(type, columnsForType(type), scope);
+  const rows = applySort(scope, applyColumnFilters(scope, baseRows, visibleColumns));
+  const columns = ['shipment','invoice'].includes(type)?[...visibleColumns,['reportingClass','Reporting classification']]:visibleColumns;
   if (!rows.length || !columns.length) {
     notifyDenied("Export not ready", "No rows are available for this section.");
     return;
@@ -11425,6 +11512,7 @@ function columnsForType(type) {
 }
 
 function displayCellValue(type, key, row, index = 0) {
+  if(key==='reportingClass')return reportingClass(row).label;
   if (key === "slNo") return index + 1;
   if (key === "palletCount") return cargoPalletCount(row);
   if (key === "truckDetails") return [row.vehicleNo, row.driverName, row.driverMobile].filter(Boolean).join(" / ");
