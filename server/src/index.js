@@ -4735,6 +4735,56 @@ app.use("/api/crm", createCrmRouter({ query, requireAppAuth, sendMail: sendMicro
 
 require('./shipment-reporting').registerShipmentReporting({app,requireErpPortalAuth,getPool});
 
+// Documents can contain tens of millions of AWB synchronization artifacts. Keep the library
+// query bounded and keyset-paginated; id is the table's primary key and has a stable ordering.
+app.get("/api/documents", requireErpOrHrResourceAuth, async (request, response) => {
+  const requestedLimit = Number.parseInt(String(request.query.limit || "50"), 10);
+  const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 1000)) : 50;
+  const cursor = String(request.query.cursor || "").trim();
+  if (cursor && (!/^\d{1,19}$/.test(cursor) || BigInt(cursor) > 9223372036854775807n)) {
+    return response.status(400).json({ ok: false, error: "Invalid document page cursor." });
+  }
+
+  try {
+    const employeeTypes = Array.from(EMPLOYEE_DOCUMENT_TYPE_NAMES);
+    const values = [employeeTypes];
+    let cursorClause = "";
+    if (cursor) {
+      values.push(cursor);
+      cursorClause = `and id < $${values.length}::bigint`;
+    }
+    values.push(limit + 1);
+    const result = await query(
+      `select id, ${columnsFor(resources.documents)}
+       from documents
+       where document_no not like 'POD-AWB-BACKFILL-%'
+         and coalesce(type, '') <> all($1::text[])
+         ${cursorClause}
+       order by id desc
+       limit $${values.length}`,
+      values
+    );
+    const hasMore = result.rows.length > limit;
+    const rows = hasMore ? result.rows.slice(0, limit) : result.rows;
+    return response.json({
+      ok: true,
+      rows,
+      pagination: {
+        limit,
+        hasMore,
+        nextCursor: hasMore && rows.length ? String(rows[rows.length - 1].id) : null
+      }
+    });
+  } catch (error) {
+    console.error("Documents page query failed:", error?.message || error);
+    const status = Number.isInteger(error?.status) && error.status >= 400 ? error.status : 503;
+    return response.status(status).json({
+      ok: false,
+      error: "Live documents are temporarily unavailable. Demo records were not substituted."
+    });
+  }
+});
+
 app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, next) => {
   const resourceName = request.params.resource;
   const config = resources[resourceName];

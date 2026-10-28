@@ -27,6 +27,13 @@
     const current=Math.min(pages,Math.max(1,Math.floor(Number(requested)||1)));
     return {size,pages,current,start:(current-1)*size,end:Math.min(current*size,total)};
   }
-  const api={cutoff,beforeCutoff,prelive,classification,page};
+  function branchForShipment(row){
+    const markers=String(row?.jobNo||row?.job_no||'').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+    if(markers.includes('KWI'))return 'Kuwait HO';
+    if(markers.includes('DBX'))return 'Dubai';
+    // AFS is shared by both branch serial formats; legacy numbers use the saved branch.
+    return String(row?.branch||row?.branch_name||'');
+  }
+  const api={cutoff,beforeCutoff,prelive,classification,page,branchForShipment};
   root.ApolloShipmentReporting=api;if(typeof module!=='undefined')module.exports=api;
 })(globalThis);

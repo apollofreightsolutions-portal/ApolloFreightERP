@@ -924,6 +924,13 @@ function documentRegisterRows(rows) {
   return result;
 }
 
+function documentLibraryRows(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const isPod = String(row?.type || "").trim().toLowerCase() === "pod";
+    return !(isPod && documentRowIsSynthetic(row));
+  });
+}
+
 function additionalCharge(
   refNo,
   shipmentNo,
@@ -1595,6 +1602,81 @@ function defaultUserBranch() {
 }
 
 let includePreliveRecords = false;
+const documentLibraryPage = {
+  rows: [],
+  cursors: [null],
+  pageIndex: 0,
+  pageSize: 50,
+  nextCursor: null,
+  hasMore: false,
+  loading: false,
+  loaded: false,
+  error: ""
+};
+
+async function loadDocumentLibraryPage(direction = "first") {
+  const page = documentLibraryPage;
+  if (page.loading) return;
+  if (direction === "first") {
+    page.cursors = [null];
+    page.pageIndex = 0;
+  } else if (direction === "next") {
+    if (!page.hasMore || !page.nextCursor) return;
+    page.cursors = page.cursors.slice(0, page.pageIndex + 1);
+    page.cursors.push(page.nextCursor);
+    page.pageIndex += 1;
+  } else if (direction === "previous") {
+    if (page.pageIndex <= 0) return;
+    page.pageIndex -= 1;
+  }
+
+  page.loading = true;
+  page.error = "";
+  if (activeModule === "Documents") render();
+  try {
+    const params = new URLSearchParams({ limit: String(page.pageSize) });
+    const cursor = page.cursors[page.pageIndex];
+    if (cursor) params.set("cursor", cursor);
+    const result = await fetchJson(`/api/documents?${params.toString()}`);
+    if (!Array.isArray(result.rows)) throw new Error("The live Documents API returned an invalid page.");
+    page.rows = result.rows.map(apiDocument);
+    page.nextCursor = result.pagination?.nextCursor ? String(result.pagination.nextCursor) : null;
+    page.hasMore = Boolean(result.pagination?.hasMore && page.nextCursor);
+    page.loaded = true;
+  } catch (error) {
+    page.rows = [];
+    page.nextCursor = null;
+    page.hasMore = false;
+    page.loaded = true;
+    page.error = String(error?.message || "Live documents are temporarily unavailable.");
+  } finally {
+    page.loading = false;
+    if (activeModule === "Documents") render();
+  }
+}
+
+function documentLibraryPaginationMarkup() {
+  const page = documentLibraryPage;
+  const disabled = page.loading ? "disabled" : "";
+  const button = (label, direction, isDisabled) =>
+    `<button type="button" class="secondary-button" data-action="documents-page" data-direction="${direction}" ${isDisabled ? "disabled" : ""}>${label}</button>`;
+  const summary = page.loading && !page.rows.length
+    ? "Loading live documents…"
+    : page.error
+      ? "The live Documents list could not be loaded. No demo rows are shown."
+      : `Page ${page.pageIndex + 1} · ${page.rows.length} records · ordered by latest upload`;
+  return `<div class="table-pagination" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px" role="status">
+    <span>${escapeHtml(summary)}</span>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+      ${page.error ? button("Retry", "retry", page.loading) : ""}
+      ${button("First", "first", page.pageIndex === 0 || page.loading)}
+      ${button("Previous", "previous", page.pageIndex === 0 || page.loading)}
+      ${button("Next", "next", !page.hasMore || page.loading)}
+      <label>Rows <select data-documents-page-size ${disabled}>${[15, 30, 50, 100].map((size) => `<option value="${size}" ${size === page.pageSize ? "selected" : ""}>${size}</option>`).join("")}</select></label>
+    </div>
+  </div>`;
+}
+
 function reportingSubject(row) { return Boolean(row && (row.jobNo || row.invoiceNo || row.refNo || row.loadNo)); }
 function reportingClass(row) { return ApolloShipmentReporting.classification(row, state.shipments || []); }
 function reportingVisible(row) { return !reportingSubject(row) || includePreliveRecords || !reportingClass(row).excluded; }
@@ -1628,6 +1710,7 @@ function handleReportingChange(event){
  const field=event.target;
  if(field.matches('[data-include-prelive]')){includePreliveRecords=field.checked;resetReportPages();render();}
  if(field.matches('[data-page-size]')){const scope=field.dataset.pageScope;state.ui.tablePageSizes=state.ui.tablePageSizes||{};state.ui.tablePageSizes[scope]=Number(field.value);state.ui.tablePages=state.ui.tablePages||{};state.ui.tablePages[scope]=1;renderPagedScope(scope);}
+ if(field.matches('[data-documents-page-size]')){documentLibraryPage.pageSize=Number(field.value)||50;void loadDocumentLibraryPage('first');}
 }
 
 function recordDate(record) {
@@ -1862,6 +1945,7 @@ async function boot() {
     // available only by opening the specific Sent Back request number.
     if (activeModule === "Customer New Shipment") state.ui.customerRequestEditNo = "";
     render();
+    if (activeModule === "Documents") void loadDocumentLibraryPage("first");
   });
 
   portalAccessPanel?.addEventListener("click", (event) => {
@@ -2909,6 +2993,7 @@ function showApp() {
   syncFromApi();
   startSharedShipmentRefresh();
   render();
+  if (activeModule === "Documents") void loadDocumentLibraryPage("first");
 }
 
 function canRefreshSharedShipmentData() {
@@ -2926,7 +3011,7 @@ async function refreshSharedShipmentData() {
   try {
     const [shipments, documents, invoices, shipmentStatusHistory] = await Promise.all([
       fetchJson("/api/shipments"),
-      fetchJson("/api/documents"),
+      fetchJson("/api/documents?limit=100"),
       fetchJson("/api/invoices"),
       fetchJson("/api/shipment-status-history")
     ]);
@@ -3004,7 +3089,7 @@ async function syncFromApi() {
       fetchJson("/api/customers"),
       fetchJson("/api/suppliers"),
       fetchJson("/api/tariffs"),
-      fetchJson("/api/documents"),
+      fetchJson("/api/documents?limit=100"),
       fetchJson("/api/additional-charges"),
       fetchJson("/api/invoices"),
       fetchJson("/api/quotations"),
@@ -4809,10 +4894,10 @@ function renderTariffs() {
 }
 
 function renderDocuments() {
-  const rows = filteredRows(documentRegisterRows(visibleRows(state.documents)));
+  const rows = documentLibraryRows(documentLibraryPage.rows);
   return `
     <section class="split-grid wide-left">
-      <article class="panel">${panelHeader("Document Library", "Attachments")} ${registerColumnSettingsMarkup("document", "Document Register columns", defaultColumnLayouts().document)} ${table("document", rows, documentColumns(), false, "document")}</article>
+      <article class="panel">${panelHeader("Document Library", "All uploaded files")} ${registerColumnSettingsMarkup("document", "Document Register columns", defaultColumnLayouts().document)} ${table("document", rows, documentColumns(), false, "document")} ${documentLibraryPaginationMarkup()}</article>
       ${moduleActionPanel("Document Actions", "document", "Separate popup windows are available for new document tags and for loading stored shipment files.")}
     </section>
     ${adminDeletePanel("document", "Document")}`;
@@ -5523,15 +5608,12 @@ function dashboardStatusAllowedBranches() {
   return access.split(",").map(normalizeBranchName).filter((branch) => CANONICAL_BRANCHES.includes(branch));
 }
 function dashboardBranchForShipment(row) {
-  const markers = String(row?.jobNo || "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
-  if (markers.includes("KWI")) return "Kuwait HO";
-  if (markers.includes("AFS")) return "Dubai";
-  return normalizeBranchName(row?.branch);
+  return normalizeBranchName(ApolloShipmentReporting.branchForShipment(row));
 }
 function dashboardShipmentVisibleForLiveCount(row) {
   const classifiedBranch = dashboardBranchForShipment(row);
-  // For this dashboard count only, enforce branch visibility using the serial-derived branch;
-  // the saved branch can be stale and must not hide a KWI/AFS shipment before classification.
+  // For this dashboard count only, enforce branch visibility using explicit serial markers;
+  // the saved branch can be stale and must not hide a KWI/DBX shipment before classification.
   return ownedByCurrentUser({ ...row, branch: classifiedBranch });
 }
 function dashboardStatusEntryDate(value) {
@@ -5558,7 +5640,7 @@ function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()
   const selectedBranches = new Set(branches);
   // Live tracking must follow the same User Management visibility scope as the rest of ERP:
   // ownedByCurrentUser() enforces branch access, All Branches scope, and the canViewAllEntry
-  // permission. This Live-button filter uses explicit KWI/AFS serial markers when present,
+  // permission. This Live-button filter uses explicit KWI/DBX serial markers when present,
   // falling back to the saved branch; this does not change record visibility or stored data.
   const visibleJobNos = new Set((state.shipments || [])
     .filter((row) => reportingVisible(row) && dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row)))
@@ -6604,7 +6686,7 @@ function defaultColumnLayouts() {
     customers: [["code", "Code"], ["name", "Name"], ["locationOrLane", "Lane / Location"], ["email", "Email"], ["mobile", "Mobile"], ["terms", "Terms"], ["status", "Status"], ["branch", "Branch"], ["createdBy", "USERNAME"]],
     suppliers: [["code", "Code"], ["name", "Name"], ["locationOrLane", "Lane / Location"], ["email", "Email"], ["mobile", "Mobile"], ["terms", "Terms"], ["status", "Status"], ["branch", "Branch"], ["createdBy", "USERNAME"]],
     tariff: [["tariffNo", "Tariff"], ["customer", "Consignee"], ["origin", "Origin"], ["destination", "Destination"], ["mainSection", "Main Section"], ["currency", "Currency"], ["minCharge", "Minimum Charge"], ["grandTotal", "Grand Total"], ["createdBy", "USERNAME"]],
-    document: [["documentNo", "Documents"], ["linkedNo", "Linked To"], ["type", "Type"], ["status", "Status"], ["date", "Date"], ["owner", "Owner"]],
+    document: [["documentNo", "Documents"], ["fileName", "File Name"], ["linkedNo", "Linked To"], ["type", "Type"], ["status", "Status"], ["date", "Date"], ["owner", "Owner"]],
     invoice: [["invoiceNo", "Invoice"], ["customer", "Consignee"], ["shipmentNo", "Shipment"], ["revenue", "Revenue"], ["supplierCost", "Cost"], ["status", "Status"], ["date", "Date"], ["createdBy", "USERNAME"]],
     quotation: [["quotationNo", "Quotation"], ["date", "Date"], ["customerName", "Customer"], ["customerMobile", "Mobile"], ["customerEmail", "Email"], ["cbm", "CBM"], ["status", "Status"], ["createdBy", "USERNAME"]],
     shipmentRequest: [["requestNo", "Request"], ["createdAt", "Date"], ["customerName", "Customer"], ["shipmentType", "Type"], ["origin", "Origin"], ["destination", "Destination"], ["itemName", "Item"], ["status", "Status"]],
@@ -6809,7 +6891,7 @@ function collectionFor(type) {
     customers: state.customers,
     suppliers: state.suppliers,
     tariff: visibleRows(state.tariffs),
-    document: documentRegisterRows(visibleRows(state.documents)),
+    document: documentLibraryRows([...(state.documents || []), ...(documentLibraryPage.rows || [])]),
     podDocument: visibleRows(state.documents).filter((row) => String(row.type || "").toLowerCase() === "pod"),
     statusHistory: state.shipmentStatusHistory.filter((row) => row.id),
     charge: visibleRows(state.additionalCharges),
@@ -6840,6 +6922,11 @@ async function handleModuleClick(event) {
   const { action, type, id, mode } = button.dataset;
 
   if(action==='retry-live-data'){await syncFromApi();return;}
+
+  if (action === "documents-page") {
+    void loadDocumentLibraryPage(button.dataset.direction || "first");
+    return;
+  }
 
   if(action==='reporting-mode'){
     if(!isAdminSession())return notifyDenied('Access denied','Only management administrators may change reporting classification.');
@@ -13226,6 +13313,7 @@ async function createDocument(data) {
   record.storageUrl = String(data.storageUrl || "").trim();
   state.documents.unshift(record);
   if (!await postNewRecord("document", record, "documents", "documentNo", "Document")) return false;
+  if (activeModule === "Documents") await loadDocumentLibraryPage("first");
   addHistory("Created document", documentNo);
   notifySuccess("Document saved", documentNo + " was saved successfully.");
   return true;

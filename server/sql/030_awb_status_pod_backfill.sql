@@ -41,6 +41,8 @@ with completed_awbs as (
   from documents d
   join shipments s on lower(trim(s.job_no)) = lower(trim(d.linked_no))
   where d.type = 'POD'
+    -- Backfill rows are synchronization artifacts, never valid sources for another backfill.
+    and d.document_no not like 'POD-AWB-BACKFILL-%'
     and lower(trim(d.status)) = 'uploaded'
     and nullif(trim(s.airway_bill_no), '') is not null
     and lower(trim(s.status)) = 'delivered'
