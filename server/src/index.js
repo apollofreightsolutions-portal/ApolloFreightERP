@@ -33,6 +33,7 @@ const {
   consumeRecoveryCode,
   enrollmentPayload
 } = require("./mfa");
+const { bumpTrailingNumber, reserveUniqueAirwayBill } = require("./airway-bill-allocation");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -1749,20 +1750,6 @@ async function prepareRecordForConfig(config, body) {
   }
 
   return prepared;
-}
-function bumpTrailingNumber(value) {
-  const text = String(value || "");
-  const matches = [...text.matchAll(/\d+/g)];
-  if (!matches.length) return `${text}-1`;
-  // Bump the longest digit run, not just the last one in the string. Job number formats embed the
-  // month AFTER the serial number (e.g. "AFS-00174/08/KWI/EXP") - a naive "last digits in the
-  // string" match increments the month (08 -> 09) instead of the actual serial number, which never
-  // resolves the real collision and can exhaust every retry attempt with the serial left unchanged.
-  const target = matches.reduce((longest, current) => (current[0].length > longest[0].length ? current : longest), matches[0]);
-  const start = target.index;
-  const end = start + target[0].length;
-  const next = String(Number(target[0]) + 1).padStart(target[0].length, "0");
-  return text.slice(0, start) + next + text.slice(end);
 }
 
 // Global Delivered Shipment Rule / Manifest Creation rule, enforced server-side too: strips out
@@ -4683,7 +4670,42 @@ app.post("/api/shipments", requireErpPortalAuth, async (request, response, next)
       throw error;
     }
 
-    const row = await insertRow(resources.shipments, request.body || {});
+    const shipmentBody = { ...(request.body || {}) };
+    let shipmentClient = null;
+    let awbReservation = null;
+    let row;
+    try {
+      // The browser's next-number preview can be stale when two users submit together. Hold a
+      // branch+AWB advisory lock on one dedicated connection through the INSERT, then bump and
+      // retry before saving if another request already consumed that candidate.
+      shipmentClient = await getPool().connect();
+      awbReservation = await reserveUniqueAirwayBill(shipmentClient, {
+        branch: shipmentBody.branch,
+        airwayBillNo: shipmentBody.airwayBillNo ?? shipmentBody.airway_bill_no,
+        jobNo: shipmentBody.jobNo ?? shipmentBody.job_no,
+        allowExistingGroup: ["true", "1", "yes"].includes(String(shipmentBody.isNewFromAirway || "").trim().toLowerCase())
+      });
+      const awbField = Object.prototype.hasOwnProperty.call(shipmentBody, "airwayBillNo") || !Object.prototype.hasOwnProperty.call(shipmentBody, "airway_bill_no")
+        ? "airwayBillNo"
+        : "airway_bill_no";
+      shipmentBody[awbField] = awbReservation.airwayBillNo;
+      if (awbReservation.jobNo) {
+        const jobField = Object.prototype.hasOwnProperty.call(shipmentBody, "jobNo") || !Object.prototype.hasOwnProperty.call(shipmentBody, "job_no")
+          ? "jobNo"
+          : "job_no";
+        shipmentBody[jobField] = awbReservation.jobNo;
+      }
+      row = await insertRow(resources.shipments, shipmentBody, (text, values) => shipmentClient.query(text, values));
+    } finally {
+      let destroyConnection = false;
+      try { await awbReservation?.release(); }
+      catch (releaseError) {
+        destroyConnection = true;
+        console.error("Could not release Airway Bill allocation lock; discarding DB connection:", releaseError?.message || releaseError);
+      }
+      if (shipmentClient) shipmentClient.release(destroyConnection);
+    }
+
     let relatedRows = [row];
     try {
       // When a new job is created from an existing AWB, the status selected in the
