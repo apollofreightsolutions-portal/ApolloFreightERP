@@ -831,6 +831,21 @@ label {
   gap: 12px;
 }
 
+.kpi-grid.report-kpi-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  align-items: stretch;
+}
+
+.report-kpi-grid > .kpi {
+  min-width: 0;
+}
+
+.report-kpi-grid > .kpi strong {
+  font-size: clamp(22px, 2vw, 28px);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
 .kpi,
 .panel,
 .alert,

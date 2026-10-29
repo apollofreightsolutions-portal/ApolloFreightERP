@@ -1684,7 +1684,7 @@ function reportingClass(row) { return ApolloShipmentReporting.classification(row
 function reportingVisible(row) { return !reportingSubject(row) || includePreliveRecords || !reportingClass(row).excluded; }
 function resetReportPages() { state.ui.tablePages={}; state.ui.reportPreview=null; }
 function reportingControls() {
-  if(isCustomerSession()||isHrSession()||isCrmSession()||!['Dashboard','Shipment / Airway','Shipment Status','POD / Delivery','Billing / Invoices','Reports','Manifest'].includes(activeModule))return '';
+  if(isCustomerSession()||isHrSession()||isCrmSession()||activeModule!=='Dashboard')return '';
   const excluded=visibleRows(state.shipments).filter(row=>reportingClass(row).excluded).length;
   const bills=visibleRows(state.invoices).filter(row=>reportingClass(row).excluded).length;
   return `<section class="panel reporting-scope-panel ${includePreliveRecords?'is-included':''}" aria-label="Reporting scope"><div class="reporting-scope-layout"><div class="reporting-scope-copy"><div class="reporting-scope-heading"><span class="reporting-scope-dot" aria-hidden="true"></span><strong>${includePreliveRecords?'Historical records included':'Live reporting'}</strong><span class="reporting-scope-state">${includePreliveRecords?'Pre-live/testing records included':'Pre-live/testing records excluded'}</span></div><p class="reporting-scope-summary"><strong>${excluded}</strong> accessible shipments and <strong>${bills}</strong> linked/older invoices are classified as pre-live.</p><div class="reporting-scope-details"><span>Cutoff: created before 1 Sep 2026, Kuwait time</span><span>Date filters use booking/invoice dates</span><span>No records or amounts have been deleted</span></div>${!liveShipmentDataReady?'<p class="reporting-scope-alert" role="alert">Waiting for verified live data. Do not rely on cached figures until the connection is confirmed.</p>':''}</div><label class="reporting-scope-toggle"><input type="checkbox" data-include-prelive ${includePreliveRecords?'checked':''}><span>Include pre-live records</span></label></div></section>`;
@@ -5216,7 +5216,7 @@ function renderReports() {
   const preview = state.ui.reportPreview;
   const canSeeSummary = canViewBillingSummary();
   return `
-    <section class="kpi-grid">
+    <section class="kpi-grid report-kpi-grid">
       ${kpi("Filtered Shipments", rows.length, "Current report scope")}
       ${canSeeSummary && canBillingSalesEntry() ? kpi("Revenue", money(revenue), "Sell total") : ""}
       ${canSeeSummary && canBillingCostEntry() ? kpi("Supplier Cost", money(cost), "Buy total") : ""}
