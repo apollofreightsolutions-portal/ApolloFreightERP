@@ -7,27 +7,50 @@ export function normalizeDashboardBranch(value) {
 
 export function countLiveShipmentsByStatus({
   shipments = [],
+  history = [],
   branches = [],
   statuses = [],
   today = "",
   branchForShipment = (row) => row.branch,
   createdDateForShipment = (row) => String(row.createdAt || row.created_at || "").slice(0, 10),
+  dateForHistory = (value) => String(value || "").slice(0, 10),
   labelStatus = (value) => String(value || "").trim()
 } = {}) {
   const selectedBranches = new Set(branches.map(normalizeDashboardBranch));
   const counts = Object.fromEntries(statuses.map((status) => [status, 0]));
-  const countedShipments = new Set();
+  const shipmentByBranchAndJob = new Map();
+  const branchesByJob = new Map();
+
   for (const row of shipments) {
     const jobNo = String(row?.jobNo || row?.job_no || "").trim().toLowerCase();
     const branch = normalizeDashboardBranch(branchForShipment(row));
-    const createdDate = createdDateForShipment(row);
-    const status = labelStatus(row?.status);
-    if (!jobNo || !branch || !selectedBranches.has(branch) || createdDate !== today) continue;
-    if (!Object.prototype.hasOwnProperty.call(counts, status)) continue;
+    if (!jobNo || !branch) continue;
     const key = `${branch}\u0000${jobNo}`;
-    if (countedShipments.has(key)) continue;
-    countedShipments.add(key);
-    counts[status] += 1;
+    shipmentByBranchAndJob.set(key, row);
+    if (!branchesByJob.has(jobNo)) branchesByJob.set(jobNo, new Set());
+    branchesByJob.get(jobNo).add(branch);
+  }
+
+  const eligibleShipments = new Set();
+  for (const [key, row] of shipmentByBranchAndJob) {
+    const branch = key.slice(0, key.indexOf("\u0000"));
+    if (selectedBranches.has(branch) && createdDateForShipment(row) === today) eligibleShipments.add(key);
+  }
+
+  for (const entry of history) {
+    const jobNo = String(entry?.jobNo || entry?.job_no || "").trim().toLowerCase();
+    if (!jobNo || dateForHistory(entry?.updatedAt || entry?.updated_at) !== today) continue;
+    const recordedBranch = normalizeDashboardBranch(entry?.branch);
+    const possibleBranches = branchesByJob.get(jobNo);
+    const branch = recordedBranch || (possibleBranches?.size === 1 ? [...possibleBranches][0] : "");
+    if (!branch || !selectedBranches.has(branch) || !possibleBranches?.has(branch)) continue;
+    const key = `${branch}\u0000${jobNo}`;
+    if (shipmentByBranchAndJob.has(key)) eligibleShipments.add(key);
+  }
+
+  for (const key of eligibleShipments) {
+    const status = labelStatus(shipmentByBranchAndJob.get(key)?.status);
+    if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
   }
   return counts;
 }

@@ -5632,13 +5632,12 @@ function dashboardShipmentCreatedDate(row) {
   return dashboardStatusEntryDate(row?.createdAt || row?.created_at);
 }
 function dashboardLiveShipmentCounts(branches = dashboardStatusAllowedBranches()) {
-  // Count each shipment created today once, according to its current status and own branch.
+  // Include shipments created today or status-updated today; count each once by current status and branch.
   const selectedBranches = new Set(branches.map(normalizeBranchName));
-  const shipments = (state.shipments || []).filter((row) =>
-    dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row))
-  );
+  const shipments = (state.shipments || []).filter(dashboardShipmentVisibleForLiveCount);
   return countLiveShipmentsByStatus({
     shipments,
+    history: state.shipmentStatusHistory || [],
     branches: [...selectedBranches],
     statuses: statusOptions(),
     today: today(),
@@ -5677,13 +5676,13 @@ async function openDashboardStatusUpdates() {
     const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
     const totalNode = dialogBody.querySelector("[data-dashboard-status-total]");
     const rowsNode = dialogBody.querySelector("[data-dashboard-status-counts]");
-    if (totalNode) totalNode.textContent = `${total} shipment${total === 1 ? "" : "s"} created today`;
+    if (totalNode) totalNode.textContent = `${total} shipment${total === 1 ? "" : "s"} created or updated today`;
     if (rowsNode) rowsNode.innerHTML = dashboardStatusCountRows(counts);
   };
   openDialog({
     title: "Today's Live Shipments by Status",
     typeLabel: "Live today",
-    body: `${dashboardStatusBranchFilterMarkup()}<p class="empty-state">Each shipment created today is counted once under its current status and its own branch. Changing a status moves that shipment between counts.</p><div class="dashboard-status-counts" data-dashboard-status-counts>${dashboardStatusCountRows(dashboardLiveShipmentCounts())}</div><p class="dashboard-status-total" data-dashboard-status-total></p>`,
+    body: `${dashboardStatusBranchFilterMarkup()}<p class="empty-state">Each shipment created today or status-updated today is counted once under its current status and its own branch. A status change moves that shipment between counts.</p><div class="dashboard-status-counts" data-dashboard-status-counts>${dashboardStatusCountRows(dashboardLiveShipmentCounts())}</div><p class="dashboard-status-total" data-dashboard-status-total></p>`,
     saveLabel: "Close",
     singleColumn: true,
     onSave() { recordDialog.close(); },
