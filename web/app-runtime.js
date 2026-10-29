@@ -2381,8 +2381,8 @@ function branchAllowed(row) {
 function normalizeBranchName(value) {
   const text = String(value || "").trim();
   const normalized = text.toLowerCase();
-  if (["branch 1", "kuwait 1", "kuwait ho"].includes(normalized)) return "Kuwait HO";
-  if (["branch 2", "dubai 2", "dubai"].includes(normalized)) return "Dubai";
+  if (["branch 1", "kuwait 1", "kuwait", "kuwait ho", "kuwait branch", "kuwait hq", "kuwait head office", "kwi"].includes(normalized)) return "Kuwait HO";
+  if (["branch 2", "dubai 2", "dubai", "dubai branch", "dbx"].includes(normalized)) return "Dubai";
   return text;
 }
 
@@ -5640,11 +5640,11 @@ function dashboardStatusEntryIsLater(candidate, current) {
   return false;
 }
 function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
-  // Keep branch visibility and today's date filters, but key status events by branch + job number:
-  // Kuwait and Dubai may use overlapping job-number sequences.
+  // Count today's updates even when the shipment itself predates the reporting cutoff. Keep
+  // account/branch visibility and key events by branch + job number because branch sequences may overlap.
   const selectedBranches = new Set(branches.map(normalizeBranchName));
   const shipments = (state.shipments || []).filter((row) =>
-    reportingVisible(row) && dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row))
+    dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row))
   );
   return countBranchStatusUpdates({
     shipments,

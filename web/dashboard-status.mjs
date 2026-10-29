@@ -1,7 +1,7 @@
 export function normalizeDashboardBranch(value) {
   const branch = String(value || "").trim().toLowerCase();
-  if (["branch 1", "kuwait 1", "kuwait", "kuwait ho"].includes(branch)) return "Kuwait HO";
-  if (["branch 2", "dubai 2", "dubai"].includes(branch)) return "Dubai";
+  if (["branch 1", "kuwait 1", "kuwait", "kuwait ho", "kuwait branch", "kuwait hq", "kuwait head office", "kwi"].includes(branch)) return "Kuwait HO";
+  if (["branch 2", "dubai 2", "dubai", "dubai branch", "dbx"].includes(branch)) return "Dubai";
   return String(value || "").trim();
 }
 
