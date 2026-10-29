@@ -62,9 +62,9 @@ class FakeDatabase {
   }
 }
 
-async function createWithReservation(database, { branch, airwayBillNo, jobNo, allowExistingGroup = false }) {
+async function createWithReservation(database, { branch, airwayBillNo, jobNo }) {
   const client = database.client();
-  const reservation = await reserveUniqueAirwayBill(client, { branch, airwayBillNo, jobNo, allowExistingGroup });
+  const reservation = await reserveUniqueAirwayBill(client, { branch, airwayBillNo, jobNo });
   try {
     // Simulate the insert while the session advisory lock is still held.
     await Promise.resolve();
@@ -96,6 +96,22 @@ test("simultaneous same-branch submissions get distinct AWBs before insert", asy
   assert.equal(database.rows.length, 2);
 });
 
+test("simultaneous same-branch submissions with tied Job No and AWB get distinct numbers", async () => {
+  const database = new FakeDatabase();
+  const [first, second] = await Promise.all([
+    createWithReservation(database, { branch: "Dubai", airwayBillNo: "AFS262035", jobNo: "AFS262035" }),
+    createWithReservation(database, { branch: "Dubai 2", airwayBillNo: "AFS262035", jobNo: "AFS262035" })
+  ]);
+  assert.deepEqual(
+    [first.airwayBillNo, second.airwayBillNo].sort(),
+    ["AFS262035", "AFS262036"]
+  );
+  assert.deepEqual(
+    [first.jobNo, second.jobNo].sort(),
+    ["AFS262035", "AFS262036"]
+  );
+});
+
 test("the same AWB may be independently allocated in a different branch", async () => {
   const database = new FakeDatabase();
   const [kuwait, dubai] = await Promise.all([
@@ -117,16 +133,15 @@ test("tied AWB-entry job numbers stay unique across branches during concurrent s
   assert.equal(database.rows.length, 2);
 });
 
-test("the explicit create-from-existing-AWB flow retains its existing group number", async () => {
+test("a fetched existing AWB advances to the next available number in the same branch", async () => {
   const database = new FakeDatabase([{ branch: "Kuwait HO", airwayBillNo: "AFS262035", jobNo: "KWI-1" }]);
   const result = await createWithReservation(database, {
     branch: "Kuwait HO",
     airwayBillNo: "AFS262035",
-    jobNo: "KWI-2",
-    allowExistingGroup: true
+    jobNo: "KWI-2"
   });
-  assert.equal(result.airwayBillNo, "AFS262035");
-  assert.equal(result.changed, false);
+  assert.equal(result.airwayBillNo, "AFS262036");
+  assert.equal(result.changed, true);
 });
 
 test("an AWB-entry job number advances with its AWB when the branch value collides", async () => {

@@ -318,6 +318,7 @@ alter table app_settings add column if not exists dropdown_options text not null
 create table if not exists shipment_status_history (
     id bigserial primary key,
     job_no text not null,
+    branch text not null default '',
     status text not null,
     pod_status text not null default '',
     invoice_status text not null default '',

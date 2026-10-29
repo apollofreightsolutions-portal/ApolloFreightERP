@@ -41,15 +41,12 @@ function collisionError(airwayBillNo, branch) {
 /**
  * Reserve a branch-scoped AWB value until the shipment insert finishes. This uses a session-level
  * PostgreSQL advisory lock on a dedicated connection, so two Cloud Run instances cannot both pass
- * the existence check for the same branch/AWB at once. Existing-AWB group creation is allowed only
- * when the request explicitly comes from the "New Shipment (from Airway Bill)" workflow and a
- * matching shipment already exists in that branch.
+ * the existence check for the same branch/AWB at once. Existing numbers are never reused within a branch.
  */
 async function reserveUniqueAirwayBill(client, {
   branch,
   airwayBillNo,
   jobNo,
-  allowExistingGroup = false,
   maxAttempts = 12
 } = {}) {
   const branchKey = normalizeBranchKey(branch);
@@ -121,7 +118,7 @@ async function reserveUniqueAirwayBill(client, {
       const awbExists = existing.rows[0]?.awb_exists === true;
       const jobNoExists = existing.rows[0]?.job_no_exists === true;
 
-      if ((!awbExists && !jobNoExists) || (allowExistingGroup && awbExists && !jobNoExists)) {
+      if (!awbExists && !jobNoExists) {
         return {
           airwayBillNo: candidate,
           jobNo: jobNoSharesAwbSequence && candidateKey !== originalAirwayBillKey ? candidate : originalJobNo,

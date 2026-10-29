@@ -1,3 +1,5 @@
+import { countBranchStatusUpdates } from "./dashboard-status.mjs";
+
 const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
 const SESSION_KEY = "apollofreighterp-session";
@@ -3375,6 +3377,7 @@ function apiShipmentStatusHistory(row) {
   return {
     id: row.id || "",
     jobNo: row.job_no || "",
+    branch: row.branch || "",
     status: row.status || "",
     podStatus: row.pod_status || "",
     invoiceStatus: row.invoice_status || "",
@@ -5637,27 +5640,23 @@ function dashboardStatusEntryIsLater(candidate, current) {
   return false;
 }
 function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
-  const selectedBranches = new Set(branches);
-  // Live tracking must follow the same User Management visibility scope as the rest of ERP:
-  // ownedByCurrentUser() enforces branch access, All Branches scope, and the canViewAllEntry
-  // permission. This Live-button filter uses explicit KWI/DBX serial markers when present,
-  // falling back to the saved branch; this does not change record visibility or stored data.
-  const visibleJobNos = new Set((state.shipments || [])
-    .filter((row) => reportingVisible(row) && dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row)))
-    .map((row) => String(row.jobNo || "").trim().toLowerCase()).filter(Boolean));
-  const counts = Object.fromEntries(statusOptions().map((status) => [status, 0]));
-  const todayKey = today();
-  const latestTodayByJob = new Map();
-  (state.shipmentStatusHistory || []).forEach((entry) => {
-    const jobNo = String(entry.jobNo || "").trim().toLowerCase();
-    const entryDate = dashboardStatusEntryDate(entry.updatedAt);
-    const status = dashboardStatusCountLabel(entry.status);
-    if (!jobNo || !visibleJobNos.has(jobNo) || entryDate !== todayKey || !status) return;
-    const current = latestTodayByJob.get(jobNo);
-    if (!current || dashboardStatusEntryIsLater(entry, current)) latestTodayByJob.set(jobNo, { ...entry, status });
+  // Keep branch visibility and today's date filters, but key status events by branch + job number:
+  // Kuwait and Dubai may use overlapping job-number sequences.
+  const selectedBranches = new Set(branches.map(normalizeBranchName));
+  const shipments = (state.shipments || []).filter((row) =>
+    reportingVisible(row) && dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row))
+  );
+  return countBranchStatusUpdates({
+    shipments,
+    history: state.shipmentStatusHistory || [],
+    branches: [...selectedBranches],
+    statuses: statusOptions(),
+    today: today(),
+    branchForShipment: dashboardBranchForShipment,
+    dateForHistory: dashboardStatusEntryDate,
+    labelStatus: dashboardStatusCountLabel,
+    isLater: dashboardStatusEntryIsLater
   });
-  latestTodayByJob.forEach((entry) => { counts[entry.status] += 1; });
-  return counts;
 }
 function dashboardStatusUpdatesToolbox() {
   const counts = dashboardStatusUpdateCounts();
@@ -7961,10 +7960,6 @@ function nextAvailableAirwayBillNumber(awbNo, branch, { excludeJobNo = "", tiedJ
     candidate = next;
   }
   return "";
-}
-
-function isIntentionalAwbGroupJoin(data) {
-  return ["true", "1", "yes"].includes(String(data?.isNewFromAirway || "").trim().toLowerCase());
 }
 
 function notifyDuplicateAirwayBill(awbNo, branch) {
@@ -13725,9 +13720,8 @@ async function createShipmentDraft(data) {
   }
   const requestedJobNo = String(data.jobNo || "").trim();
   const requestedAwb = String(data.airwayBillNo || data.jobNo?.replace("AFS", "AWB") || "").trim();
-  const allowExistingAwbGroup = isIntentionalAwbGroupJoin(data);
   const tiedJobNo = requestedJobNo && requestedJobNo.toLowerCase() === requestedAwb.toLowerCase();
-  if (!allowExistingAwbGroup && requestedAwb) {
+  if (requestedAwb) {
     const availableAwb = nextAvailableAirwayBillNumber(requestedAwb, data.branch, { tiedJobNo });
     if (!availableAwb) {
       notifyDenied("Draft not saved", `Could not assign a free Airway Bill number in ${data.branch || "this branch"}. Please try again.`);
@@ -13751,7 +13745,6 @@ async function createShipmentDraft(data) {
     data.shipmentServiceOther || "", data.volumeCategory || "Land", Number(data.chargeableDivisor || volumeDivisorFor(data.volumeCategory || "Land") || 0),
     currentUserName(), shipmentMetaNotes(data)
   );
-  record.isNewFromAirway = allowExistingAwbGroup;
   const saved = await postRecord("shipment", record);
   if (!saved) {
     notifyDenied("Draft not saved", "The draft could not be saved. Check the connection and try again.");
@@ -13773,9 +13766,8 @@ async function createShipment(data) {
   data.chargeableKg = effectiveChargeableWeightForShipment(data);
   const requestedJobNo = String(data.jobNo || "").trim();
   const requestedAwb = String(data.airwayBillNo || data.jobNo?.replace("AFS", "AWB") || "").trim();
-  const allowExistingAwbGroup = isIntentionalAwbGroupJoin(data);
   const tiedJobNo = requestedJobNo && requestedJobNo.toLowerCase() === requestedAwb.toLowerCase();
-  if (!allowExistingAwbGroup && requestedAwb) {
+  if (requestedAwb) {
     const availableAwb = nextAvailableAirwayBillNumber(requestedAwb, data.branch, { tiedJobNo });
     if (!availableAwb) {
       notifyDenied("Shipment not saved", `Could not assign a free Airway Bill number in ${data.branch || "this branch"}. Please try again.`);
@@ -13811,7 +13803,6 @@ async function createShipment(data) {
     data.shipmentServiceOther || "", data.volumeCategory || "Land", Number(data.chargeableDivisor || volumeDivisorFor(data.volumeCategory || "Land") || 0),
     currentUserName(), shipmentMetaNotes(data)
   );
-  record.isNewFromAirway = allowExistingAwbGroup;
   const saved = await postRecord("shipment", record);
   if (!saved) {
     const apiError = String(state.api?.error || "").trim();
@@ -14727,7 +14718,7 @@ async function updateStatus(data) {
   const airwayBillNo = String(shipmentItem.airwayBillNo || "").trim();
   const normalizedAwb = airwayBillNo.toLowerCase();
   const awbGroup = normalizedAwb
-    ? state.shipments.filter((row) => String(row.airwayBillNo || "").trim().toLowerCase() === normalizedAwb)
+    ? state.shipments.filter((row) => String(row.airwayBillNo || "").trim().toLowerCase() === normalizedAwb && normalizeBranchName(row.branch) === normalizeBranchName(shipmentItem.branch))
     : [shipmentItem];
   if (newStatus.toLowerCase() === String(oldStatus || "").trim().toLowerCase() && (!airwayBillNo || awbGroup.every((row) => String(row.status || "").trim().toLowerCase() === newStatus.toLowerCase()))) {
     notifyDenied("Status already selected", `${jobNo} is already ${oldStatus}. Choose a different status to create a new journey update.`);
@@ -14757,7 +14748,7 @@ async function updateStatus(data) {
       const result = await fetchJson("/api/shipments/status-by-awb", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ airwayBillNo, status: newStatus, notes: remark, updatedBy: currentUserName(), updatedAt: entryDate })
+        body: JSON.stringify({ airwayBillNo, branch: shipmentItem.branch, status: newStatus, notes: remark, updatedBy: currentUserName(), updatedAt: entryDate })
       });
       const serverRows = Array.isArray(result.rows) ? result.rows : [];
       if (serverRows.length) {
@@ -14782,6 +14773,7 @@ async function updateStatus(data) {
   for (const row of updatedGroup) {
     const historyEntry = {
       jobNo: row.jobNo,
+      branch: row.branch || shipmentItem.branch,
       status: newStatus,
       podStatus: row.podStatus,
       invoiceStatus: row.invoiceStatus,

@@ -33,7 +33,7 @@ const {
   consumeRecoveryCode,
   enrollmentPayload
 } = require("./mfa");
-const { bumpTrailingNumber, reserveUniqueAirwayBill } = require("./airway-bill-allocation");
+const { bumpTrailingNumber, normalizeBranchKey, reserveUniqueAirwayBill } = require("./airway-bill-allocation");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -987,6 +987,7 @@ const resources = {
     metaFields: [],
     fields: [
       field("job_no", ["jobNo", "job_no"], true),
+      field("branch", ["branch"]),
       field("status", ["status"], true),
       field("pod_status", ["podStatus", "pod_status"]),
       field("invoice_status", ["invoiceStatus", "invoice_status"]),
@@ -4335,9 +4336,10 @@ function normalizeAirwayBillNo(value) {
   return String(value || "").trim();
 }
 
-async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
+async function synchronizeAirwayBillGroup(client, airwayBillNo, branch, options = {}) {
   const normalizedAwb = normalizeAirwayBillNo(airwayBillNo);
   if (!normalizedAwb) return [];
+  const branchKey = normalizeBranchKey(branch);
   const syncStatus = options.syncStatus === true;
   const syncPodStatus = options.syncPodStatus === true;
   const nextStatus = String(options.status || "").trim();
@@ -4348,8 +4350,14 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
   const updatedAt = String(options.updatedAt || new Date().toISOString()).trim();
   const note = String(options.notes || `AWB group synchronization for ${normalizedAwb}`).trim();
   const found = await client.query(
-    "select * from shipments where lower(trim(airway_bill_no)) = lower(trim($1)) order by job_no for update",
-    [normalizedAwb]
+    `select * from shipments s
+      where case
+        when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
+        when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
+        else lower(btrim(coalesce(s.branch, '')))
+      end = $1 and lower(trim(s.airway_bill_no)) = lower(trim($2))
+      order by s.job_no for update`,
+    [branchKey, normalizedAwb]
   );
   const updated = [];
   for (const current of found.rows) {
@@ -4367,8 +4375,8 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
       );
       row = saved.rows[0] || current;
       await client.query(
-        "insert into shipment_status_history (job_no, status, pod_status, invoice_status, notes, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6, $7)",
-        [row.job_no, targetStatus, targetPodStatus, row.invoice_status || "", note, updatedBy, updatedAt]
+        "insert into shipment_status_history (job_no, branch, status, pod_status, invoice_status, notes, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+        [row.job_no, row.branch || branch, targetStatus, targetPodStatus, row.invoice_status || "", note, updatedBy, updatedAt]
       );
     }
     updated.push(row);
@@ -4376,27 +4384,44 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
   return updated;
 }
 
-async function latestAirwayBillState(client, airwayBillNo, excludeJobNo = "") {
+async function latestAirwayBillState(client, airwayBillNo, branch, excludeJobNo = "") {
   const normalizedAwb = normalizeAirwayBillNo(airwayBillNo);
   if (!normalizedAwb) return null;
+  const branchKey = normalizeBranchKey(branch);
   const result = await client.query(
     `with awb_events as (
        select h.status, h.pod_status, h.updated_at, 1 as source_priority, h.id as source_id
        from shipment_status_history h
        join shipments s on lower(trim(s.job_no)) = lower(trim(h.job_no))
        where lower(trim(s.airway_bill_no)) = lower(trim($1))
-         and ($2 = '' or s.job_no <> $2)
+         and case
+           when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
+           when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
+           else lower(btrim(coalesce(s.branch, '')))
+         end = $2
+         and ($3 = '' or s.job_no <> $3)
+         and (case
+           when lower(btrim(coalesce(h.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
+           when lower(btrim(coalesce(h.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
+           else lower(btrim(coalesce(h.branch, '')))
+         end = $2 or (trim(coalesce(h.branch, '')) = '' and
+           (select count(distinct lower(trim(sx.branch))) from shipments sx where lower(trim(sx.job_no)) = lower(trim(h.job_no))) = 1))
        union all
        select s.status, s.pod_status, s.updated_at, 0 as source_priority, s.id as source_id
        from shipments s
        where lower(trim(s.airway_bill_no)) = lower(trim($1))
-         and ($2 = '' or s.job_no <> $2)
+         and case
+           when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
+           when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
+           else lower(btrim(coalesce(s.branch, '')))
+         end = $2
+         and ($3 = '' or s.job_no <> $3)
      )
      select status, pod_status
      from awb_events
      order by updated_at desc, source_priority desc, source_id desc
      limit 1`,
-    [normalizedAwb, String(excludeJobNo || "")]
+    [normalizedAwb, branchKey, String(excludeJobNo || "")]
   );
   return result.rows[0] || null;
 }
@@ -4411,7 +4436,7 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
     let podStatus = String(options.podStatus || row.pod_status || "").trim();
 
     if (options.joinExistingGroup === true && !options.statusChanged && !options.podStatusChanged) {
-      const latest = await latestAirwayBillState(client, airwayBillNo, row.job_no);
+      const latest = await latestAirwayBillState(client, airwayBillNo, row.branch, row.job_no);
       if (latest) {
         syncStatus = true;
         syncPodStatus = true;
@@ -4420,7 +4445,7 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
       }
     }
 
-    return synchronizeAirwayBillGroup(client, airwayBillNo, {
+    return synchronizeAirwayBillGroup(client, airwayBillNo, row.branch, {
       syncStatus,
       syncPodStatus,
       status,
@@ -4624,14 +4649,25 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
 app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, response, next) => {
   try {
     const airwayBillNo = String(request.body?.airwayBillNo ?? request.body?.airway_bill_no ?? "").trim();
+    const branch = normalizeBranchKey(request.body?.branch);
     const newStatus = String(request.body?.status || "").trim();
     const updatedBy = String(request.body?.updatedBy || request.appSession?.userName || "system").trim();
     const updatedAt = normalizeStatusHistoryTimestamp(request.body?.updatedAt) || new Date().toISOString();
     const notes = String(request.body?.notes || "").trim();
     if (!airwayBillNo) return response.status(400).json({ ok: false, error: "An Airway Bill number is required." });
+    if (!branch) return response.status(400).json({ ok: false, error: "A shipment branch is required." });
     if (!newStatus) return response.status(400).json({ ok: false, error: "A shipment status is required." });
     const rows = await withDatabaseTransaction(async (client) => {
-      const found = await client.query("select * from shipments where lower(trim(airway_bill_no)) = lower(trim($1)) order by job_no for update", [airwayBillNo]);
+      const found = await client.query(
+        `select * from shipments s
+          where case
+            when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
+            when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
+            else lower(btrim(coalesce(s.branch, '')))
+          end = $1 and lower(trim(s.airway_bill_no)) = lower(trim($2))
+          order by s.job_no for update`,
+        [branch, airwayBillNo]
+      );
       if (!found.rows.length) {
         const error = new Error("No shipments were found for this Airway Bill number.");
         error.status = 404;
@@ -4645,8 +4681,8 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
           const row = saved.rows[0];
           updated.push(row);
           await client.query(
-            "insert into shipment_status_history (job_no, status, pod_status, invoice_status, notes, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6, $7)",
-            [row.job_no, newStatus, row.pod_status || "", row.invoice_status || "", notes ? `${notes} | AWB ${airwayBillNo}` : `Updated by AWB ${airwayBillNo}`, updatedBy, updatedAt]
+            "insert into shipment_status_history (job_no, branch, status, pod_status, invoice_status, notes, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8)",
+            [row.job_no, row.branch || request.body.branch, newStatus, row.pod_status || "", row.invoice_status || "", notes ? `${notes} | AWB ${airwayBillNo}` : `Updated by AWB ${airwayBillNo}`, updatedBy, updatedAt]
           );
         } else {
           updated.push(current);
@@ -4654,7 +4690,7 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
       }
       return updated;
     });
-    response.json({ ok: true, airwayBillNo, rows });
+    response.json({ ok: true, airwayBillNo, branch, rows });
   } catch (error) {
     if (isDatabaseSetupError(error)) return response.json({ ok: true, mode: "demo", airwayBillNo: request.body?.airwayBillNo || "", rows: [] });
     return next(error);
@@ -4682,8 +4718,7 @@ app.post("/api/shipments", requireErpPortalAuth, async (request, response, next)
       awbReservation = await reserveUniqueAirwayBill(shipmentClient, {
         branch: shipmentBody.branch,
         airwayBillNo: shipmentBody.airwayBillNo ?? shipmentBody.airway_bill_no,
-        jobNo: shipmentBody.jobNo ?? shipmentBody.job_no,
-        allowExistingGroup: ["true", "1", "yes"].includes(String(shipmentBody.isNewFromAirway || "").trim().toLowerCase())
+        jobNo: shipmentBody.jobNo ?? shipmentBody.job_no
       });
       const awbField = Object.prototype.hasOwnProperty.call(shipmentBody, "airwayBillNo") || !Object.prototype.hasOwnProperty.call(shipmentBody, "airway_bill_no")
         ? "airwayBillNo"
