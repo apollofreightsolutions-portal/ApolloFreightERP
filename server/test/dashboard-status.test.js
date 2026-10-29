@@ -1,76 +1,104 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { countBranchStatusUpdates } = require("../../web/dashboard-status.mjs");
+const { countLiveShipmentsByStatus } = require("../../web/dashboard-status.mjs");
+const statuses = ["Booked", "In-Transit", "Under-Clearance", "Delivered"];
+const dateForCreatedShipment = (row) => String(row.createdAt || row.created_at || "").slice(0, 10);
+const labelStatus = (value) => {
+  const key = String(value || "").trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+  return statuses.find((status) => status.toLowerCase().replace(/[-_]+/g, " ") === key) || "";
+};
+const today = "2026-10-29";
+function count(shipments, branches) {
+  return countLiveShipmentsByStatus({
+    shipments,
+    branches,
+    statuses,
+    today,
+    createdDateForShipment: dateForCreatedShipment,
+    labelStatus
+  });
+}
 
-const statuses = ["Booked", "In-Transit", "Delivered"];
-const dateForHistory = (value) => String(value || "").slice(0, 10);
-const labelStatus = (value) => statuses.find((status) => status.toLowerCase() === String(value || "").toLowerCase()) || "";
-test("common Kuwait and Dubai branch-name variants map to their Live filters", () => {
-  const counts = countBranchStatusUpdates({
-    shipments: [
-      { jobNo: "KWI-1001", branch: "Kuwait Branch" },
-      { jobNo: "DBX-1001", branch: "Dubai Branch" }
-    ],
-    history: [
-      { id: 1, jobNo: "KWI-1001", branch: "Kuwait", status: "In-Transit", updatedAt: "2026-10-29" },
-      { id: 2, jobNo: "DBX-1001", branch: "DBX", status: "Delivered", updatedAt: "2026-10-29" }
-    ],
-    branches: ["Kuwait HO", "Dubai"],
-    statuses,
-    today: "2026-10-29",
-    dateForHistory,
-    labelStatus
+test("Live counts today's shipments by their current status as users update them", () => {
+  const shipments = Array.from({ length: 5 }, (_, index) => ({
+    jobNo: `KWI-${index + 1}`,
+    branch: "Kuwait HO",
+    status: "Booked",
+    createdAt: `${today}T08:00:00.000Z`
+  }));
+  assert.deepEqual(count(shipments, ["Kuwait HO"]), {
+    Booked: 5,
+    "In-Transit": 0,
+    "Under-Clearance": 0,
+    Delivered: 0
   });
-  assert.deepEqual(counts, { Booked: 0, "In-Transit": 1, Delivered: 1 });
-});
-test("today's Live updates are counted independently for same job number in Kuwait and Dubai", () => {
-  const counts = countBranchStatusUpdates({
-    shipments: [
-      { jobNo: "AFS-1001", branch: "Kuwait HO" },
-      { jobNo: "AFS-1001", branch: "Dubai" }
-    ],
-    history: [
-      { id: 10, jobNo: "AFS-1001", branch: "Dubai", status: "Delivered", updatedAt: "2026-10-29" },
-      { id: 9, jobNo: "AFS-1001", branch: "Kuwait HO", status: "In-Transit", updatedAt: "2026-10-29" }
-    ],
-    branches: ["Dubai"],
-    statuses,
-    today: "2026-10-29",
-    dateForHistory,
-    labelStatus
-  });
-  assert.deepEqual(counts, { Booked: 0, "In-Transit": 0, Delivered: 1 });
-});
 
-test("legacy history without branch is ignored when that job number exists in multiple branches", () => {
-  const counts = countBranchStatusUpdates({
-    shipments: [
-      { jobNo: "AFS-1001", branch: "Kuwait HO" },
-      { jobNo: "AFS-1001", branch: "Dubai" }
-    ],
-    history: [{ id: 3, jobNo: "AFS-1001", status: "Delivered", updatedAt: "2026-10-29" }],
-    branches: ["Dubai", "Kuwait HO"],
-    statuses,
-    today: "2026-10-29",
-    dateForHistory,
-    labelStatus
+  shipments[0].status = "In-Transit";
+  shipments[1].status = "In-Transit";
+  assert.deepEqual(count(shipments, ["Kuwait HO"]), {
+    Booked: 3,
+    "In-Transit": 2,
+    "Under-Clearance": 0,
+    Delivered: 0
   });
-  assert.deepEqual(counts, { Booked: 0, "In-Transit": 0, Delivered: 0 });
+
+  shipments[0].status = "Delivered";
+  assert.deepEqual(count(shipments, ["Kuwait HO"]), {
+    Booked: 3,
+    "In-Transit": 1,
+    "Under-Clearance": 0,
+    Delivered: 1
+  });
 });
 
-test("legacy unambiguous history is retained, and later status wins per branch/job", () => {
-  const counts = countBranchStatusUpdates({
-    shipments: [{ jobNo: "AFS-2001", branch: "Branch 1" }],
-    history: [
-      { id: 2, jobNo: "AFS-2001", status: "Delivered", updatedAt: "2026-10-29" },
-      { id: 5, jobNo: "AFS-2001", status: "In-Transit", updatedAt: "2026-10-29" }
-    ],
-    branches: ["Kuwait HO"],
-    statuses,
-    today: "2026-10-29",
-    dateForHistory,
-    labelStatus
+test("Live counts are branch-filtered even when job numbers overlap", () => {
+  const shipments = [
+    { jobNo: "AFS-1001", branch: "Kuwait HO", status: "Booked", createdAt: `${today}T08:00:00Z` },
+    { jobNo: "AFS-1001", branch: "Dubai", status: "Delivered", createdAt: `${today}T08:05:00Z` }
+  ];
+  assert.deepEqual(count(shipments, ["Dubai"]), {
+    Booked: 0,
+    "In-Transit": 0,
+    "Under-Clearance": 0,
+    Delivered: 1
   });
-  assert.deepEqual(counts, { Booked: 0, "In-Transit": 1, Delivered: 0 });
+  assert.deepEqual(count(shipments, ["Kuwait HO"]), {
+    Booked: 1,
+    "In-Transit": 0,
+    "Under-Clearance": 0,
+    Delivered: 0
+  });
+});
+
+test("Live recognizes common branch labels and Under Clearance status spelling", () => {
+  const shipments = [
+    { jobNo: "KWI-1001", branch: "Kuwait Branch", status: "Under Clearance", createdAt: `${today}T08:00:00Z` },
+    { jobNo: "DBX-1001", branch: "Dubai Branch", status: "Delivered", createdAt: `${today}T08:00:00Z` }
+  ];
+  assert.deepEqual(count(shipments, ["Kuwait HO"]), {
+    Booked: 0,
+    "In-Transit": 0,
+    "Under-Clearance": 1,
+    Delivered: 0
+  });
+  assert.deepEqual(count(shipments, ["Dubai"]), {
+    Booked: 0,
+    "In-Transit": 0,
+    "Under-Clearance": 0,
+    Delivered: 1
+  });
+});
+
+test("shipments created on another day are not included in today's Live totals", () => {
+  const shipments = [
+    { jobNo: "KWI-1001", branch: "Kuwait HO", status: "Booked", createdAt: "2026-10-28T23:59:00Z" },
+    { jobNo: "KWI-1002", branch: "Kuwait HO", status: "Delivered", createdAt: `${today}T00:01:00Z` }
+  ];
+  assert.deepEqual(count(shipments, ["Kuwait HO"]), {
+    Booked: 0,
+    "In-Transit": 0,
+    "Under-Clearance": 0,
+    Delivered: 1
+  });
 });

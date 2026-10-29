@@ -1,4 +1,4 @@
-import { countBranchStatusUpdates } from "./dashboard-status.mjs";
+import { countLiveShipmentsByStatus } from "./dashboard-status.mjs";
 
 const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
@@ -5628,43 +5628,32 @@ function dashboardStatusEntryDate(value) {
   const parsed = new Date(timestamp);
   return Number.isNaN(parsed.getTime()) ? timestamp.slice(0, 10) : localDate(parsed);
 }
-function dashboardStatusEntryIsLater(candidate, current) {
-  const candidateId = Number(candidate?.id);
-  const currentId = Number(current?.id);
-  // Database status-history IDs are monotonic and remain the reliable ordering source when the
-  // user-entered status date has no time component (for example, two updates both dated today).
-  if (Number.isFinite(candidateId) && Number.isFinite(currentId) && candidateId !== currentId) return candidateId > currentId;
-  const candidateTime = Date.parse(String(candidate?.updatedAt || ""));
-  const currentTime = Date.parse(String(current?.updatedAt || ""));
-  if (Number.isFinite(candidateTime) && Number.isFinite(currentTime) && candidateTime !== currentTime) return candidateTime > currentTime;
-  return false;
+function dashboardShipmentCreatedDate(row) {
+  return dashboardStatusEntryDate(row?.createdAt || row?.created_at);
 }
-function dashboardStatusUpdateCounts(branches = dashboardStatusAllowedBranches()) {
-  // Count today's updates even when the shipment itself predates the reporting cutoff. Keep
-  // account/branch visibility and key events by branch + job number because branch sequences may overlap.
+function dashboardLiveShipmentCounts(branches = dashboardStatusAllowedBranches()) {
+  // Count each shipment created today once, according to its current status and own branch.
   const selectedBranches = new Set(branches.map(normalizeBranchName));
   const shipments = (state.shipments || []).filter((row) =>
     dashboardShipmentVisibleForLiveCount(row) && selectedBranches.has(dashboardBranchForShipment(row))
   );
-  return countBranchStatusUpdates({
+  return countLiveShipmentsByStatus({
     shipments,
-    history: state.shipmentStatusHistory || [],
     branches: [...selectedBranches],
     statuses: statusOptions(),
     today: today(),
     branchForShipment: dashboardBranchForShipment,
-    dateForHistory: dashboardStatusEntryDate,
-    labelStatus: dashboardStatusCountLabel,
-    isLater: dashboardStatusEntryIsLater
+    createdDateForShipment: dashboardShipmentCreatedDate,
+    labelStatus: dashboardStatusCountLabel
   });
 }
 function dashboardStatusUpdatesToolbox() {
-  const counts = dashboardStatusUpdateCounts();
+  const counts = dashboardLiveShipmentCounts();
   const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
   return `<button type="button" class="dashboard-status-toolbox" data-action="open-dashboard-status-updates"><span>Live</span><strong>${escapeHtml(total)}</strong></button>`;
 }
 function dashboardStatusCountRows(counts) {
-  return statusOptions().map((status) => `<div class="dashboard-status-count-row"><span>${escapeHtml(status)}</span><strong>${escapeHtml(counts[status])}</strong><small>today</small></div>`).join("");
+  return statusOptions().map((status) => `<div class="dashboard-status-count-row"><span>${escapeHtml(status)}</span><strong>${escapeHtml(counts[status])}</strong><small>shipments today</small></div>`).join("");
 }
 function dashboardStatusBranchFilterMarkup() {
   const allowed = new Set(dashboardStatusAllowedBranches());
@@ -5684,17 +5673,17 @@ async function openDashboardStatusUpdates() {
   const selectedBranches = () => Array.from(dialogBody.querySelectorAll("[data-status-branch]:checked"))
     .map((input) => input.dataset.statusBranch).filter((branch) => branch !== "Both");
   const renderCounts = () => {
-    const counts = dashboardStatusUpdateCounts(selectedBranches());
+    const counts = dashboardLiveShipmentCounts(selectedBranches());
     const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
     const totalNode = dialogBody.querySelector("[data-dashboard-status-total]");
     const rowsNode = dialogBody.querySelector("[data-dashboard-status-counts]");
-    if (totalNode) totalNode.textContent = `${total} live update${total === 1 ? "" : "s"} today`;
+    if (totalNode) totalNode.textContent = `${total} shipment${total === 1 ? "" : "s"} created today`;
     if (rowsNode) rowsNode.innerHTML = dashboardStatusCountRows(counts);
   };
   openDialog({
-    title: "Today's Shipment Status Updates",
+    title: "Today's Live Shipments by Status",
     typeLabel: "Live today",
-    body: `${dashboardStatusBranchFilterMarkup()}<p class="empty-state">Counts are based on live status-history updates recorded today for shipments visible to your account.</p><div class="dashboard-status-counts" data-dashboard-status-counts>${dashboardStatusCountRows(dashboardStatusUpdateCounts())}</div><p class="dashboard-status-total" data-dashboard-status-total></p>`,
+    body: `${dashboardStatusBranchFilterMarkup()}<p class="empty-state">Each shipment created today is counted once under its current status and its own branch. Changing a status moves that shipment between counts.</p><div class="dashboard-status-counts" data-dashboard-status-counts>${dashboardStatusCountRows(dashboardLiveShipmentCounts())}</div><p class="dashboard-status-total" data-dashboard-status-total></p>`,
     saveLabel: "Close",
     singleColumn: true,
     onSave() { recordDialog.close(); },
