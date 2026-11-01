@@ -31,7 +31,7 @@ function bumpTrailingNumber(value) {
 }
 
 function collisionError(airwayBillNo, branch) {
-  const error = new Error(`Airway Bill ${airwayBillNo} is already used in ${branch}. Enter a different AWB; no number was changed automatically.`);
+  const error = new Error(`Could not allocate a unique Airway Bill number in ${branch} after several retries. Please try again.`);
   error.status = 409;
   error.airwayBillNo = airwayBillNo;
   error.branch = branch;
@@ -46,7 +46,8 @@ function collisionError(airwayBillNo, branch) {
 async function reserveUniqueAirwayBill(client, {
   branch,
   airwayBillNo,
-  jobNo
+  jobNo,
+  maxAttempts = 12
 } = {}) {
   const branchKey = normalizeBranchKey(branch);
   const originalAirwayBillNo = String(airwayBillNo || "").trim();
@@ -78,51 +79,56 @@ async function reserveUniqueAirwayBill(client, {
     if (firstError) throw firstError;
   };
 
+  const heldLockSet = new Set();
+  let candidate = originalAirwayBillNo;
   try {
-    const candidateKey = originalAirwayBillKey;
-    const lockKey = `apollo:shipment-awb:${JSON.stringify([branchKey, candidateKey])}`;
-    await client.query("select pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
-    heldLockKeys.push(lockKey);
-    // The AWB can be reused in another branch, but if it is tied to Job No the Job No namespace
-    // is still globally unique. Reject that collision instead of changing the user's AWB.
-    if (jobNoSharesAwbSequence) {
-      const jobLockKey = `apollo:shipment-job-no:${candidateKey}`;
-      await client.query("select pg_advisory_lock(hashtextextended($1, 0))", [jobLockKey]);
-      heldLockKeys.push(jobLockKey);
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const candidateKey = normalizeAirwayBillKey(candidate);
+      const lockKey = `apollo:shipment-awb:${JSON.stringify([branchKey, candidateKey])}`;
+      if (!heldLockSet.has(lockKey)) {
+        await client.query("select pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+        heldLockKeys.push(lockKey);
+        heldLockSet.add(lockKey);
+      }
+      // When Job No is intentionally tied to AWB, protect its global namespace too. A conflict
+      // only advances the candidate within this branch; an AWB used in another branch is allowed.
+      if (jobNoSharesAwbSequence) {
+        const jobLockKey = `apollo:shipment-job-no:${candidateKey}`;
+        if (!heldLockSet.has(jobLockKey)) {
+          await client.query("select pg_advisory_lock(hashtextextended($1, 0))", [jobLockKey]);
+          heldLockKeys.push(jobLockKey);
+          heldLockSet.add(jobLockKey);
+        }
+      }
+
+      const existing = await client.query(
+        `select
+           exists (
+             select 1 from shipments s
+             where ${BRANCH_KEY_SQL} = $1
+               and lower(trim(s.airway_bill_no)) = $2
+           ) as awb_exists,
+           exists (
+             select 1 from shipments s
+             where $3::boolean and s.job_no = $4
+           ) as job_no_exists`,
+        [branchKey, candidateKey, Boolean(jobNoSharesAwbSequence), candidate]
+      );
+      const awbExists = existing.rows[0]?.awb_exists === true;
+      const jobNoExists = existing.rows[0]?.job_no_exists === true;
+      if (!awbExists && !jobNoExists) {
+        return {
+          airwayBillNo: candidate,
+          jobNo: jobNoSharesAwbSequence && candidateKey !== originalAirwayBillKey ? candidate : originalJobNo,
+          changed: candidateKey !== originalAirwayBillKey,
+          release
+        };
+      }
+      const nextCandidate = bumpTrailingNumber(candidate);
+      if (normalizeAirwayBillKey(nextCandidate) === candidateKey) break;
+      candidate = nextCandidate;
     }
-
-    const existing = await client.query(
-      `select
-         exists (
-           select 1 from shipments s
-           where ${BRANCH_KEY_SQL} = $1
-             and lower(trim(s.airway_bill_no)) = $2
-         ) as awb_exists,
-         exists (
-           select 1 from shipments s
-           where $3::boolean and s.job_no = $4
-         ) as job_no_exists`,
-      [branchKey, candidateKey, Boolean(jobNoSharesAwbSequence), originalJobNo]
-    );
-    const awbExists = existing.rows[0]?.awb_exists === true;
-    const jobNoExists = existing.rows[0]?.job_no_exists === true;
-
-    if (awbExists) throw collisionError(originalAirwayBillNo, branchKey);
-    if (jobNoExists) {
-      const error = new Error(`Job No ${originalJobNo} is already used. Enter a different Job No; the Airway Bill number was not changed.`);
-      error.status = 409;
-      error.jobNo = originalJobNo;
-      error.airwayBillNo = originalAirwayBillNo;
-      error.branch = branchKey;
-      throw error;
-    }
-
-    return {
-      airwayBillNo: originalAirwayBillNo,
-      jobNo: originalJobNo,
-      changed: false,
-      release
-    };
+    throw collisionError(candidate, branchKey);
   } catch (error) {
     try { await release(); } catch {}
     throw error;

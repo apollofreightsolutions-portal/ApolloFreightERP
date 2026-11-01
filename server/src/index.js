@@ -4350,7 +4350,7 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
   const note = String(options.notes || `AWB group synchronization for ${normalizedAwb}`).trim();
   const found = await client.query(
     `select * from shipments s
-      where lower(trim(s.airway_bill_no)) = lower(trim($1))
+      where lower(trim(coalesce(nullif(trim(s.airway_bill_no), ''), replace(s.job_no, 'AFS', 'AWB')))) = lower(trim($1))
       order by s.job_no for update`,
     [normalizedAwb]
   );
@@ -4371,7 +4371,7 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
       row = saved.rows[0] || current;
       await client.query(
         "insert into shipment_status_history (job_no, branch, status, pod_status, invoice_status, notes, updated_by, updated_at) values ($1, $2, $3, $4, $5, $6, $7, $8)",
-        [row.job_no, row.branch || branch, targetStatus, targetPodStatus, row.invoice_status || "", note, updatedBy, updatedAt]
+        [row.job_no, row.branch || "", targetStatus, targetPodStatus, row.invoice_status || "", note, updatedBy, updatedAt]
       );
     }
     updated.push(row);
@@ -4387,7 +4387,7 @@ async function latestAirwayBillState(client, airwayBillNo, excludeJobNo = "") {
        select h.status, h.pod_status, h.updated_at, 1 as source_priority, h.id as source_id
        from shipment_status_history h
        join shipments s on lower(trim(s.job_no)) = lower(trim(h.job_no))
-       where lower(trim(s.airway_bill_no)) = lower(trim($1))
+       where lower(trim(coalesce(nullif(trim(s.airway_bill_no), ''), replace(s.job_no, 'AFS', 'AWB')))) = lower(trim($1))
          and ($2 = '' or s.job_no <> $2)
          and (trim(coalesce(h.branch, '')) = '' or case
            when lower(btrim(coalesce(h.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
@@ -4401,7 +4401,7 @@ async function latestAirwayBillState(client, airwayBillNo, excludeJobNo = "") {
        union all
        select s.status, s.pod_status, s.updated_at, 0 as source_priority, s.id as source_id
        from shipments s
-       where lower(trim(s.airway_bill_no)) = lower(trim($1))
+       where lower(trim(coalesce(nullif(trim(s.airway_bill_no), ''), replace(s.job_no, 'AFS', 'AWB')))) = lower(trim($1))
          and ($2 = '' or s.job_no <> $2)
      )
      select status, pod_status
@@ -4414,7 +4414,9 @@ async function latestAirwayBillState(client, airwayBillNo, excludeJobNo = "") {
 }
 
 async function synchronizeShipmentAirwayBill(row, options = {}) {
-  const airwayBillNo = normalizeAirwayBillNo(row?.airway_bill_no || row?.airwayBillNo);
+  const airwayBillNo = normalizeAirwayBillNo(
+    row?.airway_bill_no || row?.airwayBillNo || row?.job_no?.replace("AFS", "AWB") || row?.jobNo?.replace("AFS", "AWB")
+  );
   if (!airwayBillNo) return [row];
   return withDatabaseTransaction(async (client) => {
     let syncStatus = options.syncStatus === true;
@@ -4647,7 +4649,7 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
     const rows = await withDatabaseTransaction(async (client) => {
       const found = await client.query(
         `select * from shipments s
-          where lower(trim(s.airway_bill_no)) = lower(trim($1))
+          where lower(trim(coalesce(nullif(trim(s.airway_bill_no), ''), replace(s.job_no, 'AFS', 'AWB')))) = lower(trim($1))
           order by s.job_no for update`,
         [airwayBillNo]
       );

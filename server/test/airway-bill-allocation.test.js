@@ -83,27 +83,25 @@ test("normalizes branch aliases and increments the longest serial digit run", ()
   assert.equal(bumpTrailingNumber("AFS262035"), "AFS262036");
 });
 
-test("simultaneous same-branch submissions allow one save and reject the duplicate without renumbering", async () => {
+test("simultaneous same-branch submissions get distinct AWBs before insert", async () => {
   const database = new FakeDatabase();
-  const results = await Promise.allSettled([
+  const [first, second] = await Promise.all([
     createWithReservation(database, { branch: "Kuwait HO", airwayBillNo: "AFS262035", jobNo: "AFS-1001" }),
     createWithReservation(database, { branch: "Branch 1", airwayBillNo: "AFS262035", jobNo: "AFS-1002" })
   ]);
-  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-  assert.equal(results.filter((result) => result.status === "rejected")[0].reason.status, 409);
-  assert.equal(database.rows.length, 1);
-  assert.equal(database.rows[0].airwayBillNo, "AFS262035");
+  assert.deepEqual([first.airwayBillNo, second.airwayBillNo].sort(), ["AFS262035", "AFS262036"]);
+  assert.equal(database.rows.length, 2);
 });
 
-test("simultaneous same-branch submissions with tied Job No and AWB do not auto-assign another number", async () => {
+test("simultaneous same-branch submissions with tied Job No and AWB get distinct numbers", async () => {
   const database = new FakeDatabase();
-  const results = await Promise.allSettled([
+  const [first, second] = await Promise.all([
     createWithReservation(database, { branch: "Dubai", airwayBillNo: "AFS262035", jobNo: "AFS262035" }),
     createWithReservation(database, { branch: "Dubai 2", airwayBillNo: "AFS262035", jobNo: "AFS262035" })
   ]);
-  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-  assert.equal(results.filter((result) => result.status === "rejected")[0].reason.status, 409);
-  assert.equal(database.rows.length, 1);
+  assert.deepEqual([first.airwayBillNo, second.airwayBillNo].sort(), ["AFS262035", "AFS262036"]);
+  assert.deepEqual([first.jobNo, second.jobNo].sort(), ["AFS262035", "AFS262036"]);
+  assert.equal(database.rows.length, 2);
 });
 
 test("the same AWB may be independently allocated in a different branch", async () => {
@@ -116,35 +114,40 @@ test("the same AWB may be independently allocated in a different branch", async 
   assert.equal(dubai.airwayBillNo, "AFS262035");
 });
 
-test("cross-branch AWB reuse keeps the AWB; a globally duplicate tied Job No is rejected", async () => {
+test("tied AWB-entry job numbers stay unique across branches during concurrent submissions", async () => {
   const database = new FakeDatabase();
-  const results = await Promise.allSettled([
+  const [kuwait, dubai] = await Promise.all([
     createWithReservation(database, { branch: "Kuwait HO", airwayBillNo: "AFS262035", jobNo: "AFS262035" }),
     createWithReservation(database, { branch: "Dubai", airwayBillNo: "AFS262035", jobNo: "AFS262035" })
   ]);
-  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-  const rejected = results.find((result) => result.status === "rejected");
-  assert.equal(rejected.reason.status, 409);
-  assert.match(rejected.reason.message, /Job No .* already used/);
-  assert.equal(database.rows.length, 1);
-  assert.equal(database.rows[0].airwayBillNo, "AFS262035");
+  assert.equal(new Set([kuwait.jobNo, dubai.jobNo]).size, 2);
+  assert.equal(new Set([kuwait.airwayBillNo, dubai.airwayBillNo]).size, 2);
+  assert.equal(database.rows.length, 2);
 });
 
-test("a fetched AWB already used in the target branch is rejected without changing its number", async () => {
+test("a fetched existing AWB advances to the next available number in the same branch", async () => {
   const database = new FakeDatabase([{ branch: "Kuwait HO", airwayBillNo: "AFS262035", jobNo: "KWI-1" }]);
-  await assert.rejects(createWithReservation(database, {
+  const result = await createWithReservation(database, {
     branch: "Kuwait HO",
     airwayBillNo: "AFS262035",
     jobNo: "KWI-2"
-  }), { status: 409, airwayBillNo: "AFS262035", branch: "kuwait ho" });
-  assert.equal(database.rows.length, 1);
+  });
+  assert.equal(result.airwayBillNo, "AFS262036");
+  assert.equal(result.changed, true);
 });
 
-test("an AWB-entry Job No collision is rejected without changing the AWB", async () => {
+test("an AWB-entry job number advances with its AWB when the branch value collides", async () => {
   const database = new FakeDatabase([{ branch: "Kuwait HO", airwayBillNo: "AFS262035", jobNo: "AFS262035" }]);
-  await assert.rejects(reserveUniqueAirwayBill(database.client(), {
+  const reservation = await reserveUniqueAirwayBill(database.client(), {
     branch: "Kuwait HO",
     airwayBillNo: "AFS262035",
     jobNo: "AFS262035"
-  }), (error) => error.status === 409 && error.airwayBillNo === "AFS262035");
+  });
+  try {
+    assert.equal(reservation.airwayBillNo, "AFS262036");
+    assert.equal(reservation.jobNo, "AFS262036");
+    assert.equal(reservation.changed, true);
+  } finally {
+    await reservation.release();
+  }
 });
