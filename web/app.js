@@ -1,5 +1,5 @@
 import "./shipment-reporting.js?v=apollo-v292-20261027";
-import "./app-runtime.js?v=apollo-v302-global-awb-fetch-20261101";
+import "./app-runtime.js?v=apollo-v303-no-awb-auto-increment-20261101";
 import "./hr-workflow-links.js?v=apollo-v241-notify-20261016-1";
 
 import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {

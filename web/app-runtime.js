@@ -7925,31 +7925,6 @@ function duplicateAirwayBillExists(awbNo, branch, excludeJobNo = "") {
   });
 }
 
-function bumpAirwayBillNumber(value) {
-  const text = String(value || "");
-  const matches = [...text.matchAll(/\d+/g)];
-  if (!matches.length) return `${text}-1`;
-  const target = matches.reduce((longest, current) => (current[0].length > longest[0].length ? current : longest), matches[0]);
-  const start = target.index;
-  const end = start + target[0].length;
-  const next = String(Number(target[0]) + 1).padStart(target[0].length, "0");
-  return text.slice(0, start) + next + text.slice(end);
-}
-
-function nextAvailableAirwayBillNumber(awbNo, branch, { excludeJobNo = "", tiedJobNo = false } = {}) {
-  let candidate = String(awbNo || "").trim();
-  if (!candidate) return candidate;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const awbIsFree = !duplicateAirwayBillExists(candidate, branch, excludeJobNo);
-    const tiedJobIsFree = !tiedJobNo || !duplicateRecordExists("shipment", candidate);
-    if (awbIsFree && tiedJobIsFree) return candidate;
-    const next = bumpAirwayBillNumber(candidate);
-    if (next.toLowerCase() === candidate.toLowerCase()) break;
-    candidate = next;
-  }
-  return "";
-}
-
 function notifyDuplicateAirwayBill(awbNo, branch) {
   const message = `Airway Bill ${awbNo} is already used by another shipment in ${branch || "this branch"}. Enter a different AWB number.`;
   notifyDenied("Airway Bill already used", message);
@@ -13708,18 +13683,12 @@ async function createShipmentDraft(data) {
     notifyDenied("Draft not saved", "A job number is required, even for a draft.");
     return false;
   }
-  const requestedJobNo = String(data.jobNo || "").trim();
   const requestedAwb = String(data.airwayBillNo || data.jobNo?.replace("AFS", "AWB") || "").trim();
-  const tiedJobNo = requestedJobNo && requestedJobNo.toLowerCase() === requestedAwb.toLowerCase();
-  if (requestedAwb) {
-    const availableAwb = nextAvailableAirwayBillNumber(requestedAwb, data.branch, { tiedJobNo });
-    if (!availableAwb) {
-      notifyDenied("Draft not saved", `Could not assign a free Airway Bill number in ${data.branch || "this branch"}. Please try again.`);
-      return false;
-    }
-    data.airwayBillNo = availableAwb;
-    if (tiedJobNo) data.jobNo = availableAwb;
+  if (requestedAwb && duplicateAirwayBillExists(requestedAwb, data.branch)) {
+    notifyDuplicateAirwayBill(requestedAwb, data.branch);
+    return false;
   }
+  if (requestedAwb) data.airwayBillNo = requestedAwb;
   if (duplicateRecordExists("shipment", data.jobNo)) {
     notifyDuplicate(data.jobNo);
     return false;
@@ -13743,9 +13712,7 @@ async function createShipmentDraft(data) {
   const finalRecord = typeof saved === "object" ? apiShipment(saved) : record;
   state.shipments.unshift(finalRecord);
   addHistory("Saved shipment as draft", finalRecord.jobNo);
-  const finalAwb = String(finalRecord.airwayBillNo || "").trim();
-  const awbAdjusted = requestedAwb && finalAwb && requestedAwb.toLowerCase() !== finalAwb.toLowerCase();
-  notifySuccess("Draft saved", `${finalRecord.jobNo} was saved as a draft. Open it anytime from the Shipment Register to continue.${awbAdjusted ? ` The requested AWB ${requestedAwb} was already used in ${data.branch || "this branch"}; the next number ${finalAwb} was assigned.` : ""}`);
+  notifySuccess("Draft saved", `${finalRecord.jobNo} was saved as a draft. Open it anytime from the Shipment Register to continue.`);
   recordDialog.close();
   render();
   return true;
@@ -13756,16 +13723,11 @@ async function createShipment(data) {
   data.chargeableKg = effectiveChargeableWeightForShipment(data);
   const requestedJobNo = String(data.jobNo || "").trim();
   const requestedAwb = String(data.airwayBillNo || data.jobNo?.replace("AFS", "AWB") || "").trim();
-  const tiedJobNo = requestedJobNo && requestedJobNo.toLowerCase() === requestedAwb.toLowerCase();
-  if (requestedAwb) {
-    const availableAwb = nextAvailableAirwayBillNumber(requestedAwb, data.branch, { tiedJobNo });
-    if (!availableAwb) {
-      notifyDenied("Shipment not saved", `Could not assign a free Airway Bill number in ${data.branch || "this branch"}. Please try again.`);
-      return false;
-    }
-    data.airwayBillNo = availableAwb;
-    if (tiedJobNo) data.jobNo = availableAwb;
+  if (requestedAwb && duplicateAirwayBillExists(requestedAwb, data.branch)) {
+    notifyDuplicateAirwayBill(requestedAwb, data.branch);
+    return false;
   }
+  if (requestedAwb) data.airwayBillNo = requestedAwb;
   if (duplicateRecordExists("shipment", data.jobNo)) {
     notifyDuplicate(data.jobNo);
     return false;
@@ -13801,14 +13763,11 @@ async function createShipment(data) {
   }
   const finalRecord = typeof saved === "object" ? apiShipment(saved) : record;
   const jobNoAdjusted = finalRecord.jobNo && String(finalRecord.jobNo).trim().toLowerCase() !== requestedJobNo.toLowerCase();
-  const finalAwb = String(finalRecord.airwayBillNo || "").trim();
-  const awbAdjusted = requestedAwb && finalAwb && requestedAwb.toLowerCase() !== finalAwb.toLowerCase();
   state.shipments.unshift(finalRecord);
   await createShipmentDocument(data, finalRecord.jobNo);
   addHistory("Created shipment", finalRecord.jobNo);
   const adjustments = [];
   if (jobNoAdjusted) adjustments.push(`Job number ${requestedJobNo} was already used, so ${finalRecord.jobNo} was assigned.`);
-  if (awbAdjusted) adjustments.push(`AWB ${requestedAwb} was already used in ${data.branch || "this branch"}, so the next number ${finalAwb} was assigned before saving.`);
   notifySuccess("Shipment created", `${finalRecord.jobNo} was saved successfully.${adjustments.length ? ` ${adjustments.join(" ")}` : ""}`);
   return true;
 }
