@@ -9769,10 +9769,10 @@ function fetchAwbAndRefillForm() {
   }
 
   const branch = normalizeBranchName(dialogValue("branch") || defaultUserBranch());
-  const { shipment: latestMatch, matches } = latestShipmentForAirwayBill(state.shipments, typedValue, branch);
+  const { shipment: latestMatch, matches, duplicateWithinBranch } = latestShipmentForAirwayBill(state.shipments, typedValue);
 
   if (!latestMatch) {
-    notifyDenied("Airway Bill not found", `No saved shipment with Airway Bill "${typedValue}" was found in ${branch}. The lookup uses the AWB field only, not a matching Job No.`);
+    notifyDenied("Airway Bill not found", `No saved shipment with Airway Bill "${typedValue}" was found in any branch. The lookup uses the AWB field only, not a matching Job No.`);
     return;
   }
 
@@ -9783,9 +9783,11 @@ function fetchAwbAndRefillForm() {
     dialogValue("shipmentService"),
     dialogValue("shipmentDirection")
   );
-  notifySuccess("Data fetched", matches.length > 1
-    ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}. A same-branch duplicate already exists in saved data; ask an administrator to review it.`
-    : `Form filled from the latest saved shipment for Airway Bill ${typedValue}.`);
+  notifySuccess("Data fetched", duplicateWithinBranch
+    ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}. Existing same-branch duplicate records were found and should be reviewed.`
+    : matches > 1
+      ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}, searched across all branches.`
+      : `Form filled from the latest saved shipment for Airway Bill ${typedValue}.`);
 }
 
 function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "", direction = "") {

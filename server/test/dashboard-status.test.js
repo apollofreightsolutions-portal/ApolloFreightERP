@@ -150,6 +150,7 @@ test("AWB lookup uses exact AWB in selected branch and returns the latest saved 
   const result = latestShipmentForAirwayBill(shipments, " AWB-14367 ", "Kuwait");
   assert.equal(result.shipment.jobNo, "KWI-NEW");
   assert.equal(result.matches, 2);
+  assert.equal(result.duplicateWithinBranch, true);
 });
 
 test("AWB lookup does not match by Job No or silently fetch another branch", () => {
@@ -157,7 +158,20 @@ test("AWB lookup does not match by Job No or silently fetch another branch", () 
     { jobNo: "AWB-14367", airwayBillNo: "DIFFERENT", branch: "Kuwait HO" },
     { jobNo: "DBX-1", airwayBillNo: "AWB-14367", branch: "Dubai" }
   ];
-  assert.deepEqual(latestShipmentForAirwayBill(shipments, "AWB-14367", "Kuwait"), { shipment: null, matches: 0 });
+  assert.deepEqual(latestShipmentForAirwayBill(shipments, "AWB-14367", "Kuwait"), {
+    shipment: null,
+    matches: 0,
+    duplicateWithinBranch: false
+  });
+});
+
+test("global AWB fetch returns the newest exact match across branches without treating it as a same-branch duplicate", () => {
+  const kuwait = { jobNo: "KWI-1", airwayBillNo: "AWB-14367", branch: "Kuwait HO", updatedAt: "2026-10-30T08:00:00Z" };
+  const dubai = { jobNo: "DBX-1", airwayBillNo: "AWB-14367", branch: "Dubai", updatedAt: "2026-11-01T08:00:00Z" };
+  const result = latestShipmentForAirwayBill([kuwait, dubai], "AWB-14367");
+  assert.equal(result.shipment.jobNo, "DBX-1");
+  assert.equal(result.matches, 2);
+  assert.equal(result.duplicateWithinBranch, false);
 });
 
 test("AWB status group includes exact matches from both branches", () => {

@@ -8,10 +8,10 @@ export function normalizeDashboardBranch(value) {
 export function latestShipmentForAirwayBill(shipments = [], airwayBillNo = "", branch = "") {
   const awbKey = String(airwayBillNo || "").trim().toLowerCase();
   const branchKey = normalizeDashboardBranch(branch).toLowerCase();
-  if (!awbKey || !branchKey) return { shipment: null, matches: 0 };
+  if (!awbKey) return { shipment: null, matches: 0, duplicateWithinBranch: false };
   const matches = shipments.filter((row) =>
     String(row?.airwayBillNo || row?.airway_bill_no || "").trim().toLowerCase() === awbKey &&
-    normalizeDashboardBranch(row?.branch).toLowerCase() === branchKey
+    (!branchKey || normalizeDashboardBranch(row?.branch).toLowerCase() === branchKey)
   );
   const timestamp = (value) => {
     const parsed = Date.parse(value || "");
@@ -22,7 +22,16 @@ export function latestShipmentForAirwayBill(shipments = [], airwayBillNo = "", b
     timestamp(right.createdAt || right.created_at) - timestamp(left.createdAt || left.created_at) ||
     String(right.jobNo || right.job_no || "").localeCompare(String(left.jobNo || left.job_no || ""))
   );
-  return { shipment: matches[0] || null, matches: matches.length };
+  const countsByBranch = new Map();
+  for (const row of matches) {
+    const key = normalizeDashboardBranch(row?.branch).toLowerCase();
+    countsByBranch.set(key, (countsByBranch.get(key) || 0) + 1);
+  }
+  return {
+    shipment: matches[0] || null,
+    matches: matches.length,
+    duplicateWithinBranch: [...countsByBranch.values()].some((count) => count > 1)
+  };
 }
 
 export function shipmentsForAirwayBill(shipments = [], airwayBillNo = "") {
