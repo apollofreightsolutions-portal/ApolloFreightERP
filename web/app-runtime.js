@@ -1,4 +1,4 @@
-import { countLiveShipmentsByStatus } from "./dashboard-status.mjs";
+import { countLiveShipmentsByStatus, latestShipmentForAirwayBill } from "./dashboard-status.mjs";
 
 const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
@@ -3261,6 +3261,7 @@ function apiShipment(row) {
   );
   const shipmentMeta = parseJsonMeta(row.notes || "{}");
   item.createdAt = row.created_at || '';
+  item.updatedAt = row.updated_at || row.created_at || '';
   item.reportingMode = row.reporting_mode || 'auto';
   item.shipmentVia = shipmentMeta.shipmentVia || shipmentMeta.transportMode || "";
   item.transporter = row.transporter || "";
@@ -7910,9 +7911,8 @@ function notifyDuplicateCustomer() {
   notifyDenied("Duplicate customer", "Another customer already exists with this same name and email or mobile number.");
 }
 
-// Standalone Airway Bill allocations are branch-scoped. The explicit "new shipment from existing
-// AWB" workflow remains the only intentional same-branch group join. excludeJobNo lets an edit
-// compare against every OTHER shipment without flagging itself as a duplicate of its current AWB.
+// Airway Bill numbers must be unique within a branch. excludeJobNo lets an edit compare against
+// every OTHER shipment without flagging itself as a duplicate of its current AWB.
 function duplicateAirwayBillExists(awbNo, branch, excludeJobNo = "") {
   const normalizedAwb = String(awbNo || "").trim().toLowerCase();
   if (!normalizedAwb) return false;
@@ -9768,24 +9768,24 @@ function fetchAwbAndRefillForm() {
     return;
   }
 
-  const match = state.shipments.find((row) =>
-    String(row.airwayBillNo || "").trim().toLowerCase() === query ||
-    String(row.jobNo || "").trim().toLowerCase() === query
-  );
+  const branch = normalizeBranchName(dialogValue("branch") || defaultUserBranch());
+  const { shipment: latestMatch, matches } = latestShipmentForAirwayBill(state.shipments, typedValue, branch);
 
-  if (!match) {
-    notifyDenied("Airway Bill not found", `No shipment found matching Airway Bill "${typedValue}" in any branch.`);
+  if (!latestMatch) {
+    notifyDenied("Airway Bill not found", `No saved shipment with Airway Bill "${typedValue}" was found in ${branch}. The lookup uses the AWB field only, not a matching Job No.`);
     return;
   }
 
   openShipmentFromAirwayBill(
-    match,
+    latestMatch,
     typedValue,
-    dialogValue("branch"),
+    branch,
     dialogValue("shipmentService"),
     dialogValue("shipmentDirection")
   );
-  notifySuccess("Data fetched", `Form filled from Airway Bill ${typedValue}.`);
+  notifySuccess("Data fetched", matches.length > 1
+    ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}. A same-branch duplicate already exists in saved data; ask an administrator to review it.`
+    : `Form filled from the latest saved shipment for Airway Bill ${typedValue}.`);
 }
 
 function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "", direction = "") {

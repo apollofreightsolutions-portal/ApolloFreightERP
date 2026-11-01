@@ -5,6 +5,26 @@ export function normalizeDashboardBranch(value) {
   return String(value || "").trim();
 }
 
+export function latestShipmentForAirwayBill(shipments = [], airwayBillNo = "", branch = "") {
+  const awbKey = String(airwayBillNo || "").trim().toLowerCase();
+  const branchKey = normalizeDashboardBranch(branch).toLowerCase();
+  if (!awbKey || !branchKey) return { shipment: null, matches: 0 };
+  const matches = shipments.filter((row) =>
+    String(row?.airwayBillNo || row?.airway_bill_no || "").trim().toLowerCase() === awbKey &&
+    normalizeDashboardBranch(row?.branch).toLowerCase() === branchKey
+  );
+  const timestamp = (value) => {
+    const parsed = Date.parse(value || "");
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  matches.sort((left, right) =>
+    timestamp(right.updatedAt || right.updated_at) - timestamp(left.updatedAt || left.updated_at) ||
+    timestamp(right.createdAt || right.created_at) - timestamp(left.createdAt || left.created_at) ||
+    String(right.jobNo || right.job_no || "").localeCompare(String(left.jobNo || left.job_no || ""))
+  );
+  return { shipment: matches[0] || null, matches: matches.length };
+}
+
 export function countLiveShipmentsByStatus({
   shipments = [],
   history = [],

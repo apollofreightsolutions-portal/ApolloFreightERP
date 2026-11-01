@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { countLiveShipmentsByStatus } = require("../../web/dashboard-status.mjs");
+const { countLiveShipmentsByStatus, latestShipmentForAirwayBill } = require("../../web/dashboard-status.mjs");
 const statuses = ["Booked", "In-Transit", "Under-Clearance", "Delivered"];
 const today = "2026-10-29";
 const dateForCreatedShipment = (row) => String(row.createdAt || row.created_at || "").slice(0, 10);
@@ -138,4 +138,24 @@ test("legacy history without branch is not attributed when a job number exists i
     "Under-Clearance": 0,
     Delivered: 0
   });
+});
+
+test("AWB lookup uses exact AWB in selected branch and returns the latest saved record", () => {
+  const shipments = [
+    { jobNo: "KWI-OLD", airwayBillNo: "AWB-14367", branch: "Kuwait HO", updatedAt: "2026-10-30T08:00:00Z" },
+    { jobNo: "KWI-NEW", airwayBillNo: "AWB-14367", branch: "Branch 1", updatedAt: "2026-10-31T08:00:00Z" },
+    { jobNo: "AWB-14367", airwayBillNo: "OTHER-AWB", branch: "Kuwait HO", updatedAt: "2026-11-01T08:00:00Z" },
+    { jobNo: "DBX-NEW", airwayBillNo: "AWB-14367", branch: "Dubai", updatedAt: "2026-11-01T09:00:00Z" }
+  ];
+  const result = latestShipmentForAirwayBill(shipments, " AWB-14367 ", "Kuwait");
+  assert.equal(result.shipment.jobNo, "KWI-NEW");
+  assert.equal(result.matches, 2);
+});
+
+test("AWB lookup does not match by Job No or silently fetch another branch", () => {
+  const shipments = [
+    { jobNo: "AWB-14367", airwayBillNo: "DIFFERENT", branch: "Kuwait HO" },
+    { jobNo: "DBX-1", airwayBillNo: "AWB-14367", branch: "Dubai" }
+  ];
+  assert.deepEqual(latestShipmentForAirwayBill(shipments, "AWB-14367", "Kuwait"), { shipment: null, matches: 0 });
 });
