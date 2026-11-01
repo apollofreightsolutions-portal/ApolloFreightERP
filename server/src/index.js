@@ -4336,10 +4336,9 @@ function normalizeAirwayBillNo(value) {
   return String(value || "").trim();
 }
 
-async function synchronizeAirwayBillGroup(client, airwayBillNo, branch, options = {}) {
+async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
   const normalizedAwb = normalizeAirwayBillNo(airwayBillNo);
   if (!normalizedAwb) return [];
-  const branchKey = normalizeBranchKey(branch);
   const syncStatus = options.syncStatus === true;
   const syncPodStatus = options.syncPodStatus === true;
   const nextStatus = String(options.status || "").trim();
@@ -4351,13 +4350,9 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, branch, options 
   const note = String(options.notes || `AWB group synchronization for ${normalizedAwb}`).trim();
   const found = await client.query(
     `select * from shipments s
-      where case
-        when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
-        when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
-        else lower(btrim(coalesce(s.branch, '')))
-      end = $1 and lower(trim(s.airway_bill_no)) = lower(trim($2))
+      where lower(trim(s.airway_bill_no)) = lower(trim($1))
       order by s.job_no for update`,
-    [branchKey, normalizedAwb]
+    [normalizedAwb]
   );
   const updated = [];
   for (const current of found.rows) {
@@ -4384,44 +4379,36 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, branch, options 
   return updated;
 }
 
-async function latestAirwayBillState(client, airwayBillNo, branch, excludeJobNo = "") {
+async function latestAirwayBillState(client, airwayBillNo, excludeJobNo = "") {
   const normalizedAwb = normalizeAirwayBillNo(airwayBillNo);
   if (!normalizedAwb) return null;
-  const branchKey = normalizeBranchKey(branch);
   const result = await client.query(
     `with awb_events as (
        select h.status, h.pod_status, h.updated_at, 1 as source_priority, h.id as source_id
        from shipment_status_history h
        join shipments s on lower(trim(s.job_no)) = lower(trim(h.job_no))
        where lower(trim(s.airway_bill_no)) = lower(trim($1))
-         and case
-           when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
-           when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
-           else lower(btrim(coalesce(s.branch, '')))
-         end = $2
-         and ($3 = '' or s.job_no <> $3)
-         and (case
+         and ($2 = '' or s.job_no <> $2)
+         and (trim(coalesce(h.branch, '')) = '' or case
            when lower(btrim(coalesce(h.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
            when lower(btrim(coalesce(h.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
            else lower(btrim(coalesce(h.branch, '')))
-         end = $2 or (trim(coalesce(h.branch, '')) = '' and
-           (select count(distinct lower(trim(sx.branch))) from shipments sx where lower(trim(sx.job_no)) = lower(trim(h.job_no))) = 1))
+         end = case
+           when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
+           when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
+           else lower(btrim(coalesce(s.branch, '')))
+         end)
        union all
        select s.status, s.pod_status, s.updated_at, 0 as source_priority, s.id as source_id
        from shipments s
        where lower(trim(s.airway_bill_no)) = lower(trim($1))
-         and case
-           when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
-           when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
-           else lower(btrim(coalesce(s.branch, '')))
-         end = $2
-         and ($3 = '' or s.job_no <> $3)
+         and ($2 = '' or s.job_no <> $2)
      )
      select status, pod_status
      from awb_events
      order by updated_at desc, source_priority desc, source_id desc
      limit 1`,
-    [normalizedAwb, branchKey, String(excludeJobNo || "")]
+    [normalizedAwb, String(excludeJobNo || "")]
   );
   return result.rows[0] || null;
 }
@@ -4436,7 +4423,7 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
     let podStatus = String(options.podStatus || row.pod_status || "").trim();
 
     if (options.joinExistingGroup === true && !options.statusChanged && !options.podStatusChanged) {
-      const latest = await latestAirwayBillState(client, airwayBillNo, row.branch, row.job_no);
+      const latest = await latestAirwayBillState(client, airwayBillNo, row.job_no);
       if (latest) {
         syncStatus = true;
         syncPodStatus = true;
@@ -4445,7 +4432,7 @@ async function synchronizeShipmentAirwayBill(row, options = {}) {
       }
     }
 
-    return synchronizeAirwayBillGroup(client, airwayBillNo, row.branch, {
+    return synchronizeAirwayBillGroup(client, airwayBillNo, {
       syncStatus,
       syncPodStatus,
       status,
@@ -4660,13 +4647,9 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
     const rows = await withDatabaseTransaction(async (client) => {
       const found = await client.query(
         `select * from shipments s
-          where case
-            when lower(btrim(coalesce(s.branch, ''))) in ('branch 1', 'kuwait 1', 'kuwait', 'kuwait ho') then 'kuwait ho'
-            when lower(btrim(coalesce(s.branch, ''))) in ('branch 2', 'dubai 2', 'dubai') then 'dubai'
-            else lower(btrim(coalesce(s.branch, '')))
-          end = $1 and lower(trim(s.airway_bill_no)) = lower(trim($2))
+          where lower(trim(s.airway_bill_no)) = lower(trim($1))
           order by s.job_no for update`,
-        [branch, airwayBillNo]
+        [airwayBillNo]
       );
       if (!found.rows.length) {
         const error = new Error("No shipments were found for this Airway Bill number.");
@@ -4690,7 +4673,20 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
       }
       return updated;
     });
-    response.json({ ok: true, airwayBillNo, branch, rows });
+    response.json({
+      ok: true,
+      airwayBillNo,
+      branch,
+      relatedCount: rows.length,
+      rows: rows.map((row) => ({
+        job_no: row.job_no,
+        branch: row.branch || "",
+        status: row.status || "",
+        pod_status: row.pod_status || "",
+        invoice_status: row.invoice_status || "",
+        updated_at: row.updated_at || ""
+      }))
+    });
   } catch (error) {
     if (isDatabaseSetupError(error)) return response.json({ ok: true, mode: "demo", airwayBillNo: request.body?.airwayBillNo || "", rows: [] });
     return next(error);

@@ -1,4 +1,4 @@
-import { countLiveShipmentsByStatus, latestShipmentForAirwayBill } from "./dashboard-status.mjs";
+import { countLiveShipmentsByStatus, latestShipmentForAirwayBill, shipmentsForAirwayBill } from "./dashboard-status.mjs";
 
 const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
@@ -14705,8 +14705,10 @@ async function updateStatus(data) {
   const previousShipment = { ...shipmentItem };
   const airwayBillNo = String(shipmentItem.airwayBillNo || "").trim();
   const normalizedAwb = airwayBillNo.toLowerCase();
+  let savedAwbGroup = [];
+  let relatedAwbCount = 0;
   const awbGroup = normalizedAwb
-    ? state.shipments.filter((row) => String(row.airwayBillNo || "").trim().toLowerCase() === normalizedAwb && normalizeBranchName(row.branch) === normalizeBranchName(shipmentItem.branch))
+    ? shipmentsForAirwayBill(state.shipments, airwayBillNo)
     : [shipmentItem];
   if (newStatus.toLowerCase() === String(oldStatus || "").trim().toLowerCase() && (!airwayBillNo || awbGroup.every((row) => String(row.status || "").trim().toLowerCase() === newStatus.toLowerCase()))) {
     notifyDenied("Status already selected", `${jobNo} is already ${oldStatus}. Choose a different status to create a new journey update.`);
@@ -14739,16 +14741,24 @@ async function updateStatus(data) {
         body: JSON.stringify({ airwayBillNo, branch: shipmentItem.branch, status: newStatus, notes: remark, updatedBy: currentUserName(), updatedAt: entryDate })
       });
       const serverRows = Array.isArray(result.rows) ? result.rows : [];
+      relatedAwbCount = Number(result.relatedCount) || serverRows.length;
       if (serverRows.length) {
+        savedAwbGroup = awbGroup;
         serverRows.forEach((row) => {
           const local = state.shipments.find((item) => item.jobNo === row.job_no || item.jobNo === row.jobNo);
-          if (local) Object.assign(local, apiShipment(row));
+          if (local) {
+            local.status = row.status || local.status;
+            local.podStatus = row.pod_status || local.podStatus;
+            local.invoiceStatus = row.invoice_status || local.invoiceStatus;
+            local.updatedAt = row.updated_at || local.updatedAt;
+          }
         });
       } else {
         awbGroup.forEach((row) => {
           row.status = newStatus;
           row.notes = shipmentMetaNotes(row);
         });
+        savedAwbGroup = awbGroup;
       }
     } catch (error) {
       Object.assign(shipmentItem, previousShipment);
@@ -14756,7 +14766,7 @@ async function updateStatus(data) {
       return false;
     }
   }
-  const updatedGroup = airwayBillNo ? awbGroup : [shipmentItem];
+  const updatedGroup = airwayBillNo ? (savedAwbGroup.length ? savedAwbGroup : awbGroup) : [shipmentItem];
   let historySaveFailures = 0;
   for (const row of updatedGroup) {
     const historyEntry = {
@@ -14780,7 +14790,7 @@ async function updateStatus(data) {
   if (historySaveFailures) {
     notifyFailed("Status updated; history incomplete", `${jobNo} is now ${newStatus}, but ${historySaveFailures} shipment history entry/entries did not save. Refresh and verify the journey history.`);
   } else {
-    notifySuccess("Status updated", airwayBillNo ? `AWB ${airwayBillNo} and ${updatedGroup.length} related shipment(s) are now ${newStatus}.` : `${jobNo} is now ${newStatus}.`);
+    notifySuccess("Status updated", airwayBillNo ? `AWB ${airwayBillNo} and ${relatedAwbCount || updatedGroup.length} related shipment(s) across branches are now ${newStatus}.` : `${jobNo} is now ${newStatus}.`);
   }
   if (airwayBillNo) {
     state.ui.expandedStatusAwb = airwayBillNo;

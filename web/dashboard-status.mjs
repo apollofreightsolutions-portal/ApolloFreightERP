@@ -25,6 +25,14 @@ export function latestShipmentForAirwayBill(shipments = [], airwayBillNo = "", b
   return { shipment: matches[0] || null, matches: matches.length };
 }
 
+export function shipmentsForAirwayBill(shipments = [], airwayBillNo = "") {
+  const awbKey = String(airwayBillNo || "").trim().toLowerCase();
+  if (!awbKey) return [];
+  return shipments.filter((row) =>
+    String(row?.airwayBillNo || row?.airway_bill_no || "").trim().toLowerCase() === awbKey
+  );
+}
+
 export function countLiveShipmentsByStatus({
   shipments = [],
   history = [],

@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { countLiveShipmentsByStatus, latestShipmentForAirwayBill } = require("../../web/dashboard-status.mjs");
+const { countLiveShipmentsByStatus, latestShipmentForAirwayBill, shipmentsForAirwayBill } = require("../../web/dashboard-status.mjs");
 const statuses = ["Booked", "In-Transit", "Under-Clearance", "Delivered"];
 const today = "2026-10-29";
 const dateForCreatedShipment = (row) => String(row.createdAt || row.created_at || "").slice(0, 10);
@@ -158,4 +158,11 @@ test("AWB lookup does not match by Job No or silently fetch another branch", () 
     { jobNo: "DBX-1", airwayBillNo: "AWB-14367", branch: "Dubai" }
   ];
   assert.deepEqual(latestShipmentForAirwayBill(shipments, "AWB-14367", "Kuwait"), { shipment: null, matches: 0 });
+});
+
+test("AWB status group includes exact matches from both branches", () => {
+  const kuwait = { jobNo: "KWI-1", airwayBillNo: "AWB-14367", branch: "Kuwait HO" };
+  const dubai = { jobNo: "DBX-1", airwayBillNo: "awb-14367", branch: "Dubai" };
+  const falseMatch = { jobNo: "AWB-14367", airwayBillNo: "AWB-OTHER", branch: "Kuwait HO" };
+  assert.deepEqual(shipmentsForAirwayBill([kuwait, dubai, falseMatch], " AWB-14367 "), [kuwait, dubai]);
 });
