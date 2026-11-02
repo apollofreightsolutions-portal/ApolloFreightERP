@@ -28,16 +28,23 @@ const databaseHost = (() => {
   }
 })();
 const isNeonDatabase = databaseHost.includes("neon.tech");
-// One Cloud Run service now serves both the app and the API from the same origin, so CORS is no
-// longer the write-protection boundary (the login-token middleware is) - default to allowing any
-// origin, still fully overridable via ALLOWED_ORIGIN if you want to lock it down later.
-const allowedOrigins = (process.env.ALLOWED_ORIGIN || "*")
+const isProduction = (process.env.NODE_ENV || "development").toLowerCase() === "production";
+const productionOriginDefaults = [
+  "https://connected.apollo-freight.com",
+  "https://apollo-freight.com",
+  "https://www.apollo-freight.com",
+  "https://apollo-freighterp.vercel.app"
+];
+const configuredOrigins = (process.env.ALLOWED_ORIGIN || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+const productionConfiguredOrigins = configuredOrigins.filter((origin) => origin !== "*");
+const allowedOrigins = isProduction
+  ? (productionConfiguredOrigins.length ? productionConfiguredOrigins : productionOriginDefaults)
+  : (configuredOrigins.length ? configuredOrigins : ["*"]);
 
 const configuredSecret = process.env.CUSTOMER_PORTAL_SECRET || process.env.SESSION_SECRET || process.env.API_SECRET || "";
-const isProduction = (process.env.NODE_ENV || "development").toLowerCase() === "production";
 // NOTE: this used to fall back to crypto.randomBytes(32) here, generating a brand new secret every
 // time the process started. On a serverless/multi-instance host such as Cloud Run, that meant
 // every cold start invalidated every token issued by every other instance - users got kicked out with

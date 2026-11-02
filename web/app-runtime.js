@@ -3226,6 +3226,14 @@ async function syncCustomerPortal() {
     state.api = { status: "Customer portal connected", database: "connected", mode: result.mode || "database", error: "" };
     render();
   } catch (error) {
+    if (/customer session expired|customer login required/i.test(error?.message || "")) {
+      sessionStorage.removeItem(SESSION_KEY);
+      customerPortalData = null;
+      stopSharedShipmentRefresh();
+      showLogin();
+      loginMessage.textContent = "Your customer portal session expired. Please sign in again.";
+      return;
+    }
     state.api = { status: "Customer portal offline", database: "local data", mode: "browser", error: error.message };
     render();
   }
@@ -13665,7 +13673,10 @@ async function changeCurrentPassword(data) {
   }
 
   addHistory("Changed password", userName);
-  notifySuccess("Password updated", "Your password was changed successfully.");
+  sessionStorage.removeItem(SESSION_KEY);
+  stopSharedShipmentRefresh();
+  showLogin();
+  loginMessage.textContent = "Password updated. Please sign in again; all active sessions were revoked.";
   return true;
 }
 
@@ -14443,6 +14454,14 @@ async function updateCustomerProfile(data) {
   const session = currentSession();
   if (!session?.token) return false;
   await fetchJson("/api/customer/profile", { method: "PUT", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token }, body: JSON.stringify(data) });
+  if (String(data.password || "").trim()) {
+    sessionStorage.removeItem(SESSION_KEY);
+    customerPortalData = null;
+    stopSharedShipmentRefresh();
+    showLogin();
+    loginMessage.textContent = "Password updated. Please sign in again; your previous customer sessions were revoked.";
+    return true;
+  }
   notifySuccess("Profile saved", "Your customer profile was updated.");
   return true;
 }

@@ -23,6 +23,10 @@ const { shipmentUpdateEmailHtml: brandedShipmentEmail, emailAttachments } = requ
 const { createPasswordResetRouter } = require("./password-reset");
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
 const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
+const { createRequireCurrentErpAdmin } = require("./current-admin-auth");
+const { respondDatabaseWriteUnavailable } = require("./database-write-response");
+const { updatePasswordByUsername } = require("./session-revocation");
+const { createRequireCustomerPortalAuth, timestampMillis } = require("./customer-token-auth");
 const {
   normalizePolicy: normalizeMfaPolicy,
   encryptSecret: encryptMfaSecret,
@@ -37,6 +41,7 @@ const { bumpTrailingNumber, normalizeBranchKey, reserveUniqueAirwayBill } = requ
 
 const app = express();
 app.set("trust proxy", 1);
+const requireCurrentErpAdmin = createRequireCurrentErpAdmin(query);
 const EMPLOYEE_DOCUMENT_TYPES = {
   "Employee Photo": { kind: "image", mimeTypes: new Set(["application/pdf", "image/jpeg", "image/png"]), maxBytes: 10 * 1024 * 1024, code: "PHOTO", privateAsset: false },
   "Civil ID Front": { kind: "raw", mimeTypes: new Set(["application/pdf", "image/jpeg", "image/png"]), maxBytes: 10 * 1024 * 1024, code: "CIVIL-FRONT", privateAsset: true },
@@ -177,11 +182,7 @@ const runtimeStatus = {
   databaseUrlSource: databaseUrlSource || "missing",
   migration: autoMigrate ? "pending" : "disabled",
   loginSecret: configuredSecret ? "configured" : "pending",
-  // allowedOrigins defaults to ["*"] (see config.js) when ALLOWED_ORIGIN isn't set. Combined with
-  // credentials: true on the cors() middleware below, that means any origin's credentialed request
-  // gets reflected back and allowed - fine for same-origin-only deployments (this app's normal
-  // setup), but worth being able to see at a glance rather than discovering it during an audit.
-  corsPolicy: allowedOrigins.includes("*") ? "open (ALLOWED_ORIGIN not set)" : "restricted",
+  corsPolicy: allowedOrigins.includes("*") ? "open (development default)" : "restricted",
   startupError: databaseUrl
     ? ""
     : "No database connection string was found. Set DATABASE_URL or one of the supported PostgreSQL aliases."
@@ -189,9 +190,8 @@ const runtimeStatus = {
 
 if (allowedOrigins.includes("*")) {
   console.warn(
-    "CORS is open to all origins (ALLOWED_ORIGIN is not set) with credentials enabled. This is fine " +
-    "if the frontend and API are only ever called from origins you control, but set ALLOWED_ORIGIN to " +
-    "your production domain(s) to lock this down."
+    "CORS is open to all origins for this non-production environment. Set ALLOWED_ORIGIN to the " +
+    "frontend domain(s) to restrict cross-origin requests."
   );
 }
 
@@ -620,27 +620,16 @@ function customerSessionFromRow(row) {
 
   return {
     ...payload,
-    token: signCustomerToken({ ...payload, exp: Date.now() + CUSTOMER_PORTAL_TOKEN_TTL_MS })
+    token: signCustomerToken({
+      ...payload,
+      customerUserUpdatedAt: timestampMillis(row.customer_user_updated_at),
+      customerUpdatedAt: timestampMillis(row.customer_updated_at),
+      exp: Date.now() + CUSTOMER_PORTAL_TOKEN_TTL_MS
+    })
   };
 }
 
-function customerPortalAuthFromRequest(request) {
-  const bearer = String(request.headers.authorization || "").trim();
-  const token = bearer.toLowerCase().startsWith("bearer ")
-    ? bearer.slice(7).trim()
-    : String(request.headers["x-customer-token"] || request.headers["x-portal-token"] || "").trim();
-  return verifyCustomerToken(token);
-}
-
-function requireCustomerPortalAuth(request, response, next) {
-  const session = customerPortalAuthFromRequest(request);
-  if (!session) {
-    return response.status(401).json({ ok: false, error: "Customer login required." });
-  }
-
-  request.customerSession = session;
-  return next();
-}
+const requireCustomerPortalAuth = createRequireCustomerPortalAuth({ query, verifyToken: verifyCustomerToken });
 
 function appAuthFromRequest(request) {
   const bearer = String(request.headers.authorization || "").trim();
@@ -760,7 +749,9 @@ function requireEmployeePortalAuth(request, response, next) {
 async function getCustomerAccount(identifier) {
   const result = await query(
     `select cu.id, cu.customer_code, cu.username, cu.email, cu.password_hash, cu.status, cu.last_login,
-            c.name as customer_name, c.branch as customer_branch, c.status as customer_status
+            cu.updated_at as customer_user_updated_at,
+            c.name as customer_name, c.branch as customer_branch, c.status as customer_status,
+            c.updated_at as customer_updated_at
      from customer_users cu
      left join customers c on lower(c.code) = lower(cu.customer_code)
      where lower(cu.username) = lower($1) or lower(cu.email) = lower($1) or lower(cu.customer_code) = lower($1)
@@ -1891,6 +1882,9 @@ async function updateRow(config, id, body, dbQuery = query) {
   if (config.table === 'app_users') await query('savepoint user_write');
   try {
     const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
+    if (config.table === "customer_users" || config.table === "customers") {
+      assignments.push("updated_at = greatest(now(), updated_at + interval '1 millisecond')");
+    }
     const updateValues = [...values, id];
     result = await query(
       `update ${updateConfig.table}
@@ -2075,7 +2069,7 @@ app.use(
 
       return callback(new Error(`Origin ${origin} is not allowed.`));
     },
-    credentials: true
+    credentials: false
   })
 );
 app.use(helmet());
@@ -2691,9 +2685,9 @@ app.post("/api/change-password", loginRateLimiter, async (request, response, nex
       });
     }
 
-    await query("update app_users set password = $1 where user_name = $2", [hashCustomerPassword(newPassword), row.user_name]);
+    await updatePasswordByUsername(query, row.user_name, hashCustomerPassword(newPassword));
 
-    return response.json({ ok: true });
+    return response.json({ ok: true, requiresReauthentication: true });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
       return response.status(503).json({
@@ -2788,7 +2782,7 @@ app.post("/api/hr-announcement-reads", requireAppAuth, async (request, response,
     );
     return response.status(201).json({ ok: true, row: result.rows[0] });
   } catch (error) {
-    if (isDatabaseSetupError(error)) return response.status(201).json({ ok: true, mode: "demo", row: { announcement_id: announcementId, user_name: userName } });
+    if (isDatabaseSetupError(error)) return respondDatabaseWriteUnavailable(response);
     return next(error);
   }
 });
@@ -2926,12 +2920,7 @@ app.post("/api/customer/shipment-requests", requireCustomerPortalAuth, async (re
     });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
-      return response.status(201).json({
-        ok: true,
-        mode: "demo",
-        row: { ...data, requestNo: "SRQ-260002" },
-        status: "AUTO_APPROVED"
-      });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
@@ -3064,6 +3053,7 @@ app.get("/api/customer/profile", requireCustomerPortalAuth, async (request, resp
 
 app.put("/api/customer/profile", requireCustomerPortalAuth, async (request, response, next) => {
   const data = request.body || {};
+  const customerPasswordChanged = Boolean(String(data.password || "").trim());
   try {
     const account = await getCustomerAccount(request.customerSession.customerCode || request.customerSession.userName);
     if (!account) {
@@ -3103,7 +3093,8 @@ app.put("/api/customer/profile", requireCustomerPortalAuth, async (request, resp
 
     if (userSets.length) {
       userValues.push(account.id);
-      await query("update customer_users set " + userSets.join(", ") + " where id = $" + userValues.length, userValues);
+      const sessionVersionUpdate = customerPasswordChanged ? ", updated_at = greatest(now(), updated_at + interval '1 millisecond')" : "";
+      await query("update customer_users set " + userSets.join(", ") + sessionVersionUpdate + " where id = $" + userValues.length, userValues);
     }
 
     if (customerSets.length) {
@@ -3122,7 +3113,7 @@ app.put("/api/customer/profile", requireCustomerPortalAuth, async (request, resp
     return response.json({ ok: true });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
-      return response.json({ ok: true, mode: "demo" });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
@@ -4761,7 +4752,7 @@ app.post("/api/shipments", requireErpPortalAuth, async (request, response, next)
     response.status(201).json({ ok: true, row: savedRow, relatedRows });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
-      return response.status(201).json({ ok: true, mode: "demo", row: request.body || {} });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
@@ -4906,11 +4897,7 @@ app.post("/api/:resource", requireErpOrHrResourceAuth, async (request, response,
     });
   } catch (error) {
     if (resourceName !== 'users' && isDatabaseSetupError(error)) {
-      return response.status(201).json({
-        ok: true,
-        mode: "demo",
-        row: request.body || {}
-      });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
@@ -5021,7 +5008,7 @@ app.put("/api/shipments/:id", requireErpPortalAuth, async (request, response, ne
     response.json({ ok: true, row: savedRow, relatedRows });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
-      return response.json({ ok: true, mode: "demo", row: request.body || {} });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
@@ -5060,18 +5047,14 @@ app.put("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, respon
     });
   } catch (error) {
     if (resourceName !== 'users' && isDatabaseSetupError(error)) {
-      return response.json({
-        ok: true,
-        mode: "demo",
-        row: request.body || {}
-      });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
   }
 });
 
-app.delete("/api/audit", requireErpPortalAuth, async (_request, response, next) => {
+app.delete("/api/audit", requireErpPortalAuth, requireCurrentErpAdmin, async (_request, response, next) => {
   try {
     const result = await query("delete from audit_log returning id");
     response.json({
@@ -5080,11 +5063,7 @@ app.delete("/api/audit", requireErpPortalAuth, async (_request, response, next) 
     });
   } catch (error) {
     if (isDatabaseSetupError(error)) {
-      return response.json({
-        ok: true,
-        mode: "demo",
-        deleted: 0
-      });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
@@ -5118,11 +5097,7 @@ app.delete("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, res
     });
   } catch (error) {
     if (resourceName !== 'users' && isDatabaseSetupError(error)) {
-      return response.json({
-        ok: true,
-        mode: "demo",
-        row: {}
-      });
+      return respondDatabaseWriteUnavailable(response);
     }
 
     return next(error);
