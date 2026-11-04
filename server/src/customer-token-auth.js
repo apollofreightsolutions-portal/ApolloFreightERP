@@ -1,5 +1,14 @@
 'use strict';
 
+const crypto = require('crypto');
+
+// A short fingerprint of the stored password hash. Unlike updated_at it does NOT change on
+// last_login updates or by the customer_users updated_at trigger, so a normal login stays valid,
+// but a password change (by the customer or by ERP staff) revokes every older token.
+function passwordVersion(passwordHash) {
+  return crypto.createHash('sha256').update(String(passwordHash || '')).digest('hex').slice(0, 24);
+}
+
 function timestampMillis(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (value === null || value === undefined || value === '') return null;
@@ -26,10 +35,8 @@ function createRequireCustomerPortalAuth({ query, verifyToken }) {
 
     try {
       const result = await query(
-        `select cu.id, cu.customer_code, cu.username, cu.email, cu.status,
-                cu.updated_at as customer_user_updated_at,
-                c.name as customer_name, c.branch as customer_branch, c.status as customer_status,
-                c.updated_at as customer_updated_at
+        `select cu.id, cu.customer_code, cu.username, cu.email, cu.status, cu.password_hash,
+                c.name as customer_name, c.branch as customer_branch, c.status as customer_status
          from customer_users cu
          left join customers c on lower(c.code) = lower(cu.customer_code)
          where cu.id = $1
@@ -37,8 +44,6 @@ function createRequireCustomerPortalAuth({ query, verifyToken }) {
         [customerUserId]
       );
       const account = result.rows?.[0];
-      const userUpdatedAt = timestampMillis(account?.customer_user_updated_at);
-      const customerUpdatedAt = timestampMillis(account?.customer_updated_at);
       const userActive = String(account?.status || '').trim().toLowerCase() === 'active';
       const customerActive = account?.customer_status === null || account?.customer_status === undefined
         || String(account.customer_status).trim().toLowerCase() === 'active';
@@ -46,8 +51,8 @@ function createRequireCustomerPortalAuth({ query, verifyToken }) {
         && sameText(session.userName, account.username)
         && sameText(session.customerCode, account.customer_code);
       const currentStateMatches = account
-        && session.customerUserUpdatedAt === userUpdatedAt
-        && session.customerUpdatedAt === customerUpdatedAt;
+        && typeof session.passwordVersion === 'string'
+        && session.passwordVersion === passwordVersion(account.password_hash);
 
       if (!account || !userActive || !customerActive || !sameIdentity || !currentStateMatches) {
         return response.status(401).json({ ok: false, error: 'Customer session expired. Please sign in again.' });
@@ -70,4 +75,4 @@ function createRequireCustomerPortalAuth({ query, verifyToken }) {
   };
 }
 
-module.exports = { createRequireCustomerPortalAuth, timestampMillis };
+module.exports = { createRequireCustomerPortalAuth, passwordVersion, timestampMillis };
