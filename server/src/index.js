@@ -32,6 +32,7 @@ const { updatePasswordByUsername } = require("./session-revocation");
 const { createRequireCustomerPortalAuth, passwordVersion } = require("./customer-token-auth");
 const { findNonEmployeeDocument } = require("./document-view");
 const { passwordChangePolicyError } = require("./password-change-policy");
+const { timingSafeStringEqual } = require("./token-signature");
 const {
   normalizePolicy: normalizeMfaPolicy,
   encryptSecret: encryptMfaSecret,
@@ -597,7 +598,7 @@ function verifyCustomerToken(token) {
   const body = parts[0];
   const signature = parts[1];
   const expected = crypto.createHmac("sha256", customerPortalSecret).update(body).digest("base64url");
-  if (expected !== signature) return null;
+  if (!timingSafeStringEqual(expected, signature)) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     if (payload && payload.exp && Date.now() > Number(payload.exp)) return null;
