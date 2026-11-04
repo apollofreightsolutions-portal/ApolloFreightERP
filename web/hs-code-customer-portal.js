@@ -197,6 +197,8 @@ async function enhanceHsForm(form) {
   };
 
   itemField.addEventListener("input", async () => {
+    if(itemField.dataset.complianceFill === '1'){requestSerial+=1;results.hidden=true;results.innerHTML='';return;}
+    delete form.dataset.hsDocumentChecked;
     itemField.dataset.hsSelected = "0";
     hsField.value = "";
     itemCodeField.value = "";
@@ -220,6 +222,7 @@ async function enhanceHsForm(form) {
   });
 
   itemField.addEventListener("focus", async () => {
+    if(form.dataset.hsDocumentChecked === '1'){results.hidden=true;return;}
     if (!itemField.value.trim()) return;
     try {
       renderResults(hsSearch(await loadHsMaster(), itemField.value.trim()));

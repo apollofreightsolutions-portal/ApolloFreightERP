@@ -40,8 +40,10 @@ function setField(form, name, value, onlyIfBlank = false) {
   if (!field || value === undefined || value === null || value === "") return;
   if (onlyIfBlank && String(field.value || "").trim()) return;
   field.value = String(value);
+  field.dataset.complianceFill = '1';
   field.dispatchEvent(new Event("input", { bubbles: true }));
   field.dispatchEvent(new Event("change", { bubbles: true }));
+  delete field.dataset.complianceFill;
 }
 function styleOnce() {
   if (document.getElementById("apolloComplianceStyle")) return;
@@ -70,46 +72,43 @@ function styleOnce() {
   document.head.appendChild(style);
 }
 function formatCode(value) { return String(value || "-"); }
-function renderResult(panel, result, analysisId) {
-  panel.dataset.analysisId = analysisId || "";
-  panel.dataset.status = result?.status || "";
-  const ready = result?.status === "READY_TO_BOOK";
-  const submitButton = panel.closest("form")?.querySelector("button[type='submit']");
-  if (submitButton) submitButton.textContent = ready ? "Book Shipment" : "Submit for Apollo Review";
-  const attention = Array.isArray(result?.attentionItems) ? result.attentionItems : [];
-  const cargo = Array.isArray(result?.cargoLines) ? result.cargoLines : [];
-  if (ready) {
-    panel.innerHTML = `<div class="apollo-shield"><div class="apollo-shield-mark">APOLLO</div><div><h3>Apollo Shield — Ready to Book</h3><p>All ${Number(result.totalLineItems || 0)} detected line item(s) passed the Kuwait HS pre-check at ${READY_THRESHOLD}%+ match confidence with no import restriction/prohibition flagged in the configured master.</p></div></div>
-      <div class="apollo-compliance-summary"><span class="apollo-compliance-pill">${Number(result.totalLineItems || 0)} HS line(s) checked</span><span class="apollo-compliance-pill">${cargo.length} cargo line(s) extracted</span></div>
-      <div class="apollo-extracted">Shipment details were copied into the booking fields where available. Please verify them before booking. ${(result.warnings || []).map(esc).join(" ")}</div>
-      <div class="apollo-compliance-disclaimer">${esc(result.disclaimer || "")}</div>`;
-    return;
-  }
-  const cards = attention.map((item) => {
-    const suggestion = item.suggestion;
-    const confidence = Number(suggestion?.confidence || item.confidence || 0);
-    const kind = item.status === "BLOCKED" ? "blocked" : item.status === "REVIEW" ? "review" : "";
-    return `<div class="apollo-attention-item ${kind}">
-      <div class="apollo-attention-desc">${esc(item.description || "Unnamed line item")} — ${esc(item.sourceFile || "Document")}${item.sourceRow ? ` — ${esc(item.sourceSheet || "Sheet")}, row ${Number(item.sourceRow)}` : ""}${item.sourcePage ? `, page ${Number(item.sourcePage)}` : ""}</div>
-      <div class="apollo-attention-grid">
-        <div><strong>Submitted HS</strong>${esc(formatCode(item.submittedHsCode))}</div>
-        <div><strong>Master description</strong>${esc(item.matchedMaster?.description || "Code not found")}</div>
-        <div><strong>Issue</strong>${esc(item.issue || "Needs review")}</div>
-        <div><strong>Current match</strong><span class="apollo-confidence ${Number(item.confidence || 0) >= READY_THRESHOLD ? "high" : "low"}">${Number(item.confidence || 0)}%</span></div>
-      </div>
-      ${suggestion ? `<div class="apollo-suggestion"><div class="apollo-attention-grid"><div><strong>Suggested replacement</strong>${esc(suggestion.hsCode)}</div><div><strong>Master description</strong>${esc(suggestion.description || suggestion.heading || "")}</div><div><strong>Match confidence</strong><span class="apollo-confidence ${confidence >= READY_THRESHOLD ? "high" : "low"}">${confidence}%</span></div></div>
-        ${suggestion.importRestriction ? `<div class="apollo-compliance-error"><strong>Import restriction:</strong> ${esc(suggestion.importRestriction)}</div>` : ""}
-        <div class="apollo-compliance-apply"><button type="button" class="secondary-button" data-compliance-accept data-line-index="${Number(item.lineIndex)}" data-hs-code="${esc(suggestion.hsCode)}">Use suggested HS ${esc(suggestion.hsCode)}</button></div></div>` : ""}
-      ${item.matchedMaster?.importRestriction ? `<div class="apollo-compliance-error"><strong>Import restriction:</strong> ${esc(item.matchedMaster.importRestriction)}</div>` : ""}
-      ${item.matchedMaster?.importProhibition ? `<div class="apollo-compliance-error"><strong>Import prohibition:</strong> ${esc(item.matchedMaster.importProhibition)}</div>` : ""}
-    </div>`;
-  }).join("");
-  panel.innerHTML = `<h3 class="apollo-attention-title">HS / description attention required</h3><p class="apollo-attention-note">${Number(result.totalLineItems || 0)} invoice lines checked. Items needing attention are shown below. A low description match is a review flag, not proof that the HS code is wrong. Percentages are text-match scores, not classification probabilities.</p>
-    <div class="apollo-compliance-summary"><span class="apollo-compliance-pill">${Number(result.passedLineItems || 0)} passed</span><span class="apollo-compliance-pill">${attention.length} need attention</span><span class="apollo-compliance-pill">Ready threshold ${READY_THRESHOLD}%</span></div>
-    ${result.extractionComplete === false ? `<div class="apollo-compliance-error"><strong>Document reading is incomplete or unverified.</strong> The rows below are not a complete clearance. Apollo must review the original documents before approval.</div>` : ""}
-    ${cards || `<div class="apollo-compliance-error">Extracted codes passed, but the complete document requires Apollo review.</div>`}
-    <div class="apollo-extracted">Cargo/shipment details were extracted where available. Verify the populated booking fields before submission. ${(result.warnings || []).map(esc).join(" ")}</div>
-    <div class="apollo-compliance-disclaimer">${esc(result.disclaimer || "")}</div>`;
+function renderResult(panel,result,analysisId) {
+  panel.dataset.analysisId=analysisId; panel.dataset.status=result.status;
+  const form=panel.closest('form'), submit=form?.querySelector("button[type='submit']");
+  if(submit)submit.textContent='Submit shipment request';
+  panel.innerHTML=`<h3>HS document check</h3><p>${Number(result.passedLineItems)} of ${Number(result.totalLineItems)} items meet the 95% text-match threshold. This is not a customs approval. A wording mismatch alone does not mean your invoice code is wrong.</p>
+    <p>You can copy or download results now. Booking fields below are only needed if you also want to request a shipment. Your original documents remain unchanged.</p>
+    ${result.extractionComplete===false?'<p class="apollo-compliance-error">Document reading is incomplete. These results may omit items; do not treat them as a complete check.</p>':''}
+    <button type="button" data-hs-download>Download Excel summary</button> <button type="button" data-hs-copy>Copy results</button>
+    <div style="overflow:auto;max-height:560px;margin:16px 0"><table style="width:100%;text-align:left"><thead><tr><th>Ask DXB</th><th>Item / source</th><th>Invoice HS</th><th>Selected HS</th><th>Result / options</th></tr></thead><tbody>${(result.lines||[]).map(l=>`<tr>
+    <td><input type="checkbox" aria-label="Ask DXB about item ${l.lineIndex+1}" data-hs-help-line value="${l.lineIndex}"></td>
+    <td>${l.lineIndex+1}. ${esc(l.description)}<small style="display:block">${esc(l.sourceFile)} ${esc(l.sourceSheet)} ${l.sourceRow?'row '+l.sourceRow:''} ${l.sourcePage?'page '+l.sourcePage:''}</small>${l.clarification?`<small>Clarification: ${esc(l.clarification)}</small>`:''}</td>
+    <td>${esc(l.submittedHsCode||'Missing')}<small style="display:block">${l.originalConfidence==null?'No exact master match':Number(l.originalConfidence)+'% invoice-code match'}</small></td><td>${esc(l.effectiveHsCode||l.submittedHsCode||'Not selected')}</td>
+    <td><strong>${esc(l.status)}</strong> · ${l.matchedMaster?Number(l.confidence)+'% selected-code match':'Invoice code not found / missing'}<p>${esc(l.issue)}</p>
+    ${l.suggestion?`<p>Suggested alternative: ${esc(l.suggestion.hsCode)} — ${esc(l.suggestion.description)} (${Number(l.suggestion.confidence)}% text match)</p>${!l.suggestion.importRestriction&&!l.suggestion.importProhibition?`<button type="button" data-compliance-accept data-line-index="${l.lineIndex}" data-hs-code="${esc(l.suggestion.hsCode)}">Use suggested code</button>`:'<p>Restriction flagged — suggestion cannot be auto-selected.</p>'}`:''}
+    ${l.submittedHsCode?`<button type="button" data-hs-keep="${l.lineIndex}">Keep invoice code</button>`:''}
+    <details ${l.clarificationQuestion?'open':''}><summary>${l.clarificationQuestion?'Clarify this item':'Add product detail (optional)'}</summary><p>${esc(l.clarificationQuestion||'Add its use and material to refine the match. This does not rewrite your invoice description.')}</p><input data-hs-detail="${l.lineIndex}" maxlength="500" value="${esc(l.clarification||'')}" aria-label="Product detail"><button type="button" data-hs-clarify="${l.lineIndex}">Recheck item</button></details></td></tr>`).join('')}</tbody></table></div>
+    <label>Optional question for DXB<textarea data-hs-question maxlength="1000" rows="2"></textarea></label>
+    <button type="button" data-hs-help>Ask Apollo about selected items</button><p>Optional help only—no approval cycle is required to view or download your check. Replies appear under HS help. Support: ops1@apollo-freight.com.</p>
+    <p>${(result.warnings||[]).map(esc).join(' ')}</p><p>${esc(result.disclaimer)}</p><p data-hs-feedback role="status"></p>`;
+  panel.querySelector('[data-hs-download]').onclick=async()=>{
+    try {const r=await fetch(`${API_URL}/api/customer/hs-help/${encodeURIComponent(analysisId)}/download`,{headers:{Authorization:`Bearer ${sessionToken()}`}});if(!r.ok)throw new Error('Download failed. Your check may have expired.');const u=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=u;a.download='Apollo_HS_Summary.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){panel.querySelector('[data-hs-feedback]').textContent=e.message;}
+  };
+  panel.querySelector('[data-hs-copy]').onclick=async()=>{
+    const text=['Line\tOriginal description\tInvoice HS\tSelected HS\tResult',...(result.lines||[]).map(l=>[l.lineIndex+1,l.description,l.submittedHsCode,l.effectiveHsCode||l.submittedHsCode,l.status].map(v=>String(v??'').replace(/[\t\r\n]/g,' ')).join('\t'))].join('\n');
+    try{await navigator.clipboard.writeText(text);panel.querySelector('[data-hs-feedback]').textContent='Results copied.';}catch{const t=document.createElement('textarea');t.value=text;panel.append(t);t.select();panel.querySelector('[data-hs-feedback]').textContent='Select and copy the text below, or download Excel.';}
+  };
+  panel.querySelector('[data-hs-help]').onclick=async(event)=>{
+    const lineIndexes=[...panel.querySelectorAll('[data-hs-help-line]:checked')].map(e=>Number(e.value));
+    if(!lineIndexes.length){panel.querySelector('[data-hs-feedback]').textContent='Select the items you want DXB to check.';return;}
+    event.target.disabled=true;
+    try{await api(`/api/customer/hs-help/${encodeURIComponent(analysisId)}/help`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lineIndexes,question:panel.querySelector('[data-hs-question]').value})});panel.querySelector('[data-hs-feedback]').textContent='Sent to the shared DXB help queue. Open HS help to view the reply.';}catch(e){event.target.disabled=false;panel.querySelector('[data-hs-feedback]').textContent=e.message;}
+  };
+  for(const b of panel.querySelectorAll('[data-hs-keep],[data-hs-clarify]'))b.onclick=async()=>{
+    b.disabled=true;
+    const clarify=b.hasAttribute('data-hs-clarify'),index=Number(clarify?b.dataset.hsClarify:b.dataset.hsKeep);
+    try {const r=await api(`/api/customer/compliance/${encodeURIComponent(analysisId)}/${clarify?'clarify':'confirm'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(clarify?{lineIndex:index,detail:panel.querySelector(`[data-hs-detail="${index}"]`).value}:{accepted:[{lineIndex:index,keepOriginal:true}]})});renderResult(panel,r.result,r.analysisId);syncEffectiveHsToForm(form,r.result);}catch(e){b.disabled=false;panel.querySelector('[data-hs-feedback]').textContent=e.message;}
+  };
 }
 function applyExtractionToForm(form, result) {
   const shipment = result?.shipment || {};
@@ -119,11 +118,14 @@ function applyExtractionToForm(form, result) {
   const lines = Array.isArray(result?.lines) ? result.lines : [];
   if (lines.length) {
     const first = lines[0];
-    setField(form, "itemName", first.description, true);
-    const effective = first.effectiveHsCode || first.submittedHsCode || first.suggestion?.hsCode || "";
+    setField(form, "itemName", first.description);
+    form.dataset.hsDocumentChecked = '1';
+    const effective = first.effectiveHsCode || first.submittedHsCode || "";
     if (effective) {
       setField(form, "hsCode", effective);
       setField(form, "itemCode", effective);
+    } else {
+      for(const name of ['hsCode','itemCode']){const field=form.querySelector(`[name='${name}']`);if(field)field.value='';}
     }
   }
   const cargoLines = Array.isArray(result?.cargoLines) ? result.cargoLines : [];
@@ -149,7 +151,7 @@ async function analyze(form, panel, button) {
   if (!files.length) throw new Error("Select the invoice and/or packing list first.");
   if (supported.length !== files.length) throw new Error("Select only PDF, JPG, PNG, WebP or Excel (.xls/.xlsx/.xlsm) files for analysis. No selected file will be silently skipped.");
   if (supported.length > 3) throw new Error("Select up to 3 documents for one compliance analysis.");
-  const destination = String(form.querySelector("[name='destination']")?.value || "").trim();
+  const destination = form.dataset.hsCheckOnly === '1' ? 'Kuwait' : String(form.querySelector("[name='destination']")?.value || "").trim();
   if (!/\bkuwait\b|\bkwi\b/i.test(destination)) throw new Error("The current compliance master is for Kuwait. Set Destination to Kuwait before running the check.");
   const totalBytes = supported.reduce((sum, file) => sum + Number(file.size || 0), 0);
   if (totalBytes > 10 * 1024 * 1024) throw new Error("Keep AI-analysis documents to 10 MB total. Larger files can still be attached after the check.");
@@ -191,6 +193,12 @@ function enhance(form) {
   styleOnce();
   const docStep = form.querySelector(".customer-document-step");
   if (!docStep) return;
+  const mode=document.createElement('div');
+  mode.innerHTML='<label><input type="checkbox" data-check-only checked> Check documents only — Kuwait HS master</label><p>Upload, check and download. No cargo details or shipment submission needed. Uncheck to continue with a shipment booking.</p>';
+  form.prepend(mode);
+  const modeStyle=document.createElement('style');modeStyle.textContent="form[data-hs-check-only='1'] > .customer-booking-step:not(.customer-document-step),form[data-hs-check-only='1'] > .action-row {display:none!important}";form.append(modeStyle);
+  const updateMode=()=>{form.dataset.hsCheckOnly=mode.querySelector('input').checked?'1':'0';};updateMode();mode.querySelector('input').onchange=updateMode;
+  form.addEventListener('submit',e=>{if(form.dataset.hsCheckOnly==='1'){e.preventDefault();e.stopImmediatePropagation();}},true);
   const tools = document.createElement("div");
   tools.className = "apollo-compliance-tools";
   tools.innerHTML = `<button type="button" class="secondary-button" data-compliance-analyze>Analyze Documents & Check Kuwait HS</button><span class="apollo-compliance-working">Kuwait master · HS + description + import restriction/prohibition</span>`;

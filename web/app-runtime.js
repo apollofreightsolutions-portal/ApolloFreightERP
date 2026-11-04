@@ -1,4 +1,4 @@
-import { countLiveShipmentsByStatus, latestShipmentForAirwayBill, shipmentsForAirwayBill } from "./dashboard-status.mjs";
+import { countLiveShipmentsByStatus, shipmentsForAirwayBill } from "./dashboard-status.mjs";
 
 const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
@@ -1416,11 +1416,11 @@ function localDateTimeInput(date = new Date()) {
   return offsetDate.toISOString().slice(0, 16);
 }
 
-function nextNumber(prefix, collection, field) {
+function nextNumber(prefix, collection, field, serialHighWater = 0) {
   const max = collection
     .map((item) => String(item[field] || ""))
     .map((value) => Number(value.replace(/\D/g, "").slice(-4)) || 0)
-    .reduce((highest, value) => Math.max(highest, value), 0);
+    .reduce((highest, value) => Math.max(highest, value), Number(serialHighWater) || 0);
   return `${prefix}-${new Date().toISOString().slice(2, 7).replace("-", "")}${String(max + 1).padStart(4, "0")}`;
 }
 
@@ -1428,10 +1428,10 @@ function escapeRegex(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function configuredNumber(format, collection, field, fallbackPrefix, serialStart = 1) {
+function configuredNumber(format, collection, field, fallbackPrefix, serialStart = 1, serialHighWater = 0) {
   const normalizedFormat = String(format || "").trim();
   if (!normalizedFormat || !normalizedFormat.includes("#")) {
-    return nextNumber(fallbackPrefix, collection, field);
+    return nextNumber(fallbackPrefix, collection, field, serialHighWater);
   }
 
   const fullYear = new Date().getFullYear().toString();
@@ -1439,20 +1439,21 @@ function configuredNumber(format, collection, field, fallbackPrefix, serialStart
   const month = String(new Date().getMonth() + 1).padStart(2, "0");
   const resolvedFormat = normalizedFormat.replaceAll("YYYY", fullYear).replaceAll("YY", year).replaceAll("MM", month);
   const hashPattern = resolvedFormat.match(/#+/);
-  if (!hashPattern) return nextNumber(fallbackPrefix, collection, field);
+  if (!hashPattern) return nextNumber(fallbackPrefix, collection, field, serialHighWater);
 
   const digits = hashPattern[0].length;
   const prefix = resolvedFormat.slice(0, hashPattern.index);
   const suffix = resolvedFormat.slice(hashPattern.index + digits);
   const numberPattern = new RegExp(`^${escapeRegex(prefix)}(\\d{${digits},})${escapeRegex(suffix)}$`, "i");
   const startingNumber = Math.max(1, Number(serialStart) || 1);
-  const max = collection
+  const collectionMax = collection
     .map((item) => String(item[field] || ""))
     .map((value) => {
       const match = value.match(numberPattern);
       return match ? Number(match[1]) || 0 : 0;
     })
     .reduce((highest, value) => Math.max(highest, value), startingNumber - 1);
+  const max = Math.max(collectionMax, Number(serialHighWater) || 0);
 
   return resolvedFormat
     .replace(/#+/, String(max + 1).padStart(digits, "0"));
@@ -1506,11 +1507,13 @@ function nextShipmentNumber(branch = defaultUserBranch(), service = "") {
     `^${shipmentNumberTemplatePart(String(format).slice(0, formatHashIndex))}(\\d{${digits},})${shipmentNumberTemplatePart(String(format).slice(formatHashIndex + digits))}$`,
     "i"
   );
-  const max = state.shipments
+  const collectionMax = state.shipments
     .filter((item) => normalizeBranchName(item.branch || "") === normalizedBranch)
     .map((item) => String(item.jobNo || "").match(numberPattern))
     .map((match) => match ? Number(match[1]) || 0 : 0)
     .reduce((highest, value) => Math.max(highest, value), shipmentSerialStartForBranch(normalizedBranch) - 1);
+  const branchKey = normalizedBranch.toLowerCase();
+  const max = Math.max(collectionMax, Number(state.shipmentNumberMaxima?.jobByBranch?.[branchKey]) || 0);
 
   return resolvedFormat
     .replace(/#+/, String(max + 1).padStart(digits, "0"))
@@ -1545,8 +1548,18 @@ function nextQuotationNumber() {
   return configuredNumber(state.settings.quotationNumberFormat, state.quotations, "quotationNo", "QUO");
 }
 
-function nextAirwayBillNumber() {
-  return configuredNumber(state.settings.awbNumberFormat, state.shipments, "airwayBillNo", "AWB", state.settings.awbSerialStart || 262035);
+function nextAirwayBillNumber(branch = defaultUserBranch()) {
+  const normalizedBranch = normalizeBranchName(branch);
+  const branchKey = normalizedBranch.toLowerCase();
+  const branchShipments = state.shipments.filter((item) => normalizeBranchName(item.branch || "") === normalizedBranch);
+  return configuredNumber(
+    state.settings.awbNumberFormat,
+    branchShipments,
+    "airwayBillNo",
+    "AWB",
+    state.settings.awbSerialStart || 262035,
+    Number(state.shipmentNumberMaxima?.awbByBranch?.[branchKey]) || 0
+  );
 }
 
 function nextConsolidationNumber() {
@@ -3017,6 +3030,7 @@ async function refreshSharedShipmentData() {
       fetchJson("/api/invoices"),
       fetchJson("/api/shipment-status-history")
     ]);
+    if (shipments.numberingMaxima) state.shipmentNumberMaxima = shipments.numberingMaxima;
     state.shipments = (shipments.rows || []).map(apiShipment);
     state.documents = (documents.rows || []).map(apiDocument);
     state.invoices = (invoices.rows || []).map(apiInvoice);
@@ -3127,6 +3141,7 @@ async function syncFromApi() {
     };
     if (databaseReady) {
       const rowsAt = (index) => valueAt(index)?.rows;
+      if (valueAt(1)?.numberingMaxima) state.shipmentNumberMaxima = valueAt(1).numberingMaxima;
       if (rowsAt(1)) state.shipments = rowsAt(1).map(apiShipment);
       if (rowsAt(2)) state.loads = rowsAt(2).map(apiLoad);
       if (rowsAt(3)) state.customers = rowsAt(3).map(apiCustomer);
@@ -6816,7 +6831,7 @@ function openQuotationByNumber(rawQuery) {
   openRecord("quotation", rowId("quotation", match));
 }
 
-function openShipmentByNumber(rawQuery) {
+async function openShipmentByNumber(rawQuery) {
   const query = String(rawQuery || "").trim().toLowerCase();
   if (!query) {
     notifyDenied("Shipment not opened", "Enter a Job No, AWB No, or TCN No first.");
@@ -6826,12 +6841,22 @@ function openShipmentByNumber(rawQuery) {
   const searchAllBranches = String(state.settings.allowGlobalShipmentQuickSearch || "No").toLowerCase() === "yes";
   const searchPool = searchAllBranches ? state.shipments : visibleRows(state.shipments);
 
-  const match = searchPool.find((row) => {
+  let match = searchPool.find((row) => {
     const jobNo = String(row.jobNo || "").trim().toLowerCase();
     const awbNo = String(row.airwayBillNo || "").trim().toLowerCase();
     const tcnNumber = String(row.tcnNumber || "").trim().toLowerCase();
     return jobNo === query || awbNo === query || tcnNumber === query;
   });
+
+  if (!match && searchAllBranches) {
+    try {
+      const result = await fetchJson(`/api/shipments/lookup?number=${encodeURIComponent(rawQuery)}`);
+      if (result?.shipment) match = apiShipment(result.shipment);
+    } catch (error) {
+      notifyDenied("Shipment search failed", error.message || "The shipment could not be searched.");
+      return;
+    }
+  }
 
   if (!match) {
     const message = searchAllBranches
@@ -9146,7 +9171,7 @@ function shipmentDialogBody(mode = "shipment", record = null) {
       ${input("salesPerson", "Sales Person", fieldValue("salesPerson", currentUserName()))}
       <label>Airway Bill / Bill of Lading
         <span class="inline-input-button">
-          <input name="airwayBillNo" type="text" value="${escapeHtml(fieldValue("airwayBillNo", isAirway ? "" : nextAirwayBillNumber()))}" />
+          <input name="airwayBillNo" type="text" value="${escapeHtml(fieldValue("airwayBillNo", isAirway ? "" : nextAirwayBillNumber(defaultBranch)))}" />
           <button type="button" class="secondary-button" data-dialog-action="fetch-awb-data">Fetch</button>
         </span>
       </label>
@@ -9768,7 +9793,7 @@ function bindAwbFetchButton() {
   const fetchButton = dialogBody.querySelector("[data-dialog-action='fetch-awb-data']");
   fetchButton?.addEventListener("click", fetchAwbAndRefillForm);
 }
-function fetchAwbAndRefillForm() {
+async function fetchAwbAndRefillForm() {
   const typedValue = dialogValue("airwayBillNo");
   const query = String(typedValue || "").trim().toLowerCase();
   if (!query) {
@@ -9777,25 +9802,33 @@ function fetchAwbAndRefillForm() {
   }
 
   const branch = normalizeBranchName(dialogValue("branch") || defaultUserBranch());
-  const { shipment: latestMatch, matches, duplicateWithinBranch } = latestShipmentForAirwayBill(state.shipments, typedValue);
+  const fetchButton = dialogBody.querySelector("[data-dialog-action='fetch-awb-data']");
+  if (fetchButton) fetchButton.disabled = true;
+  try {
+    const result = await fetchJson(`/api/shipments/lookup?airwayBillNo=${encodeURIComponent(typedValue)}`);
+    const latestMatch = result?.shipment ? apiShipment(result.shipment) : null;
+    if (!latestMatch) {
+      notifyDenied("Airway Bill not found", `No saved shipment with Airway Bill "${typedValue}" was found in any branch. The lookup uses the AWB field only, not a matching Job No.`);
+      return;
+    }
 
-  if (!latestMatch) {
-    notifyDenied("Airway Bill not found", `No saved shipment with Airway Bill "${typedValue}" was found in any branch. The lookup uses the AWB field only, not a matching Job No.`);
-    return;
+    openShipmentFromAirwayBill(
+      latestMatch,
+      typedValue,
+      branch,
+      dialogValue("shipmentService"),
+      dialogValue("shipmentDirection")
+    );
+    notifySuccess("Data fetched", result.duplicateWithinBranch
+      ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}. Existing same-branch duplicate records were found and should be reviewed.`
+      : Number(result.matches || 0) > 1
+        ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}, searched across all branches.`
+        : `Form filled from the latest saved shipment for Airway Bill ${typedValue}.`);
+  } catch (error) {
+    notifyDenied("Airway Bill fetch failed", error.message || "The saved shipment could not be fetched.");
+  } finally {
+    if (fetchButton?.isConnected) fetchButton.disabled = false;
   }
-
-  openShipmentFromAirwayBill(
-    latestMatch,
-    typedValue,
-    branch,
-    dialogValue("shipmentService"),
-    dialogValue("shipmentDirection")
-  );
-  notifySuccess("Data fetched", duplicateWithinBranch
-    ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}. Existing same-branch duplicate records were found and should be reviewed.`
-    : matches > 1
-      ? `Form filled from the latest saved shipment for Airway Bill ${typedValue}, searched across all branches.`
-      : `Form filled from the latest saved shipment for Airway Bill ${typedValue}.`);
 }
 
 function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", service = "", direction = "") {

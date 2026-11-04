@@ -24,7 +24,9 @@ const { createPasswordResetRouter } = require("./password-reset");
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
 const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const { createRequireCurrentErpAdmin } = require("./current-admin-auth");
+const { createCurrentAppSessionResolver } = require("./current-app-session");
 const { respondDatabaseWriteUnavailable } = require("./database-write-response");
+const { applyResourceReadScope, buildShipmentReferenceMap, normalizeBranch, sanitizeResourceRow, shipmentNumberMaxima, shipmentReferencesForRows } = require("./resource-read-scope");
 const { updatePasswordByUsername } = require("./session-revocation");
 const { createRequireCustomerPortalAuth, passwordVersion } = require("./customer-token-auth");
 const {
@@ -629,6 +631,7 @@ function customerSessionFromRow(row) {
 }
 
 const requireCustomerPortalAuth = createRequireCustomerPortalAuth({ query, verifyToken: verifyCustomerToken });
+const resolveCurrentAppSession = createCurrentAppSessionResolver(query);
 
 function appAuthFromRequest(request) {
   const bearer = String(request.headers.authorization || "").trim();
@@ -681,12 +684,15 @@ async function requireAppAuth(request, response, next) {
   }
 
   try {
-    if (!(await isCurrentAppSession(session))) {
+    const currentSession = await resolveCurrentAppSession(session);
+    if (!currentSession) {
       if (!isDevelopmentDemoAdmin(session)) {
         return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
       }
+      request.appSession = session;
+      return next();
     }
-    request.appSession = session;
+    request.appSession = currentSession;
     return next();
   } catch (error) {
     if (isDevelopmentDemoAdmin(session) && isDatabaseSetupError(error)) {
@@ -1558,6 +1564,36 @@ async function getRows(resourceName, config) {
     ok: true,
     rows: result.rows
   };
+}
+
+async function shipmentReferenceMapForRows(resourceName, rows) {
+  const references = shipmentReferencesForRows(resourceName, rows);
+  if (!references.length) return new Map();
+  const result = await query(
+    `select job_no, airway_bill_no, branch, created_by
+     from shipments
+     where lower(trim(job_no)) = any($1::text[])
+        or lower(trim(airway_bill_no)) = any($1::text[])`,
+    [references]
+  );
+  const shipmentMap = buildShipmentReferenceMap(result.rows);
+  if (resourceName === "documents") {
+    const invoiceRows = await query(
+      `select i.invoice_no, s.job_no, s.airway_bill_no, s.branch, s.created_by
+       from invoices i
+       cross join lateral regexp_split_to_table(coalesce(i.shipment_no, ''), E'[,;\\n]+') as refs(shipment_ref)
+       join shipments s on lower(trim(s.job_no)) = lower(trim(refs.shipment_ref))
+       where lower(trim(i.invoice_no)) = any($1::text[])`,
+      [references]
+    );
+    for (const row of invoiceRows.rows) {
+      const key = String(row.invoice_no || "").trim().toLowerCase();
+      if (!key) continue;
+      if (!shipmentMap.has(key)) shipmentMap.set(key, []);
+      shipmentMap.get(key).push(row);
+    }
+  }
+  return shipmentMap;
 }
 
 async function loginUser(identifier, password) {
@@ -4678,6 +4714,54 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
     return next(error);
   }
 });
+app.get("/api/shipments/lookup", requireErpPortalAuth, async (request, response, next) => {
+  const airwayBillNo = String(request.query.airwayBillNo || "").trim();
+  const number = String(request.query.number || "").trim();
+  const term = airwayBillNo || number;
+  if (!term || term.length > 200) {
+    return response.status(400).json({ ok: false, error: "Enter a valid shipment or Airway Bill number." });
+  }
+
+  try {
+    let rows;
+    if (airwayBillNo) {
+      rows = (await query(
+        `select ${columnsFor(resources.shipments)}
+         from shipments
+         where lower(trim(airway_bill_no)) = lower(trim($1))
+         order by updated_at desc, created_at desc, job_no desc`,
+        [airwayBillNo]
+      )).rows;
+    } else {
+      rows = (await query(
+        `select ${columnsFor(resources.shipments)}
+         from shipments
+         where lower(trim(job_no)) = lower(trim($1))
+            or lower(trim(airway_bill_no)) = lower(trim($1))
+         order by updated_at desc, created_at desc, job_no desc
+         limit 100`,
+        [number]
+      )).rows;
+      const configured = (await query(
+        "select allow_global_shipment_quick_search from app_settings where settings_key = 'default' limit 1"
+      )).rows[0];
+      if (String(configured?.allow_global_shipment_quick_search || "No").trim().toLowerCase() !== "yes") {
+        rows = applyResourceReadScope("shipments", rows, request.appSession);
+      }
+    }
+
+    const counts = new Map();
+    for (const row of rows) {
+      const key = normalizeBranch(row.branch);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const duplicateWithinBranch = [...counts.values()].some((count) => count > 1);
+    const shipment = rows[0] ? sanitizeResourceRow("shipments", rows[0], request.appSession) : null;
+    return response.json({ ok: true, shipment, matches: rows.length, duplicateWithinBranch });
+  } catch (error) {
+    return next(error);
+  }
+});
 app.post("/api/shipments", requireErpPortalAuth, async (request, response, next) => {
   try {
     const customerName = request.body?.customer || request.body?.customerName || "";
@@ -4769,6 +4853,13 @@ app.use("/api/maintenance/users", maintenanceUsersRouter);
 app.use("/api/maintenance/vehicles", maintenanceVehiclesRouter);
 app.use("/api/ai", createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl: resolveStoredDocumentUrl }));
 app.use("/api/customer/compliance", createCustomerComplianceRouter({ query, requireCustomerPortalAuth }));
+require("./customer-hs-help").registerHsHelp({
+  app,
+  query,
+  requireCustomerPortalAuth,
+  requireErpPortalAuth,
+  ...require("./customer-compliance")
+});
 app.use("/api/chat", createConnectedChatRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth, sendMail: sendMicrosoftGraphMail }));
 
@@ -4786,34 +4877,54 @@ app.get("/api/documents", requireErpOrHrResourceAuth, async (request, response) 
 
   try {
     const employeeTypes = Array.from(EMPLOYEE_DOCUMENT_TYPE_NAMES);
-    const values = [employeeTypes];
-    let cursorClause = "";
-    if (cursor) {
-      values.push(cursor);
-      cursorClause = `and id < $${values.length}::bigint`;
-    }
-    values.push(limit + 1);
-    const result = await query(
-      `select id, ${columnsFor(resources.documents)}
-       from documents
-       where document_no not like 'POD-AWB-BACKFILL-%'
-         and coalesce(type, '') <> all($1::text[])
-         ${cursorClause}
-       order by id desc
-       limit $${values.length}`,
-      values
-    );
-    const hasMore = result.rows.length > limit;
-    const rows = hasMore ? result.rows.slice(0, limit) : result.rows;
-    return response.json({
-      ok: true,
-      rows,
-      pagination: {
-        limit,
-        hasMore,
-        nextCursor: hasMore && rows.length ? String(rows[rows.length - 1].id) : null
+    const chunkSize = Math.min(1000, Math.max(100, limit + 1));
+    const visibleRows = [];
+    let scanCursor = cursor;
+    let lastScannedId = cursor;
+    let scanned = 0;
+    let hasMore = false;
+
+    while (visibleRows.length <= limit && scanned < 10000) {
+      const values = [employeeTypes];
+      let cursorClause = "";
+      if (scanCursor) {
+        values.push(scanCursor);
+        cursorClause = `and id < $${values.length}::bigint`;
       }
-    });
+      values.push(chunkSize + 1);
+      const result = await query(
+        `select id, ${columnsFor(resources.documents)}
+         from documents
+         where document_no not like 'POD-AWB-BACKFILL-%'
+           and coalesce(type, '') <> all($1::text[])
+           ${cursorClause}
+         order by id desc
+         limit $${values.length}`,
+        values
+      );
+      if (!result.rows.length) {
+        hasMore = false;
+        break;
+      }
+
+      const chunkHasMore = result.rows.length > chunkSize;
+      const chunkRows = chunkHasMore ? result.rows.slice(0, chunkSize) : result.rows;
+      const shipmentMap = await shipmentReferenceMapForRows("documents", chunkRows);
+      visibleRows.push(...applyResourceReadScope("documents", chunkRows, request.appSession, shipmentMap));
+      scanned += chunkRows.length;
+      lastScannedId = String(chunkRows[chunkRows.length - 1].id);
+      scanCursor = lastScannedId;
+      hasMore = chunkHasMore;
+      if (!chunkHasMore) break;
+    }
+
+    if (scanned >= 10000 && visibleRows.length <= limit) hasMore = true;
+    if (visibleRows.length > limit) hasMore = true;
+    const rows = visibleRows.slice(0, limit);
+    const nextCursor = hasMore
+      ? String(rows[rows.length - 1]?.id || lastScannedId || "") || null
+      : null;
+    return response.json({ ok: true, rows, pagination: { limit, hasMore, nextCursor } });
   } catch (error) {
     console.error("Documents page query failed:", error?.message || error);
     const status = Number.isInteger(error?.status) && error.status >= 400 ? error.status : 503;
@@ -4834,6 +4945,7 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
 
   try {
     const result = await getRows(resourceName, config);
+    if (resourceName === "shipments") result.numberingMaxima = shipmentNumberMaxima(result.rows);
     if(resourceName==='users') {
       const settings=(await query('select * from hr_leave_user_settings')).rows;
       const byUser=new Map(settings.map(s=>[s.user_name.toLowerCase(),s]));
@@ -4845,6 +4957,10 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
     }
     if (resourceName === "documents") {
       result.rows = result.rows.filter((row) => !EMPLOYEE_DOCUMENT_TYPE_NAMES.has(String(row.type || "")));
+    }
+    if (!request.appSession?.employeePortal) {
+      const shipmentMap = await shipmentReferenceMapForRows(resourceName, result.rows);
+      result.rows = applyResourceReadScope(resourceName, result.rows, request.appSession, shipmentMap);
     }
     response.json(result);
   } catch (error) {

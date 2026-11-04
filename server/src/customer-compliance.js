@@ -204,12 +204,14 @@ function analyzeLineItem(line, index) {
 
   return {
     lineIndex: index,
+    clarificationQuestion: /\bcaps?\b/i.test(description) && !/bottle|closure|container|head|wear|baseball|hat|screw|plastic|metal|cotton|swim/i.test(description) ? 'Is this a cap worn on the head, a container closure, or another type? Please specify its use and material.' : '',
     description,
     quantity: Number(line?.quantity || 0) || 0,
     unit: cleanText(line?.unit || "", 80),
     submittedHsCode: submittedDisplay,
     status,
     confidence,
+    originalConfidence: exact ? confidence : null,
     issue,
     matchedMaster: exact ? rowPublic(exact) : null,
     suggestion,
@@ -547,6 +549,7 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
         },
         cargoLines,
         lines,
+        sourceDocuments: normalizedFiles.map(({fileName,mimeType,contentBase64}) => ({fileName,mimeType,contentBase64})),
         warnings: Array.isArray(extraction?.warnings) ? extraction.warnings.map((item) => cleanText(item, 300)).filter(Boolean).slice(0, 10) : []
       };
       const inputHash = crypto.createHash("sha256").update(normalizedFiles.map((f) => `${f.fileName}:${f.contentBase64}`).join("|")).digest("hex");
@@ -555,6 +558,20 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
     } catch (error) { return next(error); }
   });
 
+  router.post('/:analysisId/clarify', async (request,response,next) => {
+    try {
+      const loaded=await loadAnalysis(query,request.customerSession,request.params.analysisId);
+      if(!loaded)return response.status(404).json({ok:false,error:'Check expired. Analyze again.'});
+      const index=request.body.lineIndex, detail=cleanText(request.body.detail,500), old=loaded.result.lines[index];
+      if(!Number.isInteger(index)||!old||detail.length<3)return response.status(400).json({ok:false,error:'Enter a short product clarification.'});
+      const revised=analyzeLineItem({description:old.description+' '+detail,hsCode:old.submittedHsCode,quantity:old.quantity,unit:old.unit,sourceFile:old.sourceFile,sourceSheet:old.sourceSheet,sourceRow:old.sourceRow,sourcePage:old.sourcePage},index);
+      revised.description=old.description; revised.clarification=detail; revised.clarificationQuestion='';
+      loaded.result.lines[index]=revised;
+      loaded.result.status=overallStatus(loaded.result.lines,loaded.result.extractionComplete!==false);
+      await query('update customer_compliance_checks set status=$1,result_json=$2,updated_at=now() where analysis_id=$3',[loaded.result.status,JSON.stringify(loaded.result),loaded.row.analysis_id]);
+      response.json({ok:true,analysisId:loaded.row.analysis_id,result:publicResult(loaded.result)});
+    } catch(error){next(error);}
+  });
   router.post("/:analysisId/confirm", async (request, response, next) => {
     try {
       const loaded = await loadAnalysis(query, request.customerSession, request.params.analysisId);
@@ -565,6 +582,11 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
         const index = Number(item?.lineIndex);
         if (!Number.isInteger(index) || index < 0 || index >= lines.length) continue;
         const line = lines[index];
+        if(item.keepOriginal === true) {
+          const original=analyzeLineItem({description:line.description+' '+(line.clarification||''),hsCode:line.submittedHsCode},index);
+          Object.assign(line,{effectiveHsCode:line.submittedHsCode,acceptedSuggestion:false,confidence:original.confidence,originalConfidence:original.originalConfidence,status:original.status,issue:original.issue,matchedMaster:original.matchedMaster,customerChoice:'original'});
+          continue;
+        }
         const requestedCode = normalizeCode(item?.hsCode);
         const suggestedCode = normalizeCode(line?.suggestion?.hsCode);
         if (!requestedCode || requestedCode !== suggestedCode) continue;
@@ -596,4 +618,4 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
   return router;
 }
 
-module.exports = { createCustomerComplianceRouter, isKuwaitDestination, READY_THRESHOLD, spreadsheetText };
+module.exports = { createCustomerComplianceRouter, isKuwaitDestination, READY_THRESHOLD, spreadsheetText, loadAnalysis, masterIndex, normalizeCode, analyzeLineItem, publicResult };

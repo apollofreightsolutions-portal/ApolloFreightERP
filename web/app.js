@@ -8,7 +8,7 @@ import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {
 
 // HS lookup is an optional Customer Portal enhancement.  Load it after the core
 // ERP has started so a missing static asset can never prevent login or buttons.
-import("./hs-code-customer-portal.js").catch((error) => {
+import("./hs-code-customer-portal.js?v=apollo-v30-20261104").catch((error) => {
   console.warn("Customer HS-code lookup is unavailable.", error);
 });
 
@@ -27,6 +27,7 @@ import("./apollo-ai.js").catch((error) => {
 import("./connected-chat.js").catch((error) => {
   console.warn("Connected Chat is unavailable.", error);
 });
-import("./customer-compliance.js?v=apollo-v29-1-documents-20261027").catch((error) => {
+import("./customer-compliance.js?v=apollo-v30-20261104").catch((error) => {
   console.warn("Customer Compliance is unavailable.", error);
 });
+import('./customer-hs-help.js?v=apollo-v30-20261104').catch(error=>console.warn('HS help unavailable',error));

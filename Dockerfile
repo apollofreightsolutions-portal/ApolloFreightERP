@@ -3,6 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY server/package*.json ./
+COPY server/vendor ./vendor
 RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY server/src ./src
