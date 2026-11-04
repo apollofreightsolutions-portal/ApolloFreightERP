@@ -1,4 +1,5 @@
 import { countLiveShipmentsByStatus, shipmentsForAirwayBill } from "./dashboard-status.mjs";
+import { invoiceLineAmount, normalizeInvoiceLineAmount, numberOrExisting } from "./invoice-values.mjs";
 
 const API_URL = (window.APOLLO_API_URL || window.location.origin || "").replace(/\/$/, "");
 const STORAGE_KEY = "apollofreighterp-web-state-v3";
@@ -7807,14 +7808,14 @@ function openRecord(type, id, presetRecord) {
           grossWeight: Number(data.grossWeight || record.grossWeight || 0),
           volumeWeight: Number(data.volumeWeight || record.volumeWeight || 0),
           currency: selectedCurrency,
-          taxPercent: Number(data.taxPercent || record.taxPercent || 0),
-          revenue: canBillingSalesEntry() ? Number(data.revenue || record.revenue || 0) : Number(record.revenue || 0),
-          supplierCost: canBillingCostEntry() ? Number(data.supplierCost || data.totalCost || record.supplierCost || 0) : Number(record.supplierCost || 0),
-          totalCost: canBillingCostEntry() ? Number(data.totalCost || record.totalCost || data.supplierCost || 0) : Number(record.totalCost || 0),
-          taxAmount: canBillingSalesEntry() ? Number(data.taxAmount || record.taxAmount || 0) : Number(record.taxAmount || 0),
-          grossProfit: canBillingSalesEntry() && canBillingCostEntry() && canViewProfitMargin() ? Number(data.grossProfit || record.grossProfit || 0) : Number(record.grossProfit || 0),
-          profitPercent: canBillingSalesEntry() && canBillingCostEntry() && canViewProfitMargin() ? Number(data.profitPercent || record.profitPercent || 0) : Number(record.profitPercent || 0),
-          grandTotal: canBillingSalesEntry() ? Number(data.grandTotal || record.grandTotal || 0) : Number(record.grandTotal || 0),
+          taxPercent: numberOrExisting(data.taxPercent, record.taxPercent),
+          revenue: canBillingSalesEntry() ? numberOrExisting(data.revenue, record.revenue) : Number(record.revenue || 0),
+          supplierCost: canBillingCostEntry() ? numberOrExisting(data.supplierCost, numberOrExisting(data.totalCost, record.supplierCost)) : Number(record.supplierCost || 0),
+          totalCost: canBillingCostEntry() ? numberOrExisting(data.totalCost, numberOrExisting(record.totalCost, data.supplierCost)) : Number(record.totalCost || 0),
+          taxAmount: canBillingSalesEntry() ? numberOrExisting(data.taxAmount, record.taxAmount) : Number(record.taxAmount || 0),
+          grossProfit: canBillingSalesEntry() && canBillingCostEntry() && canViewProfitMargin() ? numberOrExisting(data.grossProfit, record.grossProfit) : Number(record.grossProfit || 0),
+          profitPercent: canBillingSalesEntry() && canBillingCostEntry() && canViewProfitMargin() ? numberOrExisting(data.profitPercent, record.profitPercent) : Number(record.profitPercent || 0),
+          grandTotal: canBillingSalesEntry() ? numberOrExisting(data.grandTotal, record.grandTotal) : Number(record.grandTotal || 0),
           status: data.status || record.status || "Draft",
           date: data.date || record.date || today(),
           invoiceLinesJson: data.invoiceLinesJson || record.invoiceLinesJson || "[]",
@@ -10674,31 +10675,27 @@ function parseInvoiceLineItems(value) {
   try {
     var parsed = JSON.parse(value || '[]');
     return Array.isArray(parsed)
-      ? parsed.map((line, index) => ({
-          id: line.id || 'invoice-line-' + (index + 1),
-          source: line.source || 'manual',
-          description: line.description || '',
-          unit: line.unit || 'Unit',
-          qty: Number(line.qty || 0),
-          rate: Number(line.rate || 0),
-          amount: Number(line.amount || line.total || 0),
-          cost: Number(line.cost || 0),
-          remarks: line.remarks || '',
-          tariffNo: line.tariffNo || '',
-          tariffName: line.tariffName || '',
-          chargeableWeight: Number(line.chargeableWeight || 0)
-        }))
+      ? parsed.map((line, index) => {
+          const amountFields = normalizeInvoiceLineAmount(line);
+          return {
+            id: line.id || 'invoice-line-' + (index + 1),
+            source: line.source || 'manual',
+            description: line.description || '',
+            unit: line.unit || 'Unit',
+            qty: Number(line.qty || 0),
+            rate: Number(line.rate || 0),
+            ...amountFields,
+            cost: Number(line.cost || 0),
+            remarks: line.remarks || '',
+            tariffNo: line.tariffNo || '',
+            tariffName: line.tariffName || '',
+            chargeableWeight: Number(line.chargeableWeight || 0)
+          };
+        })
       : [];
   } catch {
     return [];
   }
-}
-
-function invoiceLineAmount(line) {
-  var qty = Number(line?.qty || 0);
-  var rate = Number(line?.rate || 0);
-  var amount = Number(line?.amount || 0);
-  return amount || qty * rate;
 }
 
 function invoiceTotals(lines, taxPercent) {
@@ -11227,9 +11224,17 @@ function bindInvoiceShipmentTariff() {
   const updateLineValue = (index, field, value) => {
     const line = lines[index];
     if (!line) return;
-    line[field] = field === 'qty' || field === 'rate' || field === 'amount' || field === 'cost' ? Number(value || 0) : value;
-    if (field === 'qty' || field === 'rate') line.amount = Number((Number(line.qty || 0) * Number(line.rate || 0)).toFixed(3));
-    if (field === 'amount' && !value) line.amount = Number((Number(line.qty || 0) * Number(line.rate || 0)).toFixed(3));
+    line[field] = field === 'qty' || field === 'rate' || field === 'amount' || field === 'cost'
+      ? (value === '' ? 0 : Number(value))
+      : value;
+    if (field === 'qty' || field === 'rate') {
+      line.manualAmount = false;
+      line.amount = Number((Number(line.qty || 0) * Number(line.rate || 0)).toFixed(3));
+    }
+    if (field === 'amount') {
+      line.manualAmount = value !== '';
+      if (value === '') line.amount = Number((Number(line.qty || 0) * Number(line.rate || 0)).toFixed(3));
+    }
     syncInvoice();
   };
 
@@ -13689,6 +13694,14 @@ async function changeCurrentPassword(data) {
     notifyDenied("Password not changed", "Enter a new password first.");
     return false;
   }
+  if (newPassword.length < 12 || newPassword.length > 128) {
+    notifyDenied("Password not changed", "Choose a password between 12 and 128 characters.");
+    return false;
+  }
+  if (newPassword === currentPassword) {
+    notifyDenied("Password not changed", "Choose a new password different from your current password.");
+    return false;
+  }
   if (newPassword !== confirmPassword) {
     notifyDenied("Password not changed", "New password and confirm password do not match.");
     return false;
@@ -13913,11 +13926,14 @@ async function createInvoice(data) {
   const tariffItem = state.tariffs.find((row) => row.tariffNo === data.tariffNo) || assignedTariffForShipment(shipmentItem);
   const chargeableWeight = Number(data.chargeableWeight || effectiveChargeableWeightForShipment(shipmentItem) || 0);
   const lines = parseInvoiceLineItems(data.invoiceLinesJson || JSON.stringify(invoiceLinesFromTariff(shipmentItem, tariffItem, chargeableWeight)));
-  const totals = invoiceTotals(lines, Number(data.taxPercent || 0));
+  const taxPercent = numberOrExisting(data.taxPercent, 0);
+  const totals = invoiceTotals(lines, taxPercent);
   const customer = shipmentItem?.customer || data.customer;
   const selectedCurrency = String(data.currency || shipmentItem?.currency || "KD").trim();
   const invoiceSnapshot = parseJsonMeta(data.invoiceSnapshotJson || "{}");
-  const record = invoice(invoiceNo, customer, data.shipmentNo, canBillingSalesEntry() ? Number(data.revenue || totals.revenue || 0) : 0, canBillingCostEntry() ? Number(data.supplierCost || data.totalCost || totals.cost || 0) : 0, data.status || "Draft", data.date || today());
+  const revenue = canBillingSalesEntry() ? numberOrExisting(data.revenue, totals.revenue) : 0;
+  const supplierCost = canBillingCostEntry() ? numberOrExisting(data.supplierCost, numberOrExisting(data.totalCost, totals.cost)) : 0;
+  const record = invoice(invoiceNo, customer, data.shipmentNo, revenue, supplierCost, data.status || "Draft", data.date || today());
   Object.assign(record, {
     customerCode: shipmentItem?.customerCode || data.customerCode || "",
     tariffNo: data.tariffNo || tariffItem?.tariffNo || "",
@@ -13926,15 +13942,15 @@ async function createInvoice(data) {
     grossWeight: Number(data.grossWeight || shipmentItem?.actualKg || 0),
     volumeWeight: Number(data.volumeWeight || shipmentItem?.cbm || 0),
     currency: selectedCurrency,
-    totalCost: canBillingCostEntry() ? Number(data.totalCost || data.supplierCost || totals.cost || 0) : 0,
-    taxPercent: Number(data.taxPercent || 0),
-    taxAmount: Number(data.taxAmount || totals.taxAmount || 0),
-    grandTotal: Number(data.grandTotal || totals.grandTotal || 0),
-    profitPercent: Number(data.profitPercent || totals.profitPercent || 0),
+    totalCost: canBillingCostEntry() ? numberOrExisting(data.totalCost, numberOrExisting(data.supplierCost, totals.cost)) : 0,
+    taxPercent,
+    taxAmount: numberOrExisting(data.taxAmount, totals.taxAmount),
+    grandTotal: numberOrExisting(data.grandTotal, totals.grandTotal),
+    profitPercent: numberOrExisting(data.profitPercent, totals.profitPercent),
     invoiceLinesJson: data.invoiceLinesJson || JSON.stringify(lines),
     tariffSnapshotJson: data.tariffSnapshotJson || JSON.stringify(tariffItem || {}),
     invoiceSnapshotJson: JSON.stringify({
-      ...invoiceSnapshotFromSelection(shipmentItem, tariffItem, lines, Number(data.taxPercent || 0), selectedCurrency),
+      ...invoiceSnapshotFromSelection(shipmentItem, tariffItem, lines, taxPercent, selectedCurrency),
       ...invoiceSnapshot,
       currency: selectedCurrency,
       shipmentVia: shipmentViaValue(shipmentItem),

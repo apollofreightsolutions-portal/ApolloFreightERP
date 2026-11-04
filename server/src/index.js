@@ -27,8 +27,11 @@ const { createRequireCurrentErpAdmin } = require("./current-admin-auth");
 const { createCurrentAppSessionResolver } = require("./current-app-session");
 const { respondDatabaseWriteUnavailable } = require("./database-write-response");
 const { applyResourceReadScope, buildShipmentReferenceMap, normalizeBranch, sanitizeResourceRow, shipmentNumberMaxima, shipmentReferencesForRows } = require("./resource-read-scope");
+const { CLEARABLE_UPDATE_FIELDS, collectValues } = require("./resource-update-values");
 const { updatePasswordByUsername } = require("./session-revocation");
 const { createRequireCustomerPortalAuth, passwordVersion } = require("./customer-token-auth");
+const { findNonEmployeeDocument } = require("./document-view");
+const { passwordChangePolicyError } = require("./password-change-policy");
 const {
   normalizePolicy: normalizeMfaPolicy,
   encryptSecret: encryptMfaSecret,
@@ -1487,37 +1490,6 @@ function columnsFor(config) {
   return [...new Set(names)].join(", ");
 }
 
-function valueFromBody(body, item) {
-  for (const name of item.names) {
-    if (Object.prototype.hasOwnProperty.call(body, name)) {
-      return body[name];
-    }
-  }
-
-  return undefined;
-}
-
-function collectValues(config, body, includeKey = true) {
-  const columns = [];
-  const values = [];
-
-  for (const item of config.fields) {
-    if (!includeKey && item.column === config.key) {
-      continue;
-    }
-
-    const value = valueFromBody(body, item);
-    if (value === undefined || value === "") {
-      continue;
-    }
-
-    columns.push(item.column);
-    values.push(value);
-  }
-
-  return { columns, values };
-}
-
 function requireFields(config, columns) {
   const missing = config.fields
     .filter((item) => item.required)
@@ -1904,7 +1876,8 @@ async function updateRow(config, id, body, dbQuery = query) {
   body = await prepareRecordForConfig(config, body);
   let updateConfig = config;
   let mfaColumnAvailable = true;
-  let { columns, values } = collectValues(updateConfig, body, false);
+  const allowEmptyFields = CLEARABLE_UPDATE_FIELDS[config.table];
+  let { columns, values } = collectValues(updateConfig, body, false, allowEmptyFields);
   if (!columns.length) {
     const error = new Error("No values supplied.");
     error.status = 400;
@@ -1943,7 +1916,7 @@ async function updateRow(config, id, body, dbQuery = query) {
       ...config,
       fields: config.fields.filter((item) => item.column !== "mfa_policy")
     };
-    ({ columns, values } = collectValues(updateConfig, body, false));
+    ({ columns, values } = collectValues(updateConfig, body, false, allowEmptyFields));
     if (!columns.length) {
       const errorWithoutMfa = new Error("No values supplied.");
       errorWithoutMfa.status = 400;
@@ -2704,6 +2677,8 @@ app.post("/api/change-password", loginRateLimiter, async (request, response, nex
       error: "User name, current password, and new password are required."
     });
   }
+  const policyError = passwordChangePolicyError(currentPassword, newPassword);
+  if (policyError) return response.status(400).json({ ok: false, error: policyError });
 
   try {
     const row = await loginUser(userName, currentPassword);
@@ -3469,8 +3444,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
 app.get("/api/documents/:documentNo/view", requireErpPortalAuth, async (request, response, next) => {
   try {
     const documentNo = String(request.params.documentNo || "").trim();
-    const result = await query("select storage_url, file_name, type, notes from documents where document_no=$1 limit 1", [documentNo]);
-    const item = result.rows[0];
+    const item = await findNonEmployeeDocument(query, documentNo, EMPLOYEE_DOCUMENT_TYPE_NAMES);
     if (!item?.storage_url) return response.status(404).json({ ok: false, error: "Uploaded file not found." });
     let metadata = {}; try { metadata = JSON.parse(item.notes || "{}"); } catch {}
     if (metadata.storageProvider === "gcs" && metadata.objectName) {
