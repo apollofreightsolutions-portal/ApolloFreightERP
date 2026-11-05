@@ -2,26 +2,29 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { createRequireCustomerPortalAuth, passwordVersion } = require('../src/customer-token-auth');
+const { createRequireCustomerPortalAuth } = require('../src/customer-token-auth');
 
-const passwordHash = '$2b$12$stable-hash-value-for-customer';
+const userUpdatedAt = new Date('2026-11-02T10:00:00.000Z');
+const customerUpdatedAt = new Date('2026-11-02T10:01:00.000Z');
 const session = {
   customerUserId: '17',
   customerCode: 'CUS-017',
   userName: 'customer.user',
   portal: 'customer',
-  passwordVersion: passwordVersion(passwordHash)
+  customerUserUpdatedAt: userUpdatedAt.getTime(),
+  customerUpdatedAt: customerUpdatedAt.getTime()
 };
 const account = {
   id: 17,
   customer_code: 'CUS-017',
   username: 'customer.user',
   email: 'user@example.test',
-  password_hash: passwordHash,
   status: 'ACTIVE',
+  customer_user_updated_at: userUpdatedAt,
   customer_name: 'Current Customer Name',
   customer_branch: 'Kuwait HO',
-  customer_status: 'Active'
+  customer_status: 'Active',
+  customer_updated_at: customerUpdatedAt
 };
 
 function makeResponse() {
@@ -60,12 +63,11 @@ async function runAuth({ tokenSession = session, row = account, error, headers =
   return { request, response, nextCalls, queryCalls, forwardedError };
 }
 
-test('active customer tokens use the current password fingerprint and enrich current account data', async () => {
+test('active customer tokens are checked against current customer rows and enriched with current account data', async () => {
   const result = await runAuth();
   assert.equal(result.nextCalls, 1);
   assert.equal(result.response.statusCode, 200);
   assert.equal(result.queryCalls, 1);
-  assert.match(result.request.customerSession.customerUserId, /17/);
   assert.equal(result.request.customerSession.customerName, 'Current Customer Name');
   assert.equal(result.request.customerSession.customerCode, 'CUS-017');
 });
@@ -77,11 +79,12 @@ test('non-customer portal tokens are rejected before database access', async () 
   assert.equal(result.queryCalls, 0);
 });
 
-test('password changes, disabled accounts, and changed login identity revoke old tokens', async () => {
+test('inactive customer users, inactive linked customers, and stale account state are rejected', async () => {
   for (const row of [
     { ...account, status: 'Inactive' },
     { ...account, customer_status: 'Inactive' },
-    { ...account, password_hash: '$2b$12$new-password-hash' },
+    { ...account, customer_user_updated_at: new Date(userUpdatedAt.getTime() + 1) },
+    { ...account, customer_updated_at: new Date(customerUpdatedAt.getTime() + 1) },
     { ...account, customer_code: 'CUS-OTHER' },
     { ...account, username: 'renamed.user' },
     null
@@ -90,16 +93,6 @@ test('password changes, disabled accounts, and changed login identity revoke old
     assert.equal(result.response.statusCode, 401);
     assert.equal(result.nextCalls, 0);
   }
-});
-
-test('normal last-login and customer-profile changes do not invalidate an unchanged password token', async () => {
-  const result = await runAuth({
-    row: { ...account, customer_name: 'Renamed Customer', customer_branch: 'Dubai' }
-  });
-  assert.equal(result.response.statusCode, 200);
-  assert.equal(result.nextCalls, 1);
-  assert.equal(result.request.customerSession.customerName, 'Renamed Customer');
-  assert.equal(result.request.customerSession.branchAccess, 'Dubai');
 });
 
 test('database errors fail closed with a temporary authentication error', async () => {

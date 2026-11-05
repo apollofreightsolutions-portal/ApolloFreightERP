@@ -1,6 +1,5 @@
 const crypto = require("crypto");
 const { query } = require("../../db");
-const { timingSafeStringEqual } = require("../../token-signature");
 
 let sharedPortalSecret = String(process.env.CUSTOMER_PORTAL_SECRET || process.env.SESSION_SECRET || process.env.API_SECRET || "").trim();
 
@@ -26,7 +25,9 @@ async function verifyErpToken(token) {
   const secret = await getSharedPortalSecret();
   if (!secret) return null;
   const expected = crypto.createHmac("sha256", secret).update(body).digest("base64url");
-  if (!timingSafeStringEqual(expected, signature)) return null;
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     const rawExp = Number(payload?.exp || 0);

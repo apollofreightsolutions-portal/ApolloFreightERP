@@ -4,7 +4,7 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 function session(){try{return JSON.parse(sessionStorage.getItem('apollofreighterp-session')||'null');}catch{return null;}}
 async function api(path,body){const s=session();const r=await fetch(root+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+s?.token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const j=await r.json();if(!r.ok)throw new Error(j.error||'Unable to load HS help');return j;}
 const parse=v=>typeof v==='string'?JSON.parse(v):v;
-let button,dialog,rows=[],lastToken='',busy=false,retryAfter=0;
+let button,dialog,rows=[],lastToken='',busy=false;
 function close(){dialog?.remove();dialog=null;}
 function shell(title){close();dialog=document.createElement('dialog');dialog.style.cssText='width:min(1100px,94vw);max-height:90vh;overflow:auto;border:1px solid #ddd;border-radius:12px;padding:24px';dialog.innerHTML=`<button type="button" data-close style="float:right">Close</button><h2>${esc(title)}</h2><div data-body></div><p role="status" data-message></p>`;document.body.append(dialog);dialog.querySelector('[data-close]').onclick=close;dialog.showModal();return dialog.querySelector('[data-body]');}
 function saveFile(bytes,mime,name){const u=URL.createObjectURL(new Blob([bytes],{type:mime})),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}
@@ -31,11 +31,11 @@ async function openInbox(){
 }
 async function poll(){
   const s=session();if(!s?.token){button?.remove();button=null;rows=[];lastToken='';close();return;}
-  if(s.token!==lastToken){rows=[];close();lastToken=s.token;retryAfter=0;}
-  if(busy||Date.now()<retryAfter)return;busy=true;
+  if(s.token!==lastToken){rows=[];close();lastToken=s.token;}
+  if(busy)return;busy=true;
   try{const customer=s.portal==='customer',data=await api(customer?'/api/customer/hs-help/requests':'/api/hs-help/requests');if(session()?.token!==s.token)return;rows=data.rows||[];
     if(!button){button=document.createElement('button');button.type='button';button.style.cssText='position:fixed;bottom:18px;left:18px;z-index:900;background:#102332;color:white;border:0;border-radius:8px;padding:12px';button.onclick=openInbox;document.body.append(button);}
     const count=rows.filter(r=>r.status===(customer?'ANSWERED':'OPEN')).length;button.textContent=customer?`HS help · ${count} replies`:`DXB HS help · ${count} pending`;
-  }catch(error){button?.remove();button=null;retryAfter=Date.now()+600000;}finally{busy=false;}
+  }catch(error){button?.remove();button=null;}finally{busy=false;}
 }
 setInterval(poll,30000);setInterval(()=>{if(session()?.token!==lastToken)poll();},2000);poll();
