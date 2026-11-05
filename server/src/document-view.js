@@ -5,7 +5,7 @@ async function findNonEmployeeDocument(query, documentNo, employeeDocumentTypes)
     .map((type) => String(type || '').trim().toLowerCase())
     .filter(Boolean);
   const result = await query(
-    `select storage_url, file_name, type, notes
+    `select storage_url, file_name, type, notes, linked_no, owner, created_by
      from documents
      where document_no = $1
        and lower(coalesce(type, '')) <> all($2::text[])

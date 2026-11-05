@@ -26,7 +26,7 @@ const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const { createRequireCurrentErpAdmin } = require("./current-admin-auth");
 const { createCurrentAppSessionResolver } = require("./current-app-session");
 const { respondDatabaseWriteUnavailable } = require("./database-write-response");
-const { applyResourceReadScope, buildShipmentReferenceMap, normalizeBranch, sanitizeResourceRow, shipmentNumberMaxima, shipmentReferencesForRows } = require("./resource-read-scope");
+const { applyResourceReadScope, buildShipmentReferenceMap, normalizeBranch, protectInvoiceWriteBody, sanitizeResourceRow, shipmentNumberMaxima, shipmentReferencesForRows } = require("./resource-read-scope");
 const { CLEARABLE_UPDATE_FIELDS, collectValues } = require("./resource-update-values");
 const { updatePasswordByUsername } = require("./session-revocation");
 const { createRequireCustomerPortalAuth, passwordVersion } = require("./customer-token-auth");
@@ -2538,7 +2538,7 @@ app.post("/api/mfa/enroll/verify", async (request, response, next) => {
     if (!verifyTotp(decrypted.secret, request.body?.code)) return response.status(401).json({ ok: false, error: "The Microsoft Authenticator code is invalid or expired." });
     const recoveryCodes = createRecoveryCodes();
     await query("update app_users set mfa_secret_enc=$1, mfa_recovery_codes=$2, mfa_enrolled_at=now() where lower(user_name)=lower($3)", [decrypted.usedFallback ? encryptMfaSecret(decrypted.secret, mfaEncryptionSecret) : row.mfa_secret_enc, JSON.stringify(recoveryCodes.map(recoveryCodeHash)), userName]);
-    return response.json({ ok: true, recoveryCodes, session: mfaSession(row, challenge.targetPortal) });
+    return response.json({ ok: true, recoveryCodes, session: mfaSession(row, challenge?.targetPortal) });
   } catch (error) { return next(error); }
 });
 
@@ -2569,7 +2569,7 @@ app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => 
       await query("update app_users set mfa_secret_enc=$1 where lower(user_name)=lower($2)", [encryptMfaSecret(decrypted.secret, mfaEncryptionSecret), row.user_name]);
     }
     if (recoveryCodes !== row.mfa_recovery_codes) await query("update app_users set mfa_recovery_codes=$1 where lower(user_name)=lower($2)", [recoveryCodes, row.user_name]);
-    return response.json({ ok: true, session: mfaSession(row, challenge.targetPortal) });
+    return response.json({ ok: true, session: mfaSession(row, challenge?.targetPortal) });
   } catch (error) { return next(error); }
 });
 
@@ -3059,7 +3059,6 @@ app.get("/api/customer/profile", requireCustomerPortalAuth, async (request, resp
 
 app.put("/api/customer/profile", requireCustomerPortalAuth, async (request, response, next) => {
   const data = request.body || {};
-  const customerPasswordChanged = Boolean(String(data.password || "").trim());
   try {
     const account = await getCustomerAccount(request.customerSession.customerCode || request.customerSession.userName);
     if (!account) {
@@ -3447,6 +3446,11 @@ app.get("/api/documents/:documentNo/view", requireErpPortalAuth, async (request,
     const documentNo = String(request.params.documentNo || "").trim();
     const item = await findNonEmployeeDocument(query, documentNo, EMPLOYEE_DOCUMENT_TYPE_NAMES);
     if (!item?.storage_url) return response.status(404).json({ ok: false, error: "Uploaded file not found." });
+    // Same branch / own-entry rule as the documents list, so a document number alone does not open another branch's file.
+    const documentScopeMap = await shipmentReferenceMapForRows("documents", [item]);
+    if (!applyResourceReadScope("documents", [item], request.appSession, documentScopeMap).length) {
+      return response.status(404).json({ ok: false, error: "Uploaded file not found." });
+    }
     let metadata = {}; try { metadata = JSON.parse(item.notes || "{}"); } catch {}
     if (metadata.storageProvider === "gcs" && metadata.objectName) {
       const storage = googleCloudStorageConfig();
@@ -4972,6 +4976,7 @@ app.post("/api/:resource", requireErpOrHrResourceAuth, async (request, response,
       if (request.body.job_numbers !== undefined) request.body.job_numbers = sanitized;
     }
 
+    if (resourceName === "invoices") request.body = protectInvoiceWriteBody(request.body, request.appSession, null);
     const row = resourceName==='users'
       ? await hrWorkflow.saveUser(request,q=>insertRow(config,request.body||{},q))
       : await insertRow(config, request.body || {});
@@ -5025,6 +5030,8 @@ app.post("/api/shipments/:id/change-job-number", requireErpPortalAuth, async (re
     const consolidations = await client.query("select load_no, job_numbers from consolidations where position(lower($1) in lower(job_numbers)) > 0 for update", [oldJobNo]);
     for (const consolidation of consolidations.rows) {
       const jobs = String(consolidation.job_numbers || "").split(",").map((job) => job.trim()).map((job) => job.toLowerCase() === oldJobNo.toLowerCase() ? newJobNo : job).filter(Boolean).join(", ");
+      const listed = String(consolidation.job_numbers || "").split(",").map((job) => job.trim().toLowerCase());
+      if (!listed.includes(oldJobNo.toLowerCase())) continue;
       await client.query("update consolidations set job_numbers = $1, updated_at = now() where load_no = $2", [jobs, consolidation.load_no]);
     }
     await client.query("insert into audit_log (user_name, action, reference, details) values ($1, $2, $3, $4::jsonb)", [
@@ -5137,6 +5144,10 @@ app.put("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, respon
       if (request.body.job_numbers !== undefined) request.body.job_numbers = sanitized;
     }
 
+    if (resourceName === "invoices") {
+      const stored = (await query("select invoice_lines_json, tariff_snapshot_json, invoice_snapshot_json from invoices where invoice_no = $1", [recordId])).rows[0] || null;
+      request.body = protectInvoiceWriteBody(request.body, request.appSession, stored);
+    }
     const row = resourceName==='users'
       ? await hrWorkflow.saveUser(request,q=>updateRow(config,recordId,request.body||{},q))
       : await updateRow(config, recordId, request.body || {});

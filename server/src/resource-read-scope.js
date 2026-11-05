@@ -1,6 +1,6 @@
 'use strict';
 
-const SHARED_REFERENCE_RESOURCES = new Set(['customers', 'suppliers', 'tariffs', 'settings', 'hs-code-master']);
+const SHARED_REFERENCE_RESOURCES = new Set(['customers', 'suppliers', 'tariffs', 'settings', 'hs-code-master', 'users']);
 const COST_FIELDS = ['supplier_cost', 'total_cost'];
 const PROFIT_FIELDS = ['gross_profit', 'profit_percent'];
 
@@ -37,6 +37,8 @@ function branchAccessList(session) {
 function branchIsAllowed(branch, session) {
   const key = normalizeBranch(branch);
   if (!key || canViewAllBranches(session)) return true;
+  // Records shared by every branch (for example customers/suppliers set to "Both") stay visible.
+  if (['both', 'all', 'all branches'].includes(key)) return true;
   const access = branchAccessList(session);
   return access === null || access.includes(key);
 }
@@ -52,7 +54,7 @@ function shipmentReferencesForRows(resourceName, rows) {
       String(row.shipment_no || row.shipmentNo || '').split(/[,;\n]+/).forEach(add);
     }
     else if (resourceName === 'documents') add(row.linked_no || row.linkedNo);
-    else if (resourceName === 'shipment-cargo-items') add(row.job_no || row.jobNo);
+    else if (resourceName === 'shipment-cargo-items' || resourceName === 'shipment-status-history') add(row.job_no || row.jobNo);
     else if (resourceName === 'consolidations') {
       String(row.job_numbers || row.jobNumbers || '').split(/[,;\n]+/).forEach(add);
     }
@@ -98,7 +100,7 @@ function rowOwners(resourceName, row, shipmentMap) {
     row?.user_name, row?.userName, row?.username
   ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
 
-  if (resourceName === 'shipment-cargo-items') {
+  if (resourceName === 'shipment-cargo-items' || resourceName === 'shipment-status-history') {
     const refs = shipmentReferencesForRows(resourceName, [row]);
     for (const ref of refs) {
       const parents = shipmentMap?.get?.(ref) || [];
@@ -146,12 +148,73 @@ function redactJsonField(value, allowCost, allowProfit) {
   }
 }
 
-function sanitizeResourceRow(resourceName, row, session) {
-  const result = { ...row };
+function costProfitAccess(session) {
   const role = roleKey(session);
   const financeRole = isErpAdmin(session) || ['accountant', 'accounts', 'billing', 'billings'].includes(role);
   const allowCost = financeRole && (isErpAdmin(session) || truthy(session?.canBillingCostEntry ?? session?.can_billing_cost_entry));
   const allowProfit = financeRole;
+  return { allowCost, allowProfit };
+}
+
+const COST_KEY = /(^|_)(supplier_)?cost($|_)|(^|_)buy_cost($|_)/;
+const PROFIT_KEY = /(^|_)(gross_)?profit($|_)|(^|_)margin($|_)/;
+function hiddenKey(key, allowCost, allowProfit) {
+  const normalized = String(key).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  return (!allowCost && COST_KEY.test(normalized)) || (!allowProfit && PROFIT_KEY.test(normalized));
+}
+
+// Put back the cost/profit values this user is not allowed to see, so a save made from
+// the redacted copy in the browser can never wipe them from the stored record.
+function mergeHiddenValues(stored, submitted, allowCost, allowProfit) {
+  if (Array.isArray(stored) && Array.isArray(submitted)) {
+    return submitted.map((item, index) => index < stored.length ? mergeHiddenValues(stored[index], item, allowCost, allowProfit) : item);
+  }
+  if (stored && submitted && typeof stored === 'object' && typeof submitted === 'object' && !Array.isArray(stored) && !Array.isArray(submitted)) {
+    const result = { ...submitted };
+    for (const key of Object.keys(result)) {
+      if (hiddenKey(key, allowCost, allowProfit)) delete result[key];
+    }
+    for (const [key, value] of Object.entries(stored)) {
+      if (hiddenKey(key, allowCost, allowProfit)) result[key] = value;
+      else if (Object.prototype.hasOwnProperty.call(result, key)) result[key] = mergeHiddenValues(value, result[key], allowCost, allowProfit);
+    }
+    return result;
+  }
+  return submitted;
+}
+
+const INVOICE_COST_BODY_KEYS = ['supplier_cost', 'supplierCost', 'total_cost', 'totalCost'];
+const INVOICE_PROFIT_BODY_KEYS = ['gross_profit', 'grossProfit', 'profit_percent', 'profitPercent'];
+const INVOICE_JSON_BODY_KEYS = [
+  ['invoice_lines_json', 'invoiceLinesJson'], ['tariff_snapshot_json', 'tariffSnapshotJson'], ['invoice_snapshot_json', 'invoiceSnapshotJson']
+];
+
+// storedRow is the current database row for an update, or null for a new invoice.
+function protectInvoiceWriteBody(body, session, storedRow) {
+  const { allowCost, allowProfit } = costProfitAccess(session);
+  if (allowCost && allowProfit) return body;
+  const result = { ...(body || {}) };
+  if (!allowCost) for (const key of INVOICE_COST_BODY_KEYS) delete result[key];
+  if (!allowProfit) for (const key of INVOICE_PROFIT_BODY_KEYS) delete result[key];
+  for (const names of INVOICE_JSON_BODY_KEYS) {
+    for (const name of names) {
+      if (!Object.prototype.hasOwnProperty.call(result, name) || typeof result[name] !== 'string' || !result[name].trim()) continue;
+      let submitted;
+      try { submitted = JSON.parse(result[name]); } catch { continue; }
+      let stored = null;
+      try { stored = storedRow && storedRow[names[0]] ? JSON.parse(storedRow[names[0]]) : null; } catch { stored = null; }
+      const merged = stored === null
+        ? redactCostProfit(submitted, allowCost, allowProfit)
+        : mergeHiddenValues(stored, submitted, allowCost, allowProfit);
+      result[name] = JSON.stringify(merged);
+    }
+  }
+  return result;
+}
+
+function sanitizeResourceRow(resourceName, row, session) {
+  const result = { ...row };
+  const { allowCost, allowProfit } = costProfitAccess(session);
 
   if (resourceName !== 'invoices') return result;
 
@@ -214,6 +277,7 @@ module.exports = {
   canViewAllBranches,
   isErpAdmin,
   normalizeBranch,
+  protectInvoiceWriteBody,
   rowIsVisible,
   sanitizeResourceRow,
   shipmentNumberMaxima,
