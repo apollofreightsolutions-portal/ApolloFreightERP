@@ -117,3 +117,31 @@ test('invoice cost and profit fields are removed unless role and billing permiss
   assert.equal(accountantView.gross_profit, 20);
   assert.equal(JSON.parse(accountantView.invoice_lines_json)[0].supplierCost, 80);
 });
+
+const { protectInvoiceWriteBody, rowIsVisible: rowIsVisibleV33 } = require('../src/resource-read-scope');
+
+test('shared "Both" branch customers stay visible to single-branch users', () => {
+  const session = { role: 'sales', userName: 'amy', branchAccess: 'Kuwait HO', branchViewScope: 'Own Branch' };
+  assert.equal(rowIsVisibleV33('customers', { branch: 'Both' }, session), true);
+  assert.equal(rowIsVisibleV33('customers', { branch: 'Dubai' }, session), false);
+});
+
+test('status history and users stay visible to own-entry users through the parent shipment / shared list', () => {
+  const session = { role: 'sales', userName: 'amy', branchAccess: 'Kuwait HO', canViewOnlySelfEntry: true };
+  const map = new Map([['job1', [{ job_no: 'JOB1', branch: 'Kuwait HO', created_by: 'amy' }]]]);
+  assert.equal(rowIsVisibleV33('shipment-status-history', { job_no: 'JOB1', updated_by: 'bob', branch: 'Kuwait HO' }, session, map), true);
+  assert.equal(rowIsVisibleV33('users', { user_name: 'bob' }, session), true);
+});
+
+test('restricted invoice save keeps stored cost and profit values', () => {
+  const session = { role: 'sales', userName: 'amy' };
+  const stored = { invoice_lines_json: JSON.stringify([{ description: 'Freight', amount: 10, cost: 7 }]) };
+  const body = { supplierCost: 0, totalCost: 0, profitPercent: 0, invoiceLinesJson: JSON.stringify([{ description: 'Freight', amount: 12 }]) };
+  const result = protectInvoiceWriteBody(body, session, stored);
+  assert.equal('supplierCost' in result, false);
+  assert.equal('totalCost' in result, false);
+  assert.equal('profitPercent' in result, false);
+  assert.deepEqual(JSON.parse(result.invoiceLinesJson), [{ description: 'Freight', amount: 12, cost: 7 }]);
+  const admin = { role: 'admin', userName: 'root' };
+  assert.equal(protectInvoiceWriteBody(body, admin, stored), body);
+});
