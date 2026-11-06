@@ -1,5 +1,5 @@
 import "./shipment-reporting.js?v=apollo-v292-20261027";
-import "./app-runtime.js?v=apollo-v304-awb-allocation-status-sync-20261101";
+import "./app-runtime.js?v=apollo-v31-hs-layout-20261106";
 import "./hr-workflow-links.js?v=apollo-v241-notify-20261016-1";
 
 import("./hr-portal.js?v=apollo-v241-notify-20261016-1").catch((error) => {
@@ -27,7 +27,7 @@ import("./apollo-ai.js").catch((error) => {
 import("./connected-chat.js").catch((error) => {
   console.warn("Connected Chat is unavailable.", error);
 });
-import("./customer-compliance.js?v=apollo-v30-20261104").catch((error) => {
+import("./customer-compliance.js?v=apollo-v31-hs-layout-20261106").catch((error) => {
   console.warn("Customer Compliance is unavailable.", error);
 });
 import('./customer-hs-help.js?v=apollo-v30-20261104').catch(error=>console.warn('HS help unavailable',error));

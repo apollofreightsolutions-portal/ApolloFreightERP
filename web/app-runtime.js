@@ -8,6 +8,7 @@ const MAINTENANCE_PORTAL_URL = "/maintenance/";
 const customerModules = [
   ["Customer Dashboard", "Shipment requests, tracking updates, and notifications"],
   ["Customer New Shipment", "Submit shipment requests for company approval"],
+  ["HS Code Check", "Check documents against the Kuwait HS master without booking a shipment"],
   ["Customer Shipments", "Shipment request history and company shipments"],
   ["Customer Tracking", "Track your shipment status"],
   ["Customer Profile", "Profile, status, and password"],
@@ -3860,6 +3861,7 @@ function render() {
     "Audit Log": renderAudit,
     "Customer Dashboard": renderCustomerDashboard,
     "Customer New Shipment": renderCustomerNewShipment,
+    "HS Code Check": renderCustomerHsCheck,
     "Customer Shipments": renderCustomerShipments,
     "Customer Tracking": renderCustomerTracking,
     "Customer Profile": renderCustomerProfile,
@@ -4005,6 +4007,18 @@ function updateDateFilterStatus() {
 function portalRows(name) { return Array.isArray(customerPortalData?.[name]) ? customerPortalData[name] : []; }
 function portalStatus(value) { return String(value || "").toUpperCase().replace(/\s+/g, "_"); }
 function renderCustomerDashboard() { const requests = portalRows("shipmentRequests"); const shipments = portalRows("shipments"); const notifications = portalRows("notifications"); const activity = portalRows("activityLogs"); const filter = state.ui.customerActivityFilter || "All"; const visibleActivity = filter === "All" ? activity : activity.filter((row) => String(row.action || "").toLowerCase().includes(filter.toLowerCase())); const pending = requests.filter((row) => ["SUBMITTED", "PENDING_REVIEW"].includes(portalStatus(row.status))).length; const approved = requests.filter((row) => ["AUTO_APPROVED", "APPROVED", "COMPLETED"].includes(portalStatus(row.status))).length; const sentBack = requests.filter((row) => portalStatus(row.status) === "SENT_BACK").length; return "<section class=\"kpi-grid\">" + kpi("Total Shipments", shipments.length + requests.length, "Your shipment records", "customer-total-shipments") + kpi("Pending Requests", pending, "Waiting company review", "customer-pending-requests") + kpi("Approved Requests", approved, "Approved or auto approved", "customer-approved-requests") + kpi("Sent Back Requests", sentBack, "Needs your attention", "customer-sent-back-requests") + kpi("Notifications", notifications.length, "Portal messages", "customer-notifications") + "</section><section class=\"split-grid\"><article class=\"panel\">" + panelHeader("Recent Requests", "Customer Portal") + table("customerRequest", requests.slice(0, 8), customerRequestColumns(), false, "customerRequest:dashboard") + "</article><article class=\"panel\">" + panelHeader("Recent Activity", "Customer Portal") + `<label class="customer-activity-filter">Filter activity<select data-customer-activity-filter>${["All", "Login", "Shipment Submission", "Shipment Resubmission"].map((value) => `<option value="${escapeHtml(value)}" ${value === filter ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>` + table("customerActivity", visibleActivity.slice(0, 8), customerActivityColumns(), false, "customerActivity:dashboard") + "</article></section>"; }
+function renderCustomerHsCheck() {
+  return `<section class="panel customer-booking-panel">
+    ${panelHeader("Check your HS codes", "Customer Portal")}
+    <p>Upload your invoice, review the results and download your summary. Your original documents remain unchanged. Apollo help is optional.</p>
+    <form class="stack-form customer-booking-form" data-form="customer-hs-check" data-hs-check-only="1" novalidate>
+      <section class="customer-booking-step customer-document-step">
+        <span class="customer-step-number">1</span><div><h3>Upload documents</h3><p>Kuwait HS master · Excel, PDF or images · Up to 3 files, 10 MB total.</p></div>
+        <label class="customer-file-picker">Invoice / packing list<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.xls,.xlsx,.xlsm" /></label>
+      </section>
+    </form>
+  </section>`;
+}
 function renderCustomerNewShipment() {
   const hsOptions = portalRows("hsCodeMaster").map((row) => ({ value: row.item_name || row.itemName || "", label: [row.hs_code || row.hsCode, row.item_code || row.itemCode, row.alternate_name || row.alternateName].filter(Boolean).join(" | ") }));
   const requestNo = state.ui.customerRequestEditNo || "";
