@@ -14,13 +14,13 @@ function summaryWorkbook(result) {
   const rows = [['HS check summary — not a replacement invoice or customs clearance'],
     ['Original documents are unchanged. Update your invoice where required before shipment.'],
     ['Extraction complete',result.extractionComplete === false ? 'No — results may omit items' : 'Yes'],
-    ['Line','File','Sheet','Row','Page','Original description','Original HS','Selected HS','Check status','Match score','Clarification','Issue']];
-  for (const l of result.lines || []) rows.push([l.lineIndex+1,l.sourceFile||'',l.sourceSheet||'',l.sourceRow||'',l.sourcePage||'',l.description,l.submittedHsCode,l.effectiveHsCode||l.submittedHsCode,l.status,l.confidence,l.clarification||'',l.issue||'']);
+    ['Line','File','Sheet','Row','Page','Original description','Original HS','Selected HS','Check status','Match score','Clarification','Issue','Customer choice']];
+  for (const l of result.lines || []) rows.push([l.lineIndex+1,l.sourceFile||'',l.sourceSheet||'',l.sourceRow||'',l.sourcePage||'',l.description,l.submittedHsCode,l.effectiveHsCode||l.submittedHsCode,l.status,l.confidence,l.clarification||'',l.issue||'',l.customerChoice==='suggestion'?'Alternative HS code selected':l.customerChoice==='original'?'Original code retained':'']);
   const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = rows[3].map((_,i)=>({wch:i===5||i===11?55:20}));
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'HS Summary');
   return XLSX.write(wb,{type:'buffer',bookType:'xlsx'});
 }
-function registerHsHelp({app,query,requireCustomerPortalAuth,requireErpPortalAuth,loadAnalysis,masterIndex,normalizeCode}) {
+function registerHsHelp({app,query,requireCustomerPortalAuth,requireErpPortalAuth,loadAnalysis,masterIndex,normalizeCode,customerPrefix='/api/customer/hs-help',reviewPrefix='/api/hs-help'}) {
   const customer = express.Router(); customer.use(requireCustomerPortalAuth);
   customer.get('/requests/:id/download',wrap(async(req,res)=>{
     const r=(await query('select snapshot_json,response_json,status from customer_hs_help where id=$1 and lower(customer_code)=lower($2)',[req.params.id,req.customerSession.customerCode])).rows[0];
@@ -54,16 +54,16 @@ function registerHsHelp({app,query,requireCustomerPortalAuth,requireErpPortalAut
     if(!inserted.rows.length)return res.status(409).json({ok:false,error:'This check was already sent to DXB. Open HS help to see its status or reply.'});
     res.json({ok:true,id});
   }));
-  app.use('/api/customer/hs-help',customer);
+  app.use(customerPrefix,customer);
   const gate=(req,res,next)=>query('select role,account_status,branch_access,section_access from app_users where lower(user_name)=lower($1)',[req.appSession.userName]).then(r=>allowed(r.rows[0])?next():res.status(403).json({ok:false,error:'DXB customer-review access required.'})).catch(next);
-  app.get('/api/hs-help/requests',requireErpPortalAuth,gate,wrap(async(req,res)=>{
+  app.get(reviewPrefix+'/requests',requireErpPortalAuth,gate,wrap(async(req,res)=>{
     const rows=(await query('select id,customer_code,customer_user,question,status,answered_by,created_at,answered_at from customer_hs_help order by created_at desc limit 200')).rows;res.json({ok:true,rows});
   }));
-  app.get('/api/hs-help/requests/:id',requireErpPortalAuth,gate,wrap(async(req,res)=>{
+  app.get(reviewPrefix+'/requests/:id',requireErpPortalAuth,gate,wrap(async(req,res)=>{
     const r=(await query('select * from customer_hs_help where id=$1',[req.params.id])).rows[0];
     if(!r)return res.status(404).json({ok:false,error:'Request not found.'});res.json({ok:true,row:{...r,snapshot_json:undefined},snapshot:parse(r.snapshot_json)});
   }));
-  app.post('/api/hs-help/requests/:id/reply',requireErpPortalAuth,gate,wrap(async(req,res)=>{
+  app.post(reviewPrefix+'/requests/:id/reply',requireErpPortalAuth,gate,wrap(async(req,res)=>{
     const r=(await query('select * from customer_hs_help where id=$1',[req.params.id])).rows[0];
     if(!r)return res.status(404).json({ok:false,error:'Request not found.'});
     const lines=parse(r.snapshot_json).lines, replies=Array.isArray(req.body.replies)?req.body.replies:[];

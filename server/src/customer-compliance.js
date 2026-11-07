@@ -245,7 +245,7 @@ function publicResult(result) {
     shield: result.status === "READY_TO_BOOK" ? "APOLLO_SHIELD_READY" : "",
     totalLineItems: lines.length,
     passedLineItems: lines.filter((line) => line.status === "PASS" && !line.clarificationQuestion).length,
-    attentionItems: lines.filter((line) => line.status !== "PASS" || line.clarificationQuestion),
+    attentionItems: lines.filter((line) => !['PASS','CUSTOMER_SELECTED'].includes(line.status) || line.clarificationQuestion),
     lines,
     shipment: result.shipment || {},
     cargoLines: result.cargoLines || [],
@@ -597,18 +597,27 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
         }
         const requestedCode = normalizeCode(item?.hsCode);
         const suggestedCode = normalizeCode(line?.suggestion?.hsCode);
-        if (!requestedCode || requestedCode !== suggestedCode || line.clarificationQuestion || ['BLOCKED','REVIEW'].includes(line.status)) { skipped.push({lineIndex:index,reason:'Clarification/restriction or no eligible suggestion'}); continue; }
+        if (!requestedCode || requestedCode !== suggestedCode) { skipped.push({lineIndex:index,reason:'No matching suggested alternative'}); continue; }
         const masterRow = masterIndex().get(requestedCode);
-        if (!masterRow || masterRow.importProhibition || masterRow.importRestriction || Number(line.suggestion?.confidence||0)<READY_THRESHOLD) { skipped.push({lineIndex:index,reason:'Suggestion is restricted, missing or below 90%'}); continue; }
+        if (!masterRow) { skipped.push({lineIndex:index,reason:'Suggested alternative is no longer in the master list'}); continue; }
+        const previousStatus=line.status, previousIssue=line.issue;
         const confidence = Number(line?.suggestion?.confidence || 0);
         line.effectiveHsCode = masterRow.hsCode;
         line.acceptedSuggestion = true;
         line.customerChoice = 'suggestion';
+        line.customerSelectedAt = new Date().toISOString();
         applied.push(index);
         line.confidence = confidence;
         line.matchedMaster = rowPublic(masterRow);
-        line.status = confidence >= READY_THRESHOLD ? "PASS" : "ATTENTION";
-        line.issue = line.status === "PASS" ? "" : `Suggested replacement is below the ${READY_THRESHOLD}% ready-to-book threshold and needs Apollo review.`;
+        // Explicit customer selection is independent of text similarity; it is NOT customs approval.
+        // Never erase restrictions or unresolved clarification by choosing a different code.
+        line.status = masterRow.importProhibition || previousStatus==='BLOCKED' ? 'BLOCKED'
+          : masterRow.importRestriction || previousStatus==='REVIEW' ? 'REVIEW'
+          : line.clarificationQuestion ? 'ATTENTION' : 'CUSTOMER_SELECTED';
+        line.issue = ['BLOCKED','REVIEW'].includes(line.status)
+          ? [previousIssue,masterRow.importProhibition,masterRow.importRestriction,'Customer selected an alternative. Restriction/prohibition warnings still apply.'].filter(Boolean).join(' ')
+          : line.clarificationQuestion ? 'Alternative selected. Product clarification is still outstanding.'
+          : 'Alternative selected by customer. Match score is informational, not customs approval.';
       }
       loaded.result.status = overallStatus(lines, loaded.result.extractionComplete !== false);
       loaded.result.lines = lines;

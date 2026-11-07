@@ -5,13 +5,18 @@ function sessionToken() {
   try {
     const raw = sessionStorage.getItem("apollofreighterp-session");
     const session = raw ? JSON.parse(raw) : null;
-    return session?.portal === "customer" ? String(session.token || "") : "";
+    return ['customer','company'].includes(session?.portal) ? String(session.token || '') : '';
   } catch { return ""; }
 }
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
 }
+function hsPath(path) {
+  let session;try{session=JSON.parse(sessionStorage.getItem('apollofreighterp-session')||'null');}catch{}
+  return session?.portal==='company'?path.replace('/api/customer/','/api/operations/'):path;
+}
 async function api(path, options = {}) {
+  path=hsPath(path);
   const token = sessionToken();
   const headers = { ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -74,7 +79,7 @@ function styleOnce() {
     .apollo-compliance-panel input[type=checkbox]{width:18px;height:18px;min-height:18px;accent-color:var(--accent,#f05a22)}
     .hs31-heading,.hs31-toolbar,.hs31-actions,.hs31-pagination{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
     .hs31-heading{justify-content:space-between}.hs31-heading h3{margin:0;font-size:24px}.hs31-heading p{margin:6px 0;color:var(--muted)}
-    .hs31-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}
+    .hs31-counts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:20px 0}
     .apollo-compliance-panel .hs31-count{display:flex;flex-direction:column;align-items:flex-start;text-align:left;padding:16px;background:var(--canvas,#f4f5f6);color:var(--ink);border:1px solid var(--line,#d9dde1)}
     .hs31-count strong{font-size:28px}.hs31-count span{font-size:13px}
     .apollo-compliance-panel [data-hs-filter][aria-pressed=true]{border-color:var(--accent,#f05a22);box-shadow:inset 0 -3px var(--accent,#f05a22)}
@@ -107,23 +112,23 @@ function renderResult(panel,result,analysisId) {
   const previous=panel._hsView || {filter:'attention',query:'',page:1,selected:new Set(),expanded:new Set(),question:''};
   panel._hsView=previous;
   const lines=result.lines||[];
-  const category=l=>['BLOCKED','REVIEW'].includes(l.status)?'flagged':l.clarificationQuestion?'clarify':l.status==='PASS'?'matched':'flagged';
-  const counts={all:lines.length,matched:lines.filter(l=>category(l)==='matched').length,clarify:lines.filter(l=>category(l)==='clarify').length,flagged:lines.filter(l=>category(l)==='flagged').length};
+  const category=l=>['BLOCKED','REVIEW'].includes(l.status)?'flagged':l.clarificationQuestion?'clarify':l.status==='CUSTOMER_SELECTED'?'selected':l.status==='PASS'?'matched':'flagged';
+  const counts={selected:lines.filter(l=>category(l)==='selected').length,all:lines.length,matched:lines.filter(l=>category(l)==='matched').length,clarify:lines.filter(l=>category(l)==='clarify').length,flagged:lines.filter(l=>category(l)==='flagged').length};
   if(!panel._hsHasRendered){previous.filter=counts.flagged?'flagged':counts.clarify?'clarify':'all';panel._hsHasRendered=true;}
-  const label=l=>category(l)==='matched'?'Matched':category(l)==='clarify'?'Needs clarification':'Flagged';
+  const label=l=>l.customerChoice==='suggestion'&&category(l)==='flagged'?'Selected · warning':l.customerChoice==='suggestion'&&category(l)==='clarify'?'Selected · clarification':category(l)==='selected'?(form?.dataset.form==='operations-hs-check'?'Staff selected':'Customer selected'):category(l)==='matched'?'Matched':category(l)==='clarify'?'Needs clarification':'Flagged';
   panel.innerHTML=`<div class="hs31-heading"><div><h3>HS code results</h3><p>Review exceptions first. Your original invoice stays unchanged.</p></div><div class="hs31-actions"><button type="button" class="secondary-button" data-hs-copy>Copy results</button><button type="button" data-hs-download>Download Excel</button></div></div>
     ${result.extractionComplete===false?'<p class="apollo-compliance-error" role="alert">Document reading is incomplete. Items may be missing. Do not treat this as a complete check.</p>':''}
-    <div class="hs31-counts">${[['all','Total items'],['matched','Matched'],['clarify','Needs clarification'],['flagged','Flagged']].map(([key,title])=>`<button type="button" class="secondary-button hs31-count" data-hs-filter="${key}"><span>${title}</span><strong>${counts[key]}</strong></button>`).join('')}</div>
+    <div class="hs31-counts">${[['all','Total items'],['matched','Matched'],['selected',form?.dataset.form==='operations-hs-check'?'Staff selected':'Customer selected'],['clarify','Needs clarification'],['flagged','Flagged']].map(([key,title])=>`<button type="button" class="secondary-button hs31-count" data-hs-filter="${key}"><span>${title}</span><strong>${counts[key]}</strong></button>`).join('')}</div>
     <div class="hs31-toolbar"><button type="button" class="secondary-button" data-hs-filter="attention">Needs attention (${counts.clarify+counts.flagged})</button><label>Search items or HS codes<input type="search" data-hs-search placeholder="Description or HS code" value="${esc(previous.query)}"></label><span data-hs-visible role="status"></span></div>
     <div class="hs31-table-wrap"><table class="hs31-table"><thead><tr><th><input type="checkbox" data-hs-select-page aria-label="Select visible items"></th><th>Line / original description</th><th>Invoice HS</th><th>Selected HS</th><th>Result</th><th>Action</th></tr></thead><tbody data-hs-rows></tbody></table></div>
     <div class="hs31-pagination"><button type="button" class="secondary-button" data-hs-page="first">First</button><button type="button" class="secondary-button" data-hs-page="previous">Previous</button><span data-hs-page-info></span><button type="button" class="secondary-button" data-hs-page="next">Next</button><button type="button" class="secondary-button" data-hs-page="last">Last</button></div>
-    <div class="hs31-toolbar hs31-selection-bar"><strong data-hs-selection></strong><button type="button" class="secondary-button" data-hs-select-filtered>Select all filtered items</button><button type="button" class="secondary-button" data-hs-clear>Clear selection</button><select data-hs-bulk aria-label="Action for selected items"><option value="">Choose bulk action</option><option value="keep">Keep invoice codes</option><option value="suggest">Use eligible suggestions</option></select><button type="button" data-hs-apply>Apply to selected</button><button type="button" class="secondary-button" data-hs-open-help>Ask Apollo</button></div>
+    <div class="hs31-toolbar hs31-selection-bar"><strong data-hs-selection></strong><button type="button" class="secondary-button" data-hs-select-filtered>Select all filtered items</button><button type="button" class="secondary-button" data-hs-clear>Clear selection</button><select data-hs-bulk aria-label="Action for selected items"><option value="">Choose bulk action</option><option value="keep">Keep invoice codes</option><option value="suggest">Use alternative HS codes</option></select><button type="button" data-hs-apply>Apply to selected</button><button type="button" class="secondary-button" data-hs-open-help>Ask Apollo</button></div>
     <div class="hs31-help" data-hs-help-box hidden><h4>Ask Apollo about selected items</h4><label>Question (optional)<textarea data-hs-question maxlength="1000" rows="3">${esc(previous.question)}</textarea></label><button type="button" data-hs-help>Send to DXB team</button><p>Optional help, not an approval requirement. Open HS help to read the team's reply.</p></div>
     <p data-hs-feedback role="status" aria-live="polite"></p><p class="apollo-compliance-disclaimer">Matched means the 90% text-match threshold was met, not customs approval. Clarifications and restriction warnings remain separate. Keeping an invoice code does not clear its warnings. ${(result.warnings||[]).map(esc).join(' ')} ${esc(result.disclaimer||'')}</p>`;
   let filtered=[],visible=[],pages=1;
   function drawRows(){
     const query=previous.query.toLowerCase().trim();
-    filtered=lines.filter(l=>(previous.filter==='all'||(previous.filter==='attention'?category(l)!=='matched':category(l)===previous.filter))&&[l.description,l.submittedHsCode,l.effectiveHsCode,l.suggestion?.hsCode,l.sourceFile].some(v=>String(v||'').toLowerCase().includes(query)));
+    filtered=lines.filter(l=>(previous.filter==='all'||(previous.filter==='attention'?['flagged','clarify'].includes(category(l)):category(l)===previous.filter))&&[l.description,l.submittedHsCode,l.effectiveHsCode,l.suggestion?.hsCode,l.sourceFile].some(v=>String(v||'').toLowerCase().includes(query)));
     pages=Math.max(1,Math.ceil(filtered.length/20));previous.page=Math.max(1,Math.min(pages,previous.page));visible=filtered.slice((previous.page-1)*20,previous.page*20);
     panel.querySelector('[data-hs-rows]').innerHTML=visible.map(l=>`<tr class="hs31-row">
       <td data-label="Select"><input type="checkbox" data-hs-help-line value="${l.lineIndex}" aria-label="Select item ${l.lineIndex+1}" ${previous.selected.has(l.lineIndex)?'checked':''}></td>
@@ -136,7 +141,7 @@ function renderResult(panel,result,analysisId) {
       <p><strong>Original description:</strong> ${esc(l.description)}</p><small>Source: ${esc(l.sourceFile)} ${esc(l.sourceSheet)} ${l.sourceRow?'row '+esc(l.sourceRow):''} ${l.sourcePage?'page '+esc(l.sourcePage):''}</small>
       <p>${esc(l.issue)}</p>
       <div class="hs31-comparison"><section><h4>Invoice code</h4><strong>${esc(l.submittedHsCode||'Missing')}</strong><p>${l.originalConfidence==null?'No exact master match':Number(l.originalConfidence)+'% text match'}</p>${l.submittedHsCode?`<button type="button" class="secondary-button" data-hs-keep="${l.lineIndex}">Keep invoice code</button>`:''}</section>
-      <section><h4>Suggested alternative</h4>${l.suggestion?`<strong>${esc(l.suggestion.hsCode)}</strong><p>${esc(l.suggestion.description)}</p><p>${Number(l.suggestion.confidence)}% text match</p>${!l.clarificationQuestion&&!['BLOCKED','REVIEW'].includes(l.status)&&!l.suggestion.importRestriction&&!l.suggestion.importProhibition&&Number(l.suggestion.confidence)>=READY_THRESHOLD?`<button type="button" data-compliance-accept data-line-index="${l.lineIndex}" data-hs-code="${esc(l.suggestion.hsCode)}">Use suggestion</button>`:'<p>Not available for automatic selection. Clarify the item or ask Apollo for help.</p>'}`:'<p>No alternative suggested.</p>'}</section></div>
+      <section><h4>Suggested alternative</h4>${l.suggestion?`<strong>${esc(l.suggestion.hsCode)}</strong><p>${esc(l.suggestion.description)}</p><p>${Number(l.suggestion.confidence)}% text match</p>${l.suggestion.hsCode?`<button type="button" data-compliance-accept data-line-index="${l.lineIndex}" data-hs-code="${esc(l.suggestion.hsCode)}">Use alternative HS code</button>`:'<p>No alternative code available.</p>'}`:'<p>No alternative suggested.</p>'}</section></div>
       ${l.clarificationQuestion&&/\bcaps?\b/i.test(l.description)?`<p>Choose a starting detail, then recheck:</p><div class="hs31-actions"><button type="button" class="secondary-button" data-hs-choice="${l.lineIndex}" data-detail="Wearable caps">Wearable caps</button><button type="button" class="secondary-button" data-hs-choice="${l.lineIndex}" data-detail="Container closures">Container closures</button></div>`:''}
       <label>${esc(l.clarificationQuestion||'Add product use or material (optional)')}<input data-hs-detail="${l.lineIndex}" maxlength="500" value="${esc(previous.details?.[l.lineIndex]??l.clarification??'')}" placeholder="For example: wearable cotton baseball caps"></label><button type="button" class="secondary-button" data-hs-clarify="${l.lineIndex}">Recheck item</button>
       <p>Your choice updates the results summary, not your original invoice.</p></div></td></tr>`).join('')||'<tr><td colspan="6">No items match this filter.</td></tr>';
@@ -161,11 +166,11 @@ function renderResult(panel,result,analysisId) {
   panel.querySelector('[data-hs-apply]').onclick=async(event)=>{
     const choice=panel.querySelector('[data-hs-bulk]').value;
     const selected=lines.filter(l=>previous.selected.has(l.lineIndex));
-    const eligible=selected.filter(l=>choice==='keep'?Boolean(l.submittedHsCode):choice==='suggest'&&!l.clarificationQuestion&&!['BLOCKED','REVIEW'].includes(l.status)&&l.suggestion&&!l.suggestion.importRestriction&&!l.suggestion.importProhibition&&Number(l.suggestion.confidence)>=READY_THRESHOLD);
+    const eligible=selected.filter(l=>choice==='keep'?Boolean(l.submittedHsCode):choice==='suggest'&&Boolean(l.suggestion?.hsCode));
     const feedback=panel.querySelector('[data-hs-feedback]');
     if(!choice||!selected.length){feedback.textContent='Select items and choose a bulk action first.';return;}
     if(!eligible.length){feedback.textContent='None of the selected items is eligible. Review clarification/restriction details or ask Apollo.';return;}
-    if(!window.confirm(`${choice==='keep'?'Keep invoice codes':'Use suggested codes'} for ${eligible.length} items? ${selected.length-eligible.length} items will be skipped. Original documents stay unchanged; warnings remain.`))return;
+    if(!window.confirm(`${choice==='keep'?'Keep invoice codes':'Use alternative HS codes regardless of match score'} for ${eligible.length} items? ${selected.length-eligible.length} items will be skipped. Original documents stay unchanged; warnings remain.`))return;
     event.target.disabled=true;
     try{
       const r=await api(`/api/customer/compliance/${encodeURIComponent(analysisId)}/confirm`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accepted:eligible.map(l=>choice==='keep'?{lineIndex:l.lineIndex,keepOriginal:true}:{lineIndex:l.lineIndex,hsCode:l.suggestion.hsCode})})});
@@ -193,7 +198,7 @@ function renderResult(panel,result,analysisId) {
   };
   drawRows();
   panel.querySelector('[data-hs-download]').onclick=async()=>{
-    try {const r=await fetch(`${API_URL}/api/customer/hs-help/${encodeURIComponent(analysisId)}/download`,{headers:{Authorization:`Bearer ${sessionToken()}`}});if(!r.ok)throw new Error('Download failed. Your check may have expired.');const u=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=u;a.download='Apollo_HS_Summary.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){panel.querySelector('[data-hs-feedback]').textContent=e.message;}
+    try {const r=await fetch(`${API_URL}${hsPath('/api/customer/hs-help/'+encodeURIComponent(analysisId)+'/download')}`,{headers:{Authorization:`Bearer ${sessionToken()}`}});if(!r.ok)throw new Error('Download failed. Your check may have expired.');const u=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=u;a.download='Apollo_HS_Summary.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}catch(e){panel.querySelector('[data-hs-feedback]').textContent=e.message;}
   };
   panel.querySelector('[data-hs-copy]').onclick=async()=>{
     const text=['Line\tOriginal description\tInvoice HS\tSelected HS\tResult',...(result.lines||[]).map(l=>[l.lineIndex+1,l.description,l.submittedHsCode,l.effectiveHsCode||l.submittedHsCode,l.status].map(v=>String(v??'').replace(/[\t\r\n]/g,' ')).join('\t'))].join('\n');
@@ -293,7 +298,7 @@ function enhance(form) {
   styleOnce();
   const docStep = form.querySelector(".customer-document-step");
   if (!docStep) return;
-  form.dataset.hsCheckOnly=form.dataset.form==='customer-hs-check'?'1':'0';
+  form.dataset.hsCheckOnly=['customer-hs-check','operations-hs-check'].includes(form.dataset.form)?'1':'0';
   form.addEventListener('submit',e=>{if(form.dataset.hsCheckOnly==='1'){e.preventDefault();e.stopImmediatePropagation();}},true);
   const tools = document.createElement("div");
   tools.className = "apollo-compliance-tools";
@@ -321,6 +326,7 @@ function enhance(form) {
   panel.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-compliance-accept]");
     if (!button) return;
+    if (!window.confirm('Use alternative HS code '+button.dataset.hsCode+'? This is your selection, not customs approval. Match score and any warnings remain visible. Your original document is unchanged.')) return;
     try {
       await confirmSuggestion(form, panel, button);
       window.notifySuccess?.("HS suggestion applied", "The selected code is updated in your results summary. Your original invoice is unchanged.");
@@ -338,6 +344,6 @@ function enhance(form) {
     panel._hsView=null; panel._hsHasRendered=false; hidden.value = ""; panel.hidden = true; panel.innerHTML = ""; panel.dataset.analysisId = ""; panel.dataset.status = "";
   });
 }
-function scan() { document.querySelectorAll("form[data-form='customer-shipment-request'],form[data-form='customer-hs-check']").forEach(enhance); }
+function scan() { document.querySelectorAll("form[data-form='customer-shipment-request'],form[data-form='customer-hs-check'],form[data-form='operations-hs-check']").forEach(enhance); }
 new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", scan); else scan();

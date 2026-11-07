@@ -52,7 +52,7 @@ test('V32 database-backed search, branch controls, permissions, confirmations an
   const lines=Array.from({length:35},(_,i)=>({lineIndex:i,description:'Fixture',submittedHsCode:valid.hsCode,effectiveHsCode:valid.hsCode,status:'ATTENTION',confidence:80,suggestion:{hsCode:valid.hsCode,confidence:91}}));
   lines[0].clarificationQuestion='What use?';lines[1].status='BLOCKED';lines[2].suggestion.confidence=89;
   await db.query("insert into customer_compliance_checks values ('check','TEST',$1,'ATTENTION_REQUIRED',now()+interval '1 day',now())",[JSON.stringify({lines})]);
-  r=await request('/api/customer/compliance/check/confirm',{accepted:lines.map(l=>({lineIndex:l.lineIndex,hsCode:valid.hsCode}))});assert.equal(r.status,200);assert.equal(r.data.applied.length,32);assert.equal(r.data.skipped.length,3);assert(r.data.result.lines[0].clarificationQuestion);assert.equal(r.data.result.lines[1].status,'BLOCKED');
+  r=await request('/api/customer/compliance/check/confirm',{accepted:lines.map(l=>({lineIndex:l.lineIndex,hsCode:valid.hsCode}))});assert.equal(r.status,200);assert.equal(r.data.applied.length,35);assert.equal(r.data.skipped.length,0);assert.equal(r.data.result.lines[2].status,'CUSTOMER_SELECTED');assert(r.data.result.lines[0].clarificationQuestion);assert.equal(r.data.result.lines[1].status,'BLOCKED');
   r=await request('/api/customer/compliance/check/confirm',{accepted:[{lineIndex:1,keepOriginal:true}]},{'x-customer':'OTHER'});assert.equal(r.status,404);
   r=await request('/api/ai/me');assert.equal(r.data.provider,'OpenAI API');assert.equal(r.data.model,'gpt-5.4-mini');
  }finally{await new Promise(r=>server.close(r));await db.close();}

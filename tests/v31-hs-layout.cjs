@@ -20,7 +20,7 @@ const input=p.querySelector('[data-hs-detail="2"]');input.value='wearable cotton
 async function run(){
 click('[data-hs-clarify="2"]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).detail,'wearable cotton caps');assert.match(calls.at(-1).url,/clarify$/);
 click('[data-hs-keep="2"]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).accepted[0].keepOriginal,true);
-assert.equal(p.querySelector('[data-compliance-accept][data-line-index="2"]'),null); // unresolved clarification cannot accept a suggestion
+assert(p.querySelector('[data-compliance-accept][data-line-index="2"]')); // Manual selection is allowed; clarification warning remains.
 click('[data-hs-open-help]');assert.equal(p.querySelector('[data-hs-help-box]').hidden,false);click('[data-hs-help]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).lineIndexes.length,32);assert.equal(calls.at(-1).opts.headers.Authorization,'Bearer test-token');
 const search=p.querySelector('[data-hs-search]');search.value='no-such-item';search.dispatchEvent(new w.Event('input',{bubbles:true}));assert.equal(p.querySelectorAll('.hs31-row').length,0);assert.equal(p.querySelector('[data-hs-page="next"]').disabled,true);
 let bubbled=false;standalone.addEventListener('submit',()=>bubbled=true);const ev=new w.Event('submit',{bubbles:true,cancelable:true});standalone.dispatchEvent(ev);assert.equal(ev.defaultPrevented,true);assert.equal(bubbled,false);

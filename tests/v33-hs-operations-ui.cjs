@@ -1,0 +1,27 @@
+const {JSDOM}=require('jsdom'),fs=require('fs'),path=require('path'),vm=require('vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(path.join(__dirname,'../web/customer-compliance.js'),'utf8'),runtime=fs.readFileSync(path.join(__dirname,'../web/app-runtime.js'),'utf8');
+assert(runtime.includes('["HS Code Check", "Check documents, select HS alternatives and download Excel"]'));
+assert(runtime.includes('(name === "HS Code Check" && allowedSections.has("Shipment / Airway"))'));
+const match=/function renderCustomerHsCheck\(\) \{([\s\S]*?)\n\}/.exec(runtime);assert(match);
+const ctx={isCustomerSession:()=>false,panelHeader:()=>'<h2>HS Code Check</h2>'};vm.createContext(ctx);vm.runInContext(match[0],ctx);const html=ctx.renderCustomerHsCheck();
+assert(html.includes('operations-hs-check'));
+const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'}),w=dom.window;
+w.sessionStorage.setItem('apollofreighterp-session',JSON.stringify({portal:'company',token:'OPS'}));
+const result={lines:[{lineIndex:0,description:'Perfumes in liquid or solid forms.',submittedHsCode:'33030010',effectiveHsCode:'33030010',status:'ATTENTION',confidence:82,suggestion:{hsCode:'3303.00.10.00.01',confidence:82}},{lineIndex:1,description:'Description only',submittedHsCode:'',status:'ATTENTION',suggestion:{hsCode:'000123',confidence:0}}]};
+let calls=[],confirm=false;w.confirm=()=>confirm;
+w.fetch=async(url,opts)=>{calls.push({url,opts});const b=JSON.parse(opts.body||'{}');for(const a of b.accepted||[]){Object.assign(result.lines[a.lineIndex],{effectiveHsCode:a.hsCode,customerChoice:'suggestion',status:'CUSTOMER_SELECTED'});}return {ok:true,json:async()=>({ok:true,result,analysisId:'a',applied:(b.accepted||[]).map(x=>x.lineIndex),skipped:[]}),blob:async()=>new w.Blob(['test'])};};
+w.eval(source.replace('new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });','')+'\nwindow.exposed={renderResult,enhance,hsPath};');
+const f=w.document.querySelector('form');w.exposed.enhance(f);assert.equal(f.dataset.hsCheckOnly,'1');const p=f.querySelector('.apollo-compliance-panel');p.hidden=false;w.exposed.renderResult(p,result,'a');
+const click=s=>p.querySelector(s).click(),wait=()=>new Promise(r=>setTimeout(r,10));
+(async()=>{try{
+ click('[data-hs-expand="0"]');assert.match(p.querySelector('[data-compliance-accept]').textContent,/Use alternative HS code/);
+ click('[data-compliance-accept]');await wait();assert.equal(calls.length,0);confirm=true;
+ click('[data-compliance-accept]');await wait();assert.match(calls[0].url,/\/api\/operations\/compliance\/a\/confirm$/);assert.equal(calls[0].opts.headers.Authorization,'Bearer OPS');
+ assert.equal(result.lines[0].effectiveHsCode,'3303.00.10.00.01');assert.equal(result.lines[0].confidence,82);assert.match(p.querySelector('[data-hs-visible]').textContent,/1 of 2/);
+ click('[data-hs-select-filtered]');p.querySelector('[data-hs-bulk]').value='suggest';click('[data-hs-apply]');await wait();assert.equal(result.lines[1].effectiveHsCode,'000123');assert.match(p.querySelector('[data-hs-visible]').textContent,/0 of 2/);
+ click('[data-hs-filter="selected"]');assert.equal(p.querySelectorAll('.hs31-row').length,2);assert.match(p.textContent,/Staff selected/);
+ assert.equal(w.exposed.hsPath('/api/customer/hs-help/a/download'),'/api/operations/hs-help/a/download');
+ const event=new w.Event('submit',{bubbles:true,cancelable:true});f.dispatchEvent(event);assert(event.defaultPrevented);
+ w.sessionStorage.setItem('apollofreighterp-session',JSON.stringify({portal:'customer',token:'CUSTOMER'}));assert.equal(w.exposed.hsPath('/api/customer/compliance/a/confirm'),'/api/customer/compliance/a/confirm');
+ console.log('PASS Operations tab: real render, 82% and 0% buttons, cancel/confirm, staff API routing, bulk, resolved list and no shipment submit.');
+}finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

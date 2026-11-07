@@ -4834,6 +4834,7 @@ app.use("/api/maintenance/users", maintenanceUsersRouter);
 app.use("/api/maintenance/vehicles", maintenanceVehiclesRouter);
 app.use("/api/ai", createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl: resolveStoredDocumentUrl }));
 app.use("/api/customer/compliance", createCustomerComplianceRouter({ query, requireCustomerPortalAuth }));
+require('./operations-hs').registerOperationsHs({app,query,requireErpPortalAuth});
 require('./customer-hs-help').registerHsHelp({ app, query, requireCustomerPortalAuth, requireErpPortalAuth, ...require('./customer-compliance') });
 app.use("/api/chat", createConnectedChatRouter({ query, requireAppAuth }));
 app.use("/api/crm", createCrmRouter({ query, requireAppAuth, sendMail: sendMicrosoftGraphMail }));

@@ -11,7 +11,7 @@ const click=s=>p.querySelector(s).click(),wait=()=>new Promise(r=>setTimeout(r,5
 (async()=>{try{
  assert.equal(p._hsView.filter,'flagged');assert.match(p.querySelector('[data-hs-visible]').textContent,/34 of 65/);
  click('[data-hs-select-filtered]');assert.equal(p._hsView.selected.size,34);click('[data-hs-page="next"]');assert.equal(p.querySelectorAll('.hs31-row').length,14);
- p.querySelector('[data-hs-bulk]').value='suggest';click('[data-hs-apply]');await wait();let accepted=JSON.parse(calls.at(-1).opts.body).accepted;assert.equal(accepted.length,32);assert(!accepted.some(a=>[0,1,2].includes(a.lineIndex)));assert.equal(calls.at(-1).opts.headers.Authorization,'Bearer TEST');assert.equal(p._hsView.selected.size,2);
+ p.querySelector('[data-hs-bulk]').value='suggest';click('[data-hs-apply]');await wait();let accepted=JSON.parse(calls.at(-1).opts.body).accepted;assert.equal(accepted.length,34);assert(accepted.some(a=>a.lineIndex===2));assert(accepted.some(a=>a.lineIndex===1));assert.equal(calls.at(-1).opts.headers.Authorization,'Bearer TEST');assert.equal(p._hsView.selected.size,0);
  click('[data-hs-filter="all"]');click('[data-hs-select-filtered]');p.querySelector('[data-hs-bulk]').value='keep';click('[data-hs-apply]');await wait();accepted=JSON.parse(calls.at(-1).opts.body).accepted;assert.equal(accepted.length,65);assert(accepted.every(x=>x.keepOriginal));assert.equal(p._hsView.selected.size,0);
  click('[data-hs-filter="clarify"]');assert.equal(p.querySelectorAll('.hs31-row').length,1);click('[data-hs-expand="0"]');assert.equal(p.querySelector('#hs31-detail-0').hidden,false);
  const e=new w.Event('submit',{bubbles:true,cancelable:true});booking.dispatchEvent(e);assert.equal(e.defaultPrevented,false);
