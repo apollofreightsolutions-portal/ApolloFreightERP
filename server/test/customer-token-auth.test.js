@@ -2,17 +2,15 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { createRequireCustomerPortalAuth } = require('../src/customer-token-auth');
+const { createRequireCustomerPortalAuth, passwordVersion } = require('../src/customer-token-auth');
 
-const userUpdatedAt = new Date('2026-11-02T10:00:00.000Z');
-const customerUpdatedAt = new Date('2026-11-02T10:01:00.000Z');
+const customerPasswordHash = 'customer-password-hash-v1';
 const session = {
   customerUserId: '17',
   customerCode: 'CUS-017',
   userName: 'customer.user',
   portal: 'customer',
-  customerUserUpdatedAt: userUpdatedAt.getTime(),
-  customerUpdatedAt: customerUpdatedAt.getTime()
+  passwordVersion: passwordVersion(customerPasswordHash)
 };
 const account = {
   id: 17,
@@ -20,11 +18,10 @@ const account = {
   username: 'customer.user',
   email: 'user@example.test',
   status: 'ACTIVE',
-  customer_user_updated_at: userUpdatedAt,
+  password_hash: customerPasswordHash,
   customer_name: 'Current Customer Name',
   customer_branch: 'Kuwait HO',
-  customer_status: 'Active',
-  customer_updated_at: customerUpdatedAt
+  customer_status: 'Active'
 };
 
 function makeResponse() {
@@ -83,8 +80,7 @@ test('inactive customer users, inactive linked customers, and stale account stat
   for (const row of [
     { ...account, status: 'Inactive' },
     { ...account, customer_status: 'Inactive' },
-    { ...account, customer_user_updated_at: new Date(userUpdatedAt.getTime() + 1) },
-    { ...account, customer_updated_at: new Date(customerUpdatedAt.getTime() + 1) },
+    { ...account, password_hash: 'customer-password-hash-v2' },
     { ...account, customer_code: 'CUS-OTHER' },
     { ...account, username: 'renamed.user' },
     null

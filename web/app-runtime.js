@@ -1151,10 +1151,14 @@ function saveState() {
 
 function writeStateSnapshot() {
   try {
-    const snapshot = Array.isArray(state.audit) && state.audit.length > SAVE_STATE_MAX_AUDIT_ROWS
-      ? { ...state, audit: state.audit.slice(0, SAVE_STATE_MAX_AUDIT_ROWS) }
-      : state;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    // Historical records are opt-in and memory-only; never write them into the
+    // persistent browser snapshot while the pre-live view is active.
+    if (!includePreliveRecords) {
+      const snapshot = Array.isArray(state.audit) && state.audit.length > SAVE_STATE_MAX_AUDIT_ROWS
+        ? { ...state, audit: state.audit.slice(0, SAVE_STATE_MAX_AUDIT_ROWS) }
+        : state;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    }
   } catch (error) {
     console.warn("Could not save local state (it will still be saved to the server):", error);
   }
@@ -1605,6 +1609,37 @@ function defaultUserBranch() {
 }
 
 let includePreliveRecords = false;
+let preliveLoadRequested = false;
+const PRELIVE_REPORTING_RESOURCES = new Set([
+  "shipments", "consolidations", "documents", "additional-charges", "invoices",
+  "quotations", "shipment-requests", "shipment-status-history", "audit"
+]);
+const PRELIVE_REPORTING_STATE_KEYS = [
+  "shipments", "loads", "documents", "additionalCharges", "invoices", "quotations",
+  "shipmentRequests", "shipmentStatusHistory", "audit"
+];
+let preliveLiveSnapshot = null;
+
+function resetPreliveReportingSession() {
+  if (includePreliveRecords && saveStateTimer) {
+    clearTimeout(saveStateTimer);
+    saveStateTimer = null;
+  }
+  const snapshot = preliveLiveSnapshot;
+  preliveLiveSnapshot = null;
+  includePreliveRecords = false;
+  preliveLoadRequested = false;
+  restorePreliveLiveSnapshot(snapshot);
+}
+
+function reportingApiPath(path) {
+  const value = String(path || "");
+  const match = value.match(/^\/api\/([^/?]+)(?:\?[^#]*)?$/);
+  if (!includePreliveRecords || !match || !PRELIVE_REPORTING_RESOURCES.has(match[1])) return path;
+  if (new URLSearchParams(value.split("?", 2)[1] || "").has("includePrelive")) return path;
+  return `${value}${value.includes("?") ? "&" : "?"}includePrelive=1`;
+}
+
 const documentLibraryPage = {
   rows: [],
   cursors: [null],
@@ -1616,6 +1651,19 @@ const documentLibraryPage = {
   loaded: false,
   error: ""
 };
+
+function capturePreliveLiveSnapshot() {
+  return {
+    collections: Object.fromEntries(PRELIVE_REPORTING_STATE_KEYS.map((key) => [key, state[key]])),
+    documentPage: { ...documentLibraryPage, cursors: [...documentLibraryPage.cursors] }
+  };
+}
+
+function restorePreliveLiveSnapshot(snapshot) {
+  if (!snapshot) return;
+  for (const [key, rows] of Object.entries(snapshot.collections)) state[key] = rows;
+  Object.assign(documentLibraryPage, snapshot.documentPage);
+}
 
 async function loadDocumentLibraryPage(direction = "first") {
   const page = documentLibraryPage;
@@ -1688,7 +1736,11 @@ function reportingControls() {
   if(isCustomerSession()||isHrSession()||isCrmSession()||activeModule!=='Dashboard')return '';
   const excluded=visibleRows(state.shipments).filter(row=>reportingClass(row).excluded).length;
   const bills=visibleRows(state.invoices).filter(row=>reportingClass(row).excluded).length;
-  return `<section class="panel reporting-scope-panel ${includePreliveRecords?'is-included':''}" aria-label="Reporting scope"><div class="reporting-scope-layout"><div class="reporting-scope-copy"><div class="reporting-scope-heading"><span class="reporting-scope-dot" aria-hidden="true"></span><strong>${includePreliveRecords?'Historical records included':'Live reporting'}</strong><span class="reporting-scope-state">${includePreliveRecords?'Pre-live/testing records included':'Pre-live/testing records excluded'}</span></div><p class="reporting-scope-summary"><strong>${excluded}</strong> accessible shipments and <strong>${bills}</strong> linked/older invoices are classified as pre-live.</p><div class="reporting-scope-details"><span>Cutoff: created before 1 Sep 2026, Kuwait time</span><span>Date filters use booking/invoice dates</span><span>No records or amounts have been deleted</span></div>${!liveShipmentDataReady?'<p class="reporting-scope-alert" role="alert">Waiting for verified live data. Do not rely on cached figures until the connection is confirmed.</p>':''}</div><label class="reporting-scope-toggle"><input type="checkbox" data-include-prelive ${includePreliveRecords?'checked':''}><span>Include pre-live records</span></label></div></section>`;
+  const requestChecked = includePreliveRecords || preliveLoadRequested;
+  const summary = includePreliveRecords
+    ? `<strong>${excluded}</strong> pre-live shipments and <strong>${bills}</strong> linked/older invoices are loaded for this session.`
+    : `Pre-live/testing records are excluded from browser transfer. Select the option, then load them only when needed.`;
+  return `<section class="panel reporting-scope-panel ${includePreliveRecords?'is-included':''}" aria-label="Reporting scope"><div class="reporting-scope-layout"><div class="reporting-scope-copy"><div class="reporting-scope-heading"><span class="reporting-scope-dot" aria-hidden="true"></span><strong>${includePreliveRecords?'Historical records included':'Live reporting'}</strong><span class="reporting-scope-state">${includePreliveRecords?'Pre-live/testing records included':'Pre-live/testing records excluded'}</span></div><p class="reporting-scope-summary">${summary}</p><div class="reporting-scope-details"><span>Cutoff: created before 1 Sep 2026, Kuwait time</span><span>Dashboard totals use the current month</span><span>No records or amounts have been deleted</span></div>${!liveShipmentDataReady?'<p class="reporting-scope-alert" role="alert">Waiting for verified live data. Do not rely on cached figures until the connection is confirmed.</p>':''}</div><div class="reporting-scope-actions"><label class="reporting-scope-toggle"><input type="checkbox" data-include-prelive ${requestChecked?'checked':''}><span>Include pre-live records</span></label><button type="button" class="secondary-button" data-action="load-prelive-reporting" ${includePreliveRecords||!preliveLoadRequested?'disabled':''}>Load old data</button>${includePreliveRecords?'<button type="button" class="secondary-button" data-action="unload-prelive-reporting">Return to live data</button>':''}</div></div></section>`;
 }
 function reportingLabel(row,allowAction=false) {
   if(!reportingSubject(row))return '';
@@ -1711,9 +1763,17 @@ function renderPagedScope(scope){
 }
 function handleReportingChange(event){
  const field=event.target;
- if(field.matches('[data-include-prelive]')){includePreliveRecords=field.checked;resetReportPages();render();}
+ if(field.matches('[data-include-prelive]')){preliveLoadRequested=field.checked;render();}
  if(field.matches('[data-page-size]')){const scope=field.dataset.pageScope;state.ui.tablePageSizes=state.ui.tablePageSizes||{};state.ui.tablePageSizes[scope]=Number(field.value);state.ui.tablePages=state.ui.tablePages||{};state.ui.tablePages[scope]=1;renderPagedScope(scope);}
  if(field.matches('[data-documents-page-size]')){documentLibraryPage.pageSize=Number(field.value)||50;void loadDocumentLibraryPage('first');}
+}
+
+function reportingLoadFailure() {
+  const error = String(state.api?.error || "");
+  const resources = ["shipments", "consolidations", "documents", "additionalCharges", "invoices", "quotations", "shipmentRequests", "shipmentStatusHistory", "audit"];
+  const failures = error.split(" | ").filter((message) => resources.some((resource) => message.startsWith(`${resource}:`)));
+  if (state.api?.status !== "API connected") return error || "The live ERP API is not connected.";
+  return failures.join("; ");
 }
 
 function recordDate(record) {
@@ -2967,7 +3027,7 @@ async function switchPortal(target) {
 }
 
 function showLogin() {
-  includePreliveRecords = false;
+  resetPreliveReportingSession();
   statusEmailAttachPodChecked = false;
   customerPortalData = null;
   loginScreen.classList.remove("is-hidden");
@@ -2980,7 +3040,7 @@ function showApp() {
   announcementReadStateReady = false;
   liveShipmentDataReady = false;
   liveBillingDataReady = false;
-  includePreliveRecords = false;
+  resetPreliveReportingSession();
   loginScreen.classList.add("is-hidden");
   appShell.classList.remove("is-hidden");
   document.body.dataset.apolloPortal = isCustomerSession() ? "customer" : isHrSession() ? "employee" : isCrmSession() ? "crm" : "company";
@@ -3199,6 +3259,7 @@ async function syncFromApi() {
 }
 
 async function fetchJson(path, options = {}) {
+  if (!options.method || String(options.method).toUpperCase() === "GET") path = reportingApiPath(path);
   const session = currentSession();
   const existingHeaders = options.headers || {};
   const hasAuthHeader = Object.keys(existingHeaders).some((key) => key.toLowerCase() === "authorization");
@@ -6943,6 +7004,49 @@ async function handleModuleClick(event) {
   const { action, type, id, mode } = button.dataset;
 
   if(action==='retry-live-data'){await syncFromApi();return;}
+
+  if (action === "load-prelive-reporting") {
+    if (!preliveLoadRequested || includePreliveRecords) return;
+    button.disabled = true;
+    preliveLiveSnapshot = capturePreliveLiveSnapshot();
+    includePreliveRecords = true;
+    resetReportPages();
+    try {
+      await syncFromApi();
+      const syncError = reportingLoadFailure();
+      if (syncError) throw new Error(syncError);
+      if (activeModule === "Documents") {
+        await loadDocumentLibraryPage("first");
+        if (documentLibraryPage.error) throw new Error(documentLibraryPage.error);
+      }
+      notifySuccess("Historical records loaded", "Pre-live data is available only for this browser session. Dashboard totals remain current-month only.");
+    } catch (error) {
+      resetPreliveReportingSession();
+      notifyDenied("Historical data not loaded", error.message || "The live data connection could not load historical records.");
+    }
+    render();
+    return;
+  }
+
+  if (action === "unload-prelive-reporting") {
+    resetPreliveReportingSession();
+    resetReportPages();
+    button.disabled = true;
+    try {
+      await syncFromApi();
+      const syncError = reportingLoadFailure();
+      if (syncError) throw new Error(syncError);
+      if (activeModule === "Documents") {
+        await loadDocumentLibraryPage("first");
+        if (documentLibraryPage.error) throw new Error(documentLibraryPage.error);
+      }
+      notifySuccess("Live reporting restored", "Historical records have been removed from this browser session.");
+    } catch (error) {
+      notifyDenied("Live data reload failed", error.message || "Please retry the live data reload.");
+    }
+    render();
+    return;
+  }
 
   if (action === "documents-page") {
     void loadDocumentLibraryPage(button.dataset.direction || "first");

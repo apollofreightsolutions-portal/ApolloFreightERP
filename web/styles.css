@@ -4439,6 +4439,20 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
   accent-color: var(--accent);
 }
 
+.reporting-scope-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.reporting-scope-actions .secondary-button {
+  margin: 0;
+  white-space: nowrap;
+}
+
 .reporting-scope-alert {
   margin: 3px 0 0;
   color: var(--red-text);
@@ -4455,6 +4469,10 @@ tr.shipment-row-cancelled td { background: #f2f3f5; }
 
   .reporting-scope-toggle {
     align-self: flex-start;
+  }
+
+  .reporting-scope-actions {
+    justify-content: flex-start;
   }
 
   .reporting-scope-details {

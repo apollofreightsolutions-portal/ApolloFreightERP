@@ -1530,16 +1530,49 @@ function requireFields(config, columns) {
   }
 }
 
-async function getRows(resourceName, config) {
+const LIVE_REPORTING_CUTOFF_SQL = "timestamptz '2026-09-01 00:00:00+03'";
+
+function includePreliveRecords(request) {
+  return ["1", "true", "yes"].includes(String(request.query?.includePrelive || "").trim().toLowerCase());
+}
+
+function liveReportingWhere(resourceName) {
+  const shipmentIsLive = `(s.reporting_mode = 'live' or s.created_at is null or s.created_at >= ${LIVE_REPORTING_CUTOFF_SQL})`;
+  switch (resourceName) {
+    case "shipments":
+      return `(reporting_mode = 'live' or created_at is null or created_at >= ${LIVE_REPORTING_CUTOFF_SQL})`;
+    case "shipment-status-history":
+      return `exists (select 1 from shipments s where s.job_no = shipment_status_history.job_no and ${shipmentIsLive})`;
+    case "invoices":
+      return `(date >= date '2026-09-01' or created_at >= ${LIVE_REPORTING_CUTOFF_SQL} or exists (select 1 from shipments s where s.job_no = invoices.shipment_no and ${shipmentIsLive}))`;
+    case "additional-charges":
+      return `(charge_date >= date '2026-09-01' or created_at >= ${LIVE_REPORTING_CUTOFF_SQL} or exists (select 1 from shipments s where s.job_no = additional_charges.shipment_no and ${shipmentIsLive}))`;
+    case "documents":
+      return `(date >= date '2026-09-01' or created_at >= ${LIVE_REPORTING_CUTOFF_SQL} or exists (select 1 from shipments s where s.job_no = documents.linked_no and ${shipmentIsLive}))`;
+    case "consolidations":
+    case "quotations":
+    case "shipment-requests":
+      return `(created_at is null or created_at >= ${LIVE_REPORTING_CUTOFF_SQL})`;
+    case "audit":
+      return `(date_time is null or date_time >= ${LIVE_REPORTING_CUTOFF_SQL})`;
+    default:
+      return "";
+  }
+}
+
+async function getRows(resourceName, config, options = {}) {
   // Dashboard KPIs and live shipment boards must be calculated from the complete
-  // shipment history. Keep the defensive cap for ancillary resources, but never
-  // truncate shipments or their status history at 500 rows.
+  // live shipment history. Keep the defensive cap for ancillary resources, but never
+  // truncate live shipments or their status history at 500 rows.
   const limitClause = ["shipments", "shipmentStatusHistory", "shipment-status-history", "invoices", "additional-charges", "consolidations", "documents"].includes(resourceName) ? "" : "limit 500";
+  const whereClause = options.includePrelive ? "" : liveReportingWhere(resourceName);
+  const whereSql = whereClause ? `where ${whereClause}` : "";
   let result;
   try {
     result = await query(
       `select ${columnsFor(config)}
        from ${config.table}
+       ${whereSql}
        order by ${config.order}
        ${limitClause}`
     );
@@ -1555,6 +1588,7 @@ async function getRows(resourceName, config) {
     result = await query(
       `select ${columnsFor(legacyConfig)}
        from ${legacyConfig.table}
+       ${whereSql}
        order by ${legacyConfig.order}
        ${limitClause}`
     );
@@ -4805,6 +4839,11 @@ app.get("/api/documents", requireErpOrHrResourceAuth, async (request, response) 
   try {
     const employeeTypes = Array.from(EMPLOYEE_DOCUMENT_TYPE_NAMES);
     const values = [employeeTypes];
+    const reportingClause = includePreliveRecords(request)
+      ? ""
+      : `and (date >= date '2026-09-01' or created_at >= ${LIVE_REPORTING_CUTOFF_SQL}
+           or exists (select 1 from shipments s where s.job_no = documents.linked_no
+                      and (s.reporting_mode = 'live' or s.created_at is null or s.created_at >= ${LIVE_REPORTING_CUTOFF_SQL})))`;
     let cursorClause = "";
     if (cursor) {
       values.push(cursor);
@@ -4816,6 +4855,7 @@ app.get("/api/documents", requireErpOrHrResourceAuth, async (request, response) 
        from documents
        where document_no not like 'POD-AWB-BACKFILL-%'
          and coalesce(type, '') <> all($1::text[])
+         ${reportingClause}
          ${cursorClause}
        order by id desc
        limit $${values.length}`,
@@ -4851,7 +4891,7 @@ app.get("/api/:resource", requireErpOrHrResourceAuth, async (request, response, 
   }
 
   try {
-    const result = await getRows(resourceName, config);
+    const result = await getRows(resourceName, config, { includePrelive: includePreliveRecords(request) });
     if(resourceName==='users') {
       const settings=(await query('select * from hr_leave_user_settings')).rows;
       const byUser=new Map(settings.map(s=>[s.user_name.toLowerCase(),s]));
