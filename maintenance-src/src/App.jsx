@@ -60,7 +60,8 @@ function App() {
     role: "staff"
   });
   const [userPermissions, setUserPermissions] = useState({
-    create: true,
+    access: false,
+    create: false,
     updateOwn: false,
     viewAll: false,
     editAll: false
@@ -93,13 +94,16 @@ function App() {
   const [activeSection, setActiveSection] = useState("reports");
 
   const canViewAllExpenses = Boolean(
-    user?.role === "admin" ||
-      user?.role === "accountant" ||
       user?.permissions?.viewAll ||
       user?.permissions?.editAll
   );
 
+  const canCreateEntries = Boolean(user?.role === "admin" || user?.permissions?.create);
   const canDeleteEntries = Boolean(user?.role === "admin" || user?.permissions?.editAll);
+  const canEditRecord = (record) => Boolean(
+    user?.role === "admin" || user?.permissions?.editAll ||
+      (user?.permissions?.updateOwn && String(record?.createdBy) === String(user?.id))
+  );
 
   useEffect(() => {
     if (activeSection === "userManagement" && user?.role !== "admin") {
@@ -331,8 +335,7 @@ function App() {
 
   const menuItems = [
     { id: "reports", label: "Report" },
-    { id: "addVehicle", label: "Add Vehicle" },
-    { id: "addExpense", label: "Add Expense" },
+    ...(canCreateEntries ? [{ id: "addVehicle", label: "Add Vehicle" }, { id: "addExpense", label: "Add Expense" }] : []),
     ...(user?.role === "admin" ? [{ id: "userManagement", label: "User Management" }] : []),
     { id: "vehicles", label: "Vehicle List History" },
     { id: "expenseHistory", label: "Expense History" }
@@ -554,7 +557,7 @@ function App() {
         </section>
         ) : null}
 
-        {activeSection === "addVehicle" ? (
+        {activeSection === "addVehicle" && canCreateEntries ? (
           <section className="panel">
             <div className="section-head stack-on-mobile">
               <div>
@@ -615,7 +618,7 @@ function App() {
           </section>
         ) : null}
 
-        {activeSection === "addExpense" ? (
+        {activeSection === "addExpense" && canCreateEntries ? (
           <section className="panel">
             <div className="section-head stack-on-mobile">
               <div>
@@ -748,12 +751,13 @@ function App() {
                     }));
                   }
                   if (role === "admin") {
-                    setUserPermissions({
+                    setUserPermissions((current) => ({
+                      ...current,
                       create: true,
                       updateOwn: true,
                       viewAll: true,
                       editAll: true
-                    });
+                    }));
                   }
                 }}
               >
@@ -762,6 +766,14 @@ function App() {
                 <option value="admin">Admin</option>
               </select>
               <div className="perm-box">
+                <label className="perm-item">
+                  <input
+                    type="checkbox"
+                    checked={userPermissions.access}
+                    onChange={(e) => setUserPermissions((c) => ({ ...c, access: e.target.checked }))}
+                  />
+                  Allow Maintenance Portal access (required for every user, including Admin)
+                </label>
                 <label className="perm-item">
                   <input
                     type="checkbox"
@@ -819,6 +831,7 @@ function App() {
                       <p>Username: {listedUser.username}</p>
                       <p>Email: {listedUser.email || "Not set"}</p>
                       <p>Role: {listedUser.role}</p>
+                      <p>Maintenance access: {listedUser.maintenance_portal_access ? "Enabled" : "Not assigned"}</p>
                       <div className="action-row">
                         <button className="inline-action" type="button" onClick={() => handleEditUser(listedUser)}>
                           Edit
@@ -826,9 +839,11 @@ function App() {
                         <button className="inline-action" type="button" onClick={() => handleChangePassword(listedUser)}>
                           Change Password
                         </button>
-                        <button className="inline-action danger-action" type="button" onClick={() => handleDeleteUser(listedUser)}>
-                          Delete
-                        </button>
+                        {listedUser.maintenance_portal_access && listedUser.id !== user?.id ? (
+                          <button className="inline-action danger-action" type="button" onClick={() => handleDeleteUser(listedUser)}>
+                            Revoke Maintenance Access
+                          </button>
+                        ) : null}
                       </div>
                     </article>
                   ))
@@ -874,9 +889,11 @@ function App() {
                       <div className="updated-badge">Updated: {formatDateTime(vehicle.updatedAt)}</div>
                     ) : null}
                     <div className="action-row">
-                      <button className="inline-action" type="button" onClick={() => handleEditVehicle(vehicle)}>
-                        Edit
-                      </button>
+                      {canEditRecord(vehicle) ? (
+                        <button className="inline-action" type="button" onClick={() => handleEditVehicle(vehicle)}>
+                          Edit
+                        </button>
+                      ) : null}
                       <button className="inline-action" type="button" onClick={() => viewVehicleHistory(vehicle)}>
                         History
                       </button>
@@ -1014,9 +1031,11 @@ function App() {
                           </td>
                           <td>
                             <div className="table-actions">
-                              <button className="inline-action compact-action" type="button" onClick={() => handleEditExpense(expense)}>
-                                Edit
-                              </button>
+                              {canEditRecord(expense) ? (
+                                <button className="inline-action compact-action" type="button" onClick={() => handleEditExpense(expense)}>
+                                  Edit
+                                </button>
+                              ) : null}
                               {canDeleteEntries ? (
                                 <button className="inline-action compact-action danger-action" type="button" onClick={() => handleDeleteExpense(expense)}>
                                   Delete
@@ -1509,6 +1528,7 @@ function App() {
       role: listedUser.role
     });
     setUserPermissions({
+      access: Boolean(listedUser.maintenance_portal_access),
       create: Boolean(listedUser.permissions?.create),
       updateOwn: Boolean(listedUser.permissions?.updateOwn),
       viewAll: Boolean(listedUser.permissions?.viewAll),
@@ -1547,13 +1567,13 @@ function App() {
 
   async function handleDeleteUser(listedUser) {
     if (listedUser.id === user?.id) {
-      setMessage("You cannot delete the current logged-in admin user.");
+      setMessage("You cannot revoke your own Maintenance access here.");
       return;
     }
 
     setConfirmConfig({
-      title: "Delete User",
-      message: `Are you sure you want to delete ${listedUser.username}?`,
+      title: "Revoke Maintenance Access",
+      message: `Revoke Maintenance access for ${listedUser.username}? Their shared ERP account and access to other portals will remain active.`,
       onConfirm: async () => {
         const response = await fetch(apiUrl(`/api/maintenance/users/${listedUser.id}`), {
           method: "DELETE",
@@ -1562,14 +1582,14 @@ function App() {
 
         const data = await response.json();
         if (!response.ok) {
-          setMessage(data.message || "Unable to delete user.");
+          setMessage(data.message || "Unable to revoke Maintenance access.");
           setConfirmConfig(null);
           return;
         }
 
-        setUsers((current) => current.filter((item) => item.id !== listedUser.id));
+        setUsers((current) => current.map((item) => (item.id === listedUser.id ? data : item)));
         setConfirmConfig(null);
-        showSuccess(`${listedUser.username} deleted successfully.`);
+        showSuccess(`Maintenance access revoked for ${listedUser.username}.`);
       }
     });
   }
@@ -1637,7 +1657,8 @@ function App() {
       role: "staff"
     });
     setUserPermissions({
-      create: true,
+      access: false,
+      create: false,
       updateOwn: false,
       viewAll: false,
       editAll: false

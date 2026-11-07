@@ -24,6 +24,7 @@ const { createPasswordResetRouter } = require("./password-reset");
 const { createCustomerComplianceRouter, isKuwaitDestination } = require("./customer-compliance");
 const { createHrApprovalWorkflow } = require("./hr-approval-workflow");
 const { createRequireCurrentErpAdmin } = require("./current-admin-auth");
+const { hasMaintenanceAccess } = require("./maintenance/permissions");
 const { respondDatabaseWriteUnavailable } = require("./database-write-response");
 const { updatePasswordByUsername } = require("./session-revocation");
 const { createRequireCustomerPortalAuth, passwordVersion } = require("./customer-token-auth");
@@ -1128,6 +1129,10 @@ const resources = {
       field("hr_portal_access", ["hrPortalAccess", "hr_portal_access"]),
       field("erp_portal_access", ["erpPortalAccess", "erp_portal_access"]),
       field("maintenance_portal_access", ["maintenancePortalAccess", "maintenance_portal_access"]),
+      field("maintenance_can_create", ["maintenanceCanCreate", "maintenance_can_create"]),
+      field("maintenance_can_view_all", ["maintenanceCanViewAll", "maintenance_can_view_all"]),
+      field("maintenance_can_update_own", ["maintenanceCanUpdateOwn", "maintenance_can_update_own"]),
+      field("maintenance_can_edit_all", ["maintenanceCanEditAll", "maintenance_can_edit_all"]),
       field("is_hr_admin", ["isHrAdmin", "is_hr_admin"]),
       field("crm_portal_access", ["crmPortalAccess", "crm_portal_access"]),
       field("crm_role", ["crmRole", "crm_role"]),
@@ -2359,7 +2364,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
     if (employeeLogin && !row.hr_portal_access) {
       return response.status(403).json({ ok: false, error: "HR Portal access is not enabled for this account." });
     }
-    if (maintenanceLogin && !row.maintenance_portal_access && !row.erp_portal_access) {
+    if (maintenanceLogin && !hasMaintenanceAccess(row)) {
       return response.status(403).json({ ok: false, error: "Maintenance Portal access is not enabled for this account." });
     }
     if (crmLogin && !crmSessionFlags(row).crmPortalAccess) {
@@ -2371,7 +2376,7 @@ app.post("/api/login", loginRateLimiter, async (request, response, next) => {
 
     const mfaPolicy = normalizeMfaPolicy(row.mfa_policy);
     if (mfaPolicy !== "disabled") {
-      const targetPortal = employeeLogin ? "employee" : crmLogin ? "crm" : "company";
+      const targetPortal = employeeLogin ? "employee" : crmLogin ? "crm" : maintenanceLogin ? "maintenance" : "company";
       const challenge = signCustomerToken({
         userName: row.user_name,
         role: row.role,
@@ -2460,8 +2465,15 @@ function mfaChallengePayload(request, purpose = "login") {
   return payload;
 }
 
+function hasTargetPortalAccess(row, targetPortal = "company") {
+  if (targetPortal === "employee") return Boolean(row.hr_portal_access);
+  if (targetPortal === "crm") return crmSessionFlags(row).crmPortalAccess === true;
+  if (targetPortal === "maintenance") return hasMaintenanceAccess(row);
+  return row.erp_portal_access !== false;
+}
+
 function mfaSession(row, targetPortal = "company") {
-  const portal = targetPortal === "employee" ? "employee" : targetPortal === "crm" ? "crm" : "company";
+  const portal = targetPortal === "employee" ? "employee" : targetPortal === "crm" ? "crm" : targetPortal === "maintenance" ? "maintenance" : "company";
   return {
     userName: row.user_name,
     email: row.email,
@@ -2518,6 +2530,7 @@ app.post("/api/mfa/enroll/verify", async (request, response, next) => {
     if (!(await isCurrentAppSession(authSession))) return response.status(401).json({ ok: false, error: "Your session has expired. Please sign in again." });
     const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [userName])).rows[0];
     if (!row?.mfa_secret_enc || row.mfa_enrolled_at) return response.status(400).json({ ok: false, error: "Start a new MFA enrollment first." });
+    if (challenge && !hasTargetPortalAccess(row, challenge.targetPortal)) return response.status(403).json({ ok: false, error: "Access to the requested portal is not enabled for this account." });
     let decrypted;
     try {
       decrypted = decryptMfaSecretWithFallback(row.mfa_secret_enc, mfaEncryptionSecret, [customerPortalSecret, configuredSecret]);
@@ -2540,6 +2553,7 @@ app.post("/api/mfa/login", loginRateLimiter, async (request, response, next) => 
     const row = (await query("select * from app_users where lower(user_name)=lower($1) limit 1", [challenge.userName])).rows[0];
     if (!row || String(row.account_status || "Active").toLowerCase() !== "active" || !row.mfa_enrolled_at || !row.mfa_secret_enc) return response.status(401).json({ ok: false, error: "MFA is not enrolled for this user." });
     if (!(await isCurrentAppSession(challenge))) return response.status(401).json({ ok: false, error: "The MFA challenge has expired. Sign in again." });
+    if (!hasTargetPortalAccess(row, challenge.targetPortal)) return response.status(403).json({ ok: false, error: "Access to the requested portal is not enabled for this account." });
     const code = String(request.body?.code || "").trim();
     let valid = false;
     let recoveryCodes = row.mfa_recovery_codes || "[]";
@@ -2575,7 +2589,7 @@ app.post("/api/mfa/reset/:userName", requireAppAuth, async (request, response, n
 
 app.post("/api/portal-switch", requireAppAuth, async (request, response, next) => {
   const requestedPortal = String(request.body?.portal || "").trim().toLowerCase();
-  if (!["employee", "company", "crm"].includes(requestedPortal)) {
+  if (!["employee", "company", "crm", "maintenance"].includes(requestedPortal)) {
     return response.status(400).json({ ok: false, error: "A valid portal must be selected." });
   }
   try {
@@ -2627,6 +2641,9 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
     if (requestedPortal === "crm" && !crmSessionFlags(row).crmPortalAccess) {
       return response.status(403).json({ ok: false, error: "CRM Portal access is not enabled for this account." });
     }
+    if (requestedPortal === "maintenance" && !hasMaintenanceAccess(row)) {
+      return response.status(403).json({ ok: false, error: "Maintenance Portal access is not enabled for this account." });
+    }
     return response.json({
       ok: true,
       session: {
@@ -2648,7 +2665,7 @@ app.post("/api/portal-switch", requireAppAuth, async (request, response, next) =
         isHrAdmin: Boolean(row.is_hr_admin),
         aiAccess: Boolean(row.ai_access),
         ...crmSessionFlags(row),
-        portal: requestedPortal === "employee" ? "employee" : requestedPortal === "crm" ? "crm" : "company",
+        portal: requestedPortal === "employee" ? "employee" : requestedPortal === "crm" ? "crm" : requestedPortal === "maintenance" ? "maintenance" : "company",
         token: signCustomerToken({ userName: row.user_name, role: row.role, portal: "app", employeePortal: requestedPortal === "employee", crmPortal: requestedPortal === "crm", authSessionVersion: Number(request.appSession.authSessionVersion || 0), isHrAdmin: Boolean(row.is_hr_admin), exp: Date.now() + APP_TOKEN_TTL_MS })
       }
     });

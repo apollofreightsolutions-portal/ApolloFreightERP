@@ -101,6 +101,11 @@ expensesRouter.put("/:id", requireAuth, async (req, res) => {
 expensesRouter.get("/:id/history", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    const expense = await query("SELECT created_by FROM maintenance_expenses WHERE id = $1", [id]);
+    if (expense.rowCount === 0) return res.status(404).json({ message: "Expense not found." });
+    if (!canViewAll(req) && String(expense.rows[0].created_by) !== String(req.user.id)) {
+      return res.status(404).json({ message: "Expense not found." });
+    }
     const result = await query(
       `SELECT id, changed_at, old_row, new_row
        FROM maintenance_expense_history

@@ -1,21 +1,32 @@
 const { Router } = require("express");
 const crypto = require("crypto");
 const { query } = require("../../db");
-const { canCreate, canDelete, canEditAll, canUpdateOwn, requireAuth } = require("../middleware/auth");
+const { canCreate, canDelete, canEditAll, canUpdateOwn, canViewAll, requireAuth } = require("../middleware/auth");
 
 const vehiclesRouter = Router();
 module.exports = { vehiclesRouter };
 
 vehiclesRouter.get("/", requireAuth, async (req, res) => {
   try {
-    const result = await query(
-      `SELECT v.id, v.name, v.plate_number, v.type, v.driver_name, v.route_name, v.status,
-              v.created_at, v.updated_at, v.created_by,
-              u.user_name AS created_by_name, u.user_name AS created_by_username
-       FROM maintenance_vehicles v
-       LEFT JOIN app_users u ON u.id = v.created_by
-       ORDER BY v.created_at DESC`
-    );
+    const result = canViewAll(req)
+      ? await query(
+          `SELECT v.id, v.name, v.plate_number, v.type, v.driver_name, v.route_name, v.status,
+                  v.created_at, v.updated_at, v.created_by,
+                  u.user_name AS created_by_name, u.user_name AS created_by_username
+           FROM maintenance_vehicles v
+           LEFT JOIN app_users u ON u.id = v.created_by
+           ORDER BY v.created_at DESC`
+        )
+      : await query(
+          `SELECT v.id, v.name, v.plate_number, v.type, v.driver_name, v.route_name, v.status,
+                  v.created_at, v.updated_at, v.created_by,
+                  u.user_name AS created_by_name, u.user_name AS created_by_username
+           FROM maintenance_vehicles v
+           LEFT JOIN app_users u ON u.id = v.created_by
+           WHERE v.created_by = $1
+           ORDER BY v.created_at DESC`,
+          [req.user.id]
+        );
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -88,6 +99,11 @@ vehiclesRouter.put("/:id", requireAuth, async (req, res) => {
 vehiclesRouter.get("/:id/history", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    const vehicle = await query("SELECT created_by FROM maintenance_vehicles WHERE id = $1", [id]);
+    if (vehicle.rowCount === 0) return res.status(404).json({ message: "Vehicle not found." });
+    if (!canViewAll(req) && String(vehicle.rows[0].created_by) !== String(req.user.id)) {
+      return res.status(404).json({ message: "Vehicle not found." });
+    }
     const result = await query(
       `SELECT id, changed_at, old_row, new_row
        FROM maintenance_vehicle_history

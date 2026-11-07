@@ -2311,7 +2311,7 @@ function renderModuleNav() {
     const crmButton = portalAccessPanel.querySelector("[data-portal-switch='crm']");
     if (hrButton) hrButton.hidden = isCustomerSession() || isHrSession() || !isChecked(session.hrPortalAccess);
     if (erpButton) erpButton.hidden = isCustomerSession() || (!isHrSession() && !isCrmSession()) || session.erpPortalAccess === false;
-    if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || (!isChecked(session.maintenancePortalAccess) && session.erpPortalAccess === false);
+    if (maintenanceButton) maintenanceButton.hidden = isCustomerSession() || session.maintenancePortalAccess !== true;
     if (crmButton) crmButton.hidden = isCustomerSession() || isCrmSession() || !isChecked(session.crmPortalAccess);
   }
 }
@@ -2702,11 +2702,11 @@ async function handleLogin(event) {
       rememberSession({ ...session, portal: "employee" });
     } else if (loginMode === "maintenance") {
       const session = await attemptApiLogin(userName, password, "maintenance");
-      if (!session.maintenancePortalAccess && !session.erpPortalAccess) {
+      if (session.maintenancePortalAccess !== true) {
         throw new Error("Maintenance Portal access is not enabled for this account. Contact your Admin to enable it.");
       }
       customerPortalData = null;
-      rememberSession({ ...session, portal: "company" });
+      rememberSession({ ...session, portal: "maintenance" });
       window.location.assign(`${MAINTENANCE_PORTAL_URL}#erpToken=${encodeURIComponent(session.token || "")}`);
       return;
     } else if (loginMode === "crm") {
@@ -2920,14 +2920,21 @@ async function switchPortal(target) {
     return;
   }
   if (target === "maintenance") {
-    if (!isChecked(session.maintenancePortalAccess) && session.erpPortalAccess === false) {
+    if (session.maintenancePortalAccess !== true) {
       notifyDenied("Access denied", "Maintenance Portal access is not enabled for this account. Contact Company Management.");
       return;
     }
-    const handoffUrl = `${MAINTENANCE_PORTAL_URL}#erpToken=${encodeURIComponent(session.token || "")}`;
-    const maintenanceWindow = window.open(handoffUrl, "_blank", "noopener,noreferrer");
-    if (!maintenanceWindow) {
-      notifyDenied("Maintenance Portal", "The browser blocked the new tab. Please allow pop-ups for this ERP portal and try again.");
+    try {
+      const result = await fetchJson("/api/portal-switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ portal: "maintenance" })
+      });
+      if (!result.session?.token) throw new Error("The server did not issue a Maintenance portal session.");
+      customerPortalData = null;
+      window.location.assign(`${MAINTENANCE_PORTAL_URL}#erpToken=${encodeURIComponent(result.session.token)}`);
+    } catch (error) {
+      notifyDenied("Portal switch failed", error.message || "The Maintenance Portal could not be opened.");
     }
     return;
   }
@@ -3491,6 +3498,10 @@ function apiUser(row) {
     isChecked(row.ai_access),
     row.mfa_policy || "disabled"
   );
+  result.maintenanceCanCreate = isChecked(row.maintenance_can_create);
+  result.maintenanceCanViewAll = isChecked(row.maintenance_can_view_all);
+  result.maintenanceCanUpdateOwn = isChecked(row.maintenance_can_update_own);
+  result.maintenanceCanEditAll = isChecked(row.maintenance_can_edit_all);
   const p=row.leave_permissions||{};
   result.leavePermissions={canApprove:p.can_approve_leave===true,finalApprover:p.final_approver===true,managementOverride:p.management_override===true,supervisorUser:p.supervisor_user||''};
   return result;
@@ -7739,6 +7750,10 @@ function openRecord(type, id, presetRecord) {
           erpPortalAccess: isChecked(data.erpPortalAccess),
           isHrAdmin: isChecked(data.isHrAdmin),
           maintenancePortalAccess: isChecked(data.maintenancePortalAccess),
+          maintenanceCanCreate: isChecked(data.maintenanceCanCreate),
+          maintenanceCanViewAll: isChecked(data.maintenanceCanViewAll),
+          maintenanceCanUpdateOwn: isChecked(data.maintenanceCanUpdateOwn),
+          maintenanceCanEditAll: isChecked(data.maintenanceCanEditAll),
           crmPortalAccess: isChecked(data.crmPortalAccess),
           crmRole: data.crmRole || record.crmRole || "Sales Executive",
           crmViewAllAccounts: isChecked(data.crmViewAllAccounts),
@@ -9511,6 +9526,10 @@ function userDialogBody(record) {
       hrPortalChecked: isChecked(fieldValue("hrPortalAccess", false)),
       hrAdminChecked: isChecked(fieldValue("isHrAdmin", false)),
       maintenancePortalChecked: isChecked(fieldValue("maintenancePortalAccess", false)),
+      maintenanceCanCreateChecked: isChecked(fieldValue("maintenanceCanCreate", false)),
+      maintenanceCanViewAllChecked: isChecked(fieldValue("maintenanceCanViewAll", false)),
+      maintenanceCanUpdateOwnChecked: isChecked(fieldValue("maintenanceCanUpdateOwn", false)),
+      maintenanceCanEditAllChecked: isChecked(fieldValue("maintenanceCanEditAll", false)),
       crmPortalChecked: isChecked(fieldValue("crmPortalAccess", false)),
       crmRole: fieldValue("crmRole", "Sales Executive"),
       crmViewAllChecked: isChecked(fieldValue("crmViewAllAccounts", false)),
@@ -9539,7 +9558,7 @@ function changePasswordDialogBody() {
 }
 
 function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
-  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false, aiChecked = true } = options;
+  const { billingSalesChecked = true, billingCostChecked = true, erpPortalChecked = true, hrPortalChecked = false, hrAdminChecked = false, maintenancePortalChecked = false, maintenanceCanCreateChecked = false, maintenanceCanViewAllChecked = false, maintenanceCanUpdateOwnChecked = false, maintenanceCanEditAllChecked = false, crmPortalChecked = false, crmRole = "Sales Executive", crmViewAllChecked = false, crmAssignChecked = false, crmExportChecked = false, crmArchiveChecked = false, crmTeamReportsChecked = false, crmAdminChecked = false, aiChecked = true } = options;
   return `<fieldset class="section-access-grid">
     <legend>Menu Access Permissions</legend>
     ${modules.map(([name]) => {
@@ -9560,6 +9579,13 @@ function sectionAccessCheckboxes(checkedSections = new Set(), options = {}) {
       ${checkbox("crmPortalAccess", "Allow CRM / Sales Portal access", crmPortalChecked)}
       ${checkbox("aiAccess", "Allow Apollo AI access (read-only, permission-scoped)", aiChecked)}
       ${checkbox("isHrAdmin", "Is HR Admin (independent of ERP role - manage all employee records, leave, payslips, announcements)", hrAdminChecked)}
+    </div>
+    <div class="checkbox-field permission-group-label"><span>Maintenance Security &amp; Data Scope</span></div>
+    <div class="permission-sub-options">
+      ${checkbox("maintenanceCanCreate", "Maintenance: Create vehicles and expenses", maintenanceCanCreateChecked)}
+      ${checkbox("maintenanceCanUpdateOwn", "Maintenance: Update own entries", maintenanceCanUpdateOwnChecked)}
+      ${checkbox("maintenanceCanViewAll", "Maintenance: View all users' records", maintenanceCanViewAllChecked)}
+      ${checkbox("maintenanceCanEditAll", "Maintenance: Edit all records and delete entries", maintenanceCanEditAllChecked)}
     </div>
     <div class="checkbox-field permission-group-label"><span>CRM Security & Ownership</span></div>
     <div class="permission-sub-options">
@@ -13502,6 +13528,10 @@ async function createUser(data) {
     isChecked(data.aiAccess),
     data.mfaPolicy || "disabled"
   );
+  record.maintenanceCanCreate = isChecked(data.maintenanceCanCreate);
+  record.maintenanceCanViewAll = isChecked(data.maintenanceCanViewAll);
+  record.maintenanceCanUpdateOwn = isChecked(data.maintenanceCanUpdateOwn);
+  record.maintenanceCanEditAll = isChecked(data.maintenanceCanEditAll);
   record.leavePermissions=leavePermissionValues(data);
   const saved=await postRecord("user", record);
   if(!saved){notifyDenied('User not created',state.api?.error||'The user and permissions could not be saved.');return false;}

@@ -25,6 +25,8 @@ authRouter.get("/me", requireAuth, (req, res) => {
     email: req.user.email,
     role: req.user.role,
     permissions: req.user.permissions,
+    erpPortalAccess: req.user.erpPortalAccess,
+    maintenancePortalAccess: req.user.maintenancePortalAccess,
     created_at: null
   });
 });

@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const { query } = require("../../db");
 const { requireAdmin, requireAuth } = require("../middleware/auth");
 const { updatePasswordById } = require("../../session-revocation");
+const { permissionsFromErpUser } = require("../permissions");
 
 const usersRouter = Router();
 module.exports = { usersRouter };
@@ -15,14 +16,7 @@ function erpRole(role) {
 }
 
 function permissionsFor(row) {
-  const role = String(row.role || "").toLowerCase();
-  const isAdmin = role === "admin";
-  return {
-    create: isAdmin || row.can_edit_all_entry || row.can_view_all_entry,
-    updateOwn: isAdmin || !row.can_view_only_self_entry,
-    viewAll: isAdmin || row.can_view_all_entry,
-    editAll: isAdmin || row.can_edit_all_entry
-  };
+  return permissionsFromErpUser(row);
 }
 
 function publicUser(row) {
@@ -40,8 +34,8 @@ function publicUser(row) {
 }
 
 const userColumns = `id, user_name, email, role, account_status, created_at,
-  can_view_all_entry, can_view_only_self_entry, can_edit_all_entry,
-  maintenance_portal_access`;
+  maintenance_portal_access, maintenance_can_create, maintenance_can_view_all,
+  maintenance_can_update_own, maintenance_can_edit_all`;
 
 usersRouter.get("/", requireAuth, requireAdmin, async (_req, res) => {
   try {
@@ -63,20 +57,24 @@ usersRouter.post("/", requireAuth, requireAdmin, async (req, res) => {
     }
 
     const permissions = req.body.permissions || {};
+    const maintenanceAccess = req.body.maintenancePortalAccess === true || req.body.maintenance_portal_access === true || permissions.access === true;
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await query(
       `INSERT INTO app_users
          (user_name, email, role, password, can_view_all_entry, can_view_only_self_entry,
-          can_edit_all_entry, can_view_updated_history, maintenance_portal_access)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
+          can_edit_all_entry, can_view_updated_history, maintenance_portal_access,
+          maintenance_can_create, maintenance_can_view_all, maintenance_can_update_own, maintenance_can_edit_all)
+       VALUES ($1, $2, $3, $4, false, true, false, false, $5, $6, $7, $8, $9)
        RETURNING ${userColumns}`,
       [
         username,
         email,
         erpRole(req.body.role),
         passwordHash,
+        maintenanceAccess,
+        Boolean(permissions.create),
         Boolean(permissions.viewAll),
-        !Boolean(permissions.updateOwn),
+        Boolean(permissions.updateOwn),
         Boolean(permissions.editAll)
       ]
     );
@@ -93,19 +91,21 @@ usersRouter.put("/:id", requireAuth, requireAdmin, async (req, res) => {
     const email = String(req.body.email || "").trim().toLowerCase();
     if (!Number.isInteger(id) || !username) return res.status(400).json({ message: "A valid username is required." });
     const permissions = req.body.permissions || {};
+    const maintenanceAccess = req.body.maintenancePortalAccess === true || req.body.maintenance_portal_access === true || permissions.access === true;
     const result = await query(
       `UPDATE app_users
        SET user_name = $2,
            email = $3,
            role = $4,
-           can_view_all_entry = $5,
-           can_view_only_self_entry = $6,
-           can_edit_all_entry = $7,
-           maintenance_portal_access = true,
+           maintenance_portal_access = $5,
+           maintenance_can_create = $6,
+           maintenance_can_view_all = $7,
+           maintenance_can_update_own = $8,
+           maintenance_can_edit_all = $9,
            updated_at = NOW()
        WHERE id = $1
        RETURNING ${userColumns}`,
-      [id, username, email, erpRole(req.body.role), Boolean(permissions.viewAll), !Boolean(permissions.updateOwn), Boolean(permissions.editAll)]
+      [id, username, email, erpRole(req.body.role), maintenanceAccess, Boolean(permissions.create), Boolean(permissions.viewAll), Boolean(permissions.updateOwn), Boolean(permissions.editAll)]
     );
     if (result.rowCount === 0) return res.status(404).json({ message: "User not found." });
     return res.json(publicUser(result.rows[0]));
@@ -134,13 +134,21 @@ usersRouter.put("/:id/password", requireAuth, requireAdmin, async (req, res) => 
 usersRouter.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (id === Number(req.user?.id)) return res.status(400).json({ message: "You cannot revoke your own Maintenance access here." });
     const result = await query(
-      `UPDATE app_users SET account_status = 'Inactive', maintenance_portal_access = false, updated_at = NOW()
-       WHERE id = $1 RETURNING id`,
+      `UPDATE app_users
+       SET maintenance_portal_access = false,
+           maintenance_can_create = false,
+           maintenance_can_view_all = false,
+           maintenance_can_update_own = false,
+           maintenance_can_edit_all = false,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${userColumns}`,
       [id]
     );
     if (result.rowCount === 0) return res.status(404).json({ message: "User not found." });
-    return res.json({ message: "ERP user deactivated successfully." });
+    return res.json(publicUser(result.rows[0]));
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
