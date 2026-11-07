@@ -1,0 +1,20 @@
+const {JSDOM}=require('jsdom'),fs=require('fs'),path=require('path'),assert=require('node:assert/strict');
+const source=fs.readFileSync(path.join(__dirname,'../web/customer-compliance.js'),'utf8');
+const dom=new JSDOM('<form data-form="customer-shipment-request"><section class="customer-document-step"><input name="attachments" type="file"></section></form><form data-form="customer-hs-check"><section class="customer-document-step"><input name="attachments" type="file"></section></form>',{url:'https://example.test',runScripts:'outside-only'});
+const w=dom.window;w.sessionStorage.setItem('apollofreighterp-session',JSON.stringify({portal:'customer',token:'TEST'}));
+const result={lines:Array.from({length:65},(_,i)=>({lineIndex:i,description:'Item '+i,submittedHsCode:'001234',effectiveHsCode:'001234',status:i<35?'ATTENTION':'PASS',confidence:i<35?85:92,originalConfidence:i<35?85:92,suggestion:{hsCode:'009999',confidence:i===2?89:94},clarificationQuestion:i===0?'What use?':''}))};
+result.lines[1].status='BLOCKED';let calls=[];w.confirm=()=>true;
+w.fetch=async(url,opts)=>{calls.push({url,opts});const body=JSON.parse(opts.body);return {ok:true,json:async()=>({ok:true,analysisId:'a',result,applied:(body.accepted||[]).map(a=>a.lineIndex),skipped:[]})};};
+w.eval(source.replace('new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });','')+'\nwindow.exposed={renderResult,enhance};');
+const [booking,form]=w.document.querySelectorAll('form');w.exposed.enhance(booking);w.exposed.enhance(form);assert.equal(booking.dataset.hsCheckOnly,'0');const p=form.querySelector('.apollo-compliance-panel');p.hidden=false;w.exposed.renderResult(p,result,'a');assert.equal(p.parentElement,form);
+const click=s=>p.querySelector(s).click(),wait=()=>new Promise(r=>setTimeout(r,5));
+(async()=>{try{
+ assert.equal(p._hsView.filter,'flagged');assert.match(p.querySelector('[data-hs-visible]').textContent,/34 of 65/);
+ click('[data-hs-select-filtered]');assert.equal(p._hsView.selected.size,34);click('[data-hs-page="next"]');assert.equal(p.querySelectorAll('.hs31-row').length,14);
+ p.querySelector('[data-hs-bulk]').value='suggest';click('[data-hs-apply]');await wait();let accepted=JSON.parse(calls.at(-1).opts.body).accepted;assert.equal(accepted.length,32);assert(!accepted.some(a=>[0,1,2].includes(a.lineIndex)));assert.equal(calls.at(-1).opts.headers.Authorization,'Bearer TEST');assert.equal(p._hsView.selected.size,2);
+ click('[data-hs-filter="all"]');click('[data-hs-select-filtered]');p.querySelector('[data-hs-bulk]').value='keep';click('[data-hs-apply]');await wait();accepted=JSON.parse(calls.at(-1).opts.body).accepted;assert.equal(accepted.length,65);assert(accepted.every(x=>x.keepOriginal));assert.equal(p._hsView.selected.size,0);
+ click('[data-hs-filter="clarify"]');assert.equal(p.querySelectorAll('.hs31-row').length,1);click('[data-hs-expand="0"]');assert.equal(p.querySelector('#hs31-detail-0').hidden,false);
+ const e=new w.Event('submit',{bubbles:true,cancelable:true});booking.dispatchEvent(e);assert.equal(e.defaultPrevented,false);
+ const se=new w.Event('submit',{bubbles:true,cancelable:true});form.dispatchEvent(se);assert.equal(se.defaultPrevented,true);
+ console.log('PASS V32 HS UI: separate lists, 90% label, cross-page bulk suggestions/keep, skips, selection counts, booking isolation');
+}finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

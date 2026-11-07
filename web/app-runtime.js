@@ -1587,7 +1587,7 @@ function creditLimitOptions() {
 }
 
 function customerStatusOptions() {
-  return ["Active", "Inactive"];
+  return ["Active", "Inactive", "Blocked"];
 }
 
 function normalizedCreditLimit(value = "") {
@@ -1596,7 +1596,7 @@ function normalizedCreditLimit(value = "") {
 }
 
 function normalizedCustomerStatus(value = "") {
-  return String(value || "").trim().toLowerCase() === "inactive" ? "Inactive" : "Active";
+  return ({active:'Active',inactive:'Inactive',blocked:'Blocked'})[String(value||'').trim().toLowerCase()]||'Active';
 }
 
 function defaultUserBranch() {
@@ -3337,6 +3337,7 @@ function apiShipment(row) {
     row.notes || ""
   );
   const shipmentMeta = parseJsonMeta(row.notes || "{}");
+  item.customerCode = row.customer_code || shipmentMeta.customerCode || "";
   item.createdAt = row.created_at || '';
   item.updatedAt = row.updated_at || row.created_at || '';
   item.reportingMode = row.reporting_mode || 'auto';
@@ -4698,7 +4699,7 @@ function openCustomerShipmentHistory(customerCode, range = {}) {
       || String(shipmentItem.customer || "").toLowerCase() === String(customer.name || "").toLowerCase()
       || String(shipmentItem.consigneeName || "").toLowerCase() === String(customer.name || "").toLowerCase();
     const shipmentDate = String(shipmentItem.bookingDate || shipmentItem.shipmentDate || "").slice(0, 10);
-    return belongsToCustomer && (!from || !shipmentDate || shipmentDate >= from) && (!to || !shipmentDate || shipmentDate <= to);
+    return normalizeBranchName(shipmentItem.branch)===normalizeBranchName(customer.branch) && belongsToCustomer && (!from || !shipmentDate || shipmentDate >= from) && (!to || !shipmentDate || shipmentDate <= to);
   });
   openDialog({
     title: `Customer Shipments — ${customer.code}`,
@@ -4768,10 +4769,10 @@ function openCustomerDetails(customerCode) {
       ${input("email", "Contact Email", customer.email || "", false, "email")}
       ${input("mobile", "Mobile Number", customer.mobile || "")}
       ${strictSelect("terms", "Credit Limit Days", creditLimitOptions(), normalizedCreditLimit(customer.terms))}
-      ${strictSelect("branch", "Branch", branchOptions(), normalizeBranchName(customer.branch || defaultUserBranch()))}
+      ${input("branch", "Station (fixed)", normalizeBranchName(customer.branch || defaultUserBranch()), true)}
       <div class="action-row customer-detail-actions">
         <button type="button" class="secondary-button" data-dialog-action="check-performance">Check Performance</button>
-        ${strictSelect("blockBranch", "Branch to Block / Unblock", branchOptions(), normalizeBranchName(customer.branch || defaultUserBranch()))}
+        ${input("blockBranch", "Station to Block / Unblock", normalizeBranchName(customer.branch || defaultUserBranch()), true)}
         <button type="button" class="secondary-button" data-dialog-action="block-customer">${adminActing ? "Block" : "Block Request"}</button>
         <button type="button" class="secondary-button" data-dialog-action="unblock-customer">${adminActing ? "Unblock" : "Unblock Request"}</button>
       </div>
@@ -4784,7 +4785,7 @@ function openCustomerDetails(customerCode) {
         notifyDenied("Not saved", "Enter a name first.");
         return;
       }
-      if (isDuplicateCustomerDetails(name, data.email, data.mobile, customer.code)) {
+      if (isDuplicateCustomerDetails(name, data.email, data.mobile, customer.code, customer.branch)) {
         notifyDuplicateCustomer();
         return;
       }
@@ -8033,23 +8034,24 @@ function notifyDuplicate(id) {
   notifyDenied("Already used", message);
 }
 
-function isDuplicateCustomerDetails(name, email, mobile, excludeCode = "") {
-  const normalizedName = String(name || "").trim().toLowerCase();
+function stationCustomerName(value) { return String(value||"").toLowerCase().replace(/[\s\p{P}]+/gu,""); }
+function isDuplicateCustomerDetails(name, email, mobile, excludeCode = "", branch = defaultUserBranch()) {
+  const normalizedName = stationCustomerName(name);
   if (!normalizedName) return false;
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedMobile = String(mobile || "").trim().toLowerCase();
   const normalizedExclude = String(excludeCode || "").trim().toLowerCase();
   return state.customers.some((row) => {
     if (String(row.code || "").trim().toLowerCase() === normalizedExclude) return false;
-    if (String(row.name || "").trim().toLowerCase() !== normalizedName) return false;
+    if (normalizeBranchName(row.branch) !== normalizeBranchName(branch) || stationCustomerName(row.name) !== normalizedName) return false;
     const rowEmail = String(row.email || "").trim().toLowerCase();
     const rowMobile = String(row.mobile || "").trim().toLowerCase();
-    return (normalizedEmail && rowEmail === normalizedEmail) || (normalizedMobile && rowMobile === normalizedMobile);
+    return true;
   });
 }
 
 function notifyDuplicateCustomer() {
-  notifyDenied("Duplicate customer", "Another customer already exists with this same name and email or mobile number.");
+  notifyDenied("Duplicate customer", "This name already exists in this station. Use the existing account. The same name is allowed in the other station.");
 }
 
 // Airway Bill numbers must be unique within a branch. excludeJobNo lets an edit compare against
@@ -9241,7 +9243,7 @@ function partyDialogConfig(key, label) {
       ${input("mobile", "Mobile Number", "")}
       ${key === "customers" ? strictSelect("terms", "Credit Limit Days", creditLimitOptions(), "15 Days") : select("terms", "Credit Limit Days", ["15 days", "30 days", "45 days"])}
       ${key === "customers" ? strictSelect("status", "Status", customerStatusOptions(), "Active") : select("status", "Status", ["Active", "Inactive", "Blocked"])}
-      ${strictSelect("branch", "Branch", branchOptions(), defaultUserBranch())}
+      ${strictSelect("branch", "Branch", key === "customers" ? branchOptions().filter(value => value !== "Both") : branchOptions(), defaultUserBranch())}
     `,
     onSave: (data) => createParty(key, data)
   };
@@ -9957,6 +9959,12 @@ function openShipmentFromAirwayBill(sourceRecord, airwayBillNo, branch = "", ser
   prefillRecord.bookingDate = today();
   prefillRecord.shipmentDate = today();
   prefillRecord.branch = normalizeBranchName(branch || defaultUserBranch());
+  const localMatches=state.customers.filter(c=>normalizeBranchName(c.branch)===prefillRecord.branch&&stationCustomerName(c.name)===stationCustomerName(sourceRecord.customer));
+  const local=localMatches.length===1?localMatches[0]:null;
+  prefillRecord.customerCode=local?.code||"";
+  // Fetch preserves every shipment field and contact snapshot. Only the local account ID changes.
+  // Selecting/editing a customer manually remains a separate user action.
+  if(!local) notifyDenied("Local account required","AWB details are available. Select or create the receiving station customer account before saving. The source station account will not be reused.");
   const availableDirections = shipmentDirectionOptions();
   const requestedDirection = String(direction || prefillRecord.shipmentDirection || "Export").trim();
   prefillRecord.shipmentDirection = availableDirections.includes(requestedDirection) ? requestedDirection : "Export";
@@ -10038,13 +10046,14 @@ function bindShipmentCustomerAutofill() {
   const findCustomer = (value, allowPartial = false) => {
     const query = normalizeCustomerSearch(value);
     if (!query) return null;
-    const exactMatches = state.customers.filter((row) => customerIdentityValues(row).includes(query));
+    const localRows=state.customers.filter(row=>normalizeBranchName(row.branch)===normalizeBranchName(dialogValue("branch")||defaultUserBranch()));
+    const exactMatches = localRows.filter((row) => customerIdentityValues(row).includes(query));
     const exact = exactMatches.length === 1 ? exactMatches[0] : null;
     if (exact) return exact;
     // Partial lookup is used only after the user leaves a field, and only against name/code.
     // Searching address, phone, email, or contact text can select the wrong account.
     if (!allowPartial || query.length < 3 || /[0-9@+]/.test(query)) return null;
-    const matches = state.customers.filter((row) => customerIdentityValues(row).some((field) => field.includes(query)));
+    const matches = localRows.filter((row) => customerIdentityValues(row).some((field) => field.includes(query)));
     return matches.length === 1 ? matches[0] : null;
   };
 
@@ -13065,7 +13074,7 @@ function blockedCustomerRecord(customerNameOrCode, branch) {
   if (!lookup) return null;
   return state.customers.find((row) => {
     const matchesCustomer = String(row.name || "").trim().toLowerCase() === lookup || String(row.code || "").trim().toLowerCase() === lookup;
-    return matchesCustomer && isRecordBlockedForBranch(row, branch);
+    return matchesCustomer && normalizeBranchName(row.branch)===normalizeBranchName(branch) && String(row.status||'').toLowerCase()==='blocked';
   }) || null;
 }
 
@@ -13114,7 +13123,13 @@ async function applyBlockRequestToRecord(request) {
   // Track which branch(es) are blocked. "Both" always replaces the whole set; a single branch
   // is added to or removed from the existing blocked-branch list, so blocking/unblocking one
   // branch never affects another branch's block.
-  const requestedBranch = normalizeBranchName(request.branch || record.branch || defaultUserBranch());
+  const requestedBranch = normalizeBranchName(collectionKey==="customers"?record.branch:(request.branch||record.branch||defaultUserBranch()));
+  if(collectionKey==="customers"){
+    record.blockedBranches=isBlock?requestedBranch:"";record.status=isBlock?"Blocked":"Active";
+    const saved=await persistRecord(collectionKey,record);
+    if(!saved){record.blockedBranches=previousBlockedBranches;record.status=previousStatus;}
+    return saved;
+  }
   const currentBlocked = new Set(String(record.blockedBranches || "").split(",").map((item) => item.trim()).filter(Boolean));
   if (isBlock) {
     if (requestedBranch === "Both") { currentBlocked.clear(); currentBlocked.add("Both"); }
@@ -13433,7 +13448,7 @@ async function createParty(key, data) {
     notifyDuplicate(code);
     return false;
   }
-  if (isCustomer && isDuplicateCustomerDetails(name, data.email, data.mobile)) {
+  if (isCustomer && isDuplicateCustomerDetails(name, data.email, data.mobile, "", data.branch || defaultUserBranch())) {
     notifyDuplicateCustomer();
     return false;
   }

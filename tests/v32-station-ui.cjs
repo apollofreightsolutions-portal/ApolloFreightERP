@@ -1,0 +1,22 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const src=fs.readFileSync(require('path').join(__dirname,'../web/app-runtime.js'),'utf8');
+const names=['stationCustomerName','isDuplicateCustomerDetails','blockedCustomerRecord','openShipmentFromAirwayBill','normalizedCustomerStatus'];
+function extract(name){const start=src.indexOf('function '+name+'(');assert(start>=0);const end=src.indexOf('\nfunction ',start+1);return src.slice(start,end<0?src.length:end);}
+const customers=[{code:'0021',name:'Sun and Sand',branch:'Dubai',status:'Active'},{code:'1212',name:'Sun and Sand',branch:'Kuwait HO',status:'Blocked'}];
+let captured;
+const ctx={state:{customers},normalizeBranchName:x=>({KWI:'Kuwait HO',DXB:'Dubai'})[x]||x,defaultUserBranch:()=> 'Kuwait HO',notifyDenied:()=>{},today:()=> '2026-11-06',shipmentDirectionOptions:()=>['Import','Export'],shipmentServiceOptions:()=>['LE'],nextShipmentNumber:(b,s)=>b==='Kuwait HO'?'KWI-NEXT':'DXB-NEXT',recordDialog:{open:false},shipmentDialogBody:(m,r)=>{captured=r;return '';},openDialog:()=>{},window:{requestAnimationFrame:()=>{}},dialogTitle:{},dialogSave:{}};
+vm.createContext(ctx);for(const n of names)vm.runInContext(extract(n),ctx);
+assert.equal(ctx.isDuplicateCustomerDetails('Sun and Sand.','','','','KWI'),true);
+assert.equal(ctx.isDuplicateCustomerDetails('New company','','','','KWI'),false);
+assert.equal(ctx.blockedCustomerRecord('Sun and Sand','Dubai'),null);
+assert.equal(ctx.blockedCustomerRecord('Sun and Sand','KWI').code,'1212');
+assert.equal(ctx.normalizedCustomerStatus('Blocked'),'Blocked');
+const source={jobNo:'DXB-OLD',airwayBillNo:'AWB-SHARED',branch:'Dubai',customer:'Sun and Sand',customerCode:'0021',actualKg:150,cbm:3,chargeableKg:500,transportMode:'Land',pallets:[{length:120,width:80,height:100}],tcnNumber:'OLD-TCN',shipmentDirection:'Export',shipmentService:'LE'};
+const original=JSON.stringify(source);
+ctx.openShipmentFromAirwayBill(source,'AWB-SHARED','Kuwait HO','LE','Import');
+assert.equal(captured.customerCode,'1212');assert.equal(captured.branch,'Kuwait HO');assert.equal(captured.jobNo,'KWI-NEXT');assert.equal(captured.airwayBillNo,'AWB-SHARED');assert.equal(captured.tcnNumber,'');
+for(const k of ['actualKg','cbm','chargeableKg','transportMode','pallets'])assert.deepEqual(captured[k],source[k]);
+assert.equal(JSON.stringify(source),original);
+customers.splice(1,1);ctx.openShipmentFromAirwayBill(source,'AWB-SHARED','Kuwait HO','LE','Import');assert.equal(captured.customerCode,'');assert.equal(captured.actualKg,150);
+assert.equal(ctx.isDuplicateCustomerDetails('Sun and Sand','','','','KWI'),false);
+console.log('PASS station UI: same-name accounts, local blocks, AWB/pallet/weight preservation, correct local code, unchanged source, missing local account safety');

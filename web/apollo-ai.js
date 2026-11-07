@@ -38,7 +38,7 @@ function ensureUi() {
   const panel = document.createElement("aside");
   panel.id = "apolloAiPanel"; panel.className = "apollo-ai-panel"; panel.setAttribute("aria-hidden", "true");
   panel.innerHTML = `
-    <div class="apollo-ai-header"><div><p class="apollo-ai-eyebrow">Apollo Connected</p><h2>Apollo AI</h2><p class="apollo-ai-security-line">Read-only · permission-scoped · exact-data first</p></div><button type="button" class="apollo-ai-close">Close</button></div>
+    <div class="apollo-ai-header"><div><p class="apollo-ai-eyebrow">Apollo Connected</p><h2>Apollo AI</h2><p class="apollo-ai-security-line">Permission-scoped · exact-data first · confirmed admin actions</p></div><button type="button" class="apollo-ai-close">Close</button></div>
     <div class="apollo-ai-meta" id="apolloAiMeta">Checking access…</div>
     <div class="apollo-ai-messages" id="apolloAiMessages" aria-live="polite"></div>
     <div class="apollo-ai-suggestions" id="apolloAiSuggestions"></div>
@@ -46,13 +46,13 @@ function ensureUi() {
       <label for="apolloAiInput">Ask Apollo AI</label>
       <textarea id="apolloAiInput" maxlength="2500" rows="3" placeholder="Ask about shipments, TCN/POD copies, booking activity, CRM, or draft a work message."></textarea>
       <div class="apollo-ai-form-actions"><button type="button" class="apollo-ai-clear">Clear</button><button type="submit" class="apollo-ai-send">Ask Apollo AI</button></div>
-      <p class="apollo-ai-footnote">Apollo AI uses server-filtered Connected records and cannot change records or bypass your permissions.</p>
+      <p class="apollo-ai-footnote">Live Connected records, within your permissions. Administrators can confirm customer block/unblock actions; other changes are not performed by chat.</p>
     </form>`;
   document.body.appendChild(panel);
 
   launcher.addEventListener("click", () => setOpen(true));
   panel.querySelector(".apollo-ai-close").addEventListener("click", () => setOpen(false));
-  panel.querySelector(".apollo-ai-clear").addEventListener("click", () => { aiState.messages = []; renderMessages(); renderSuggestions(); });
+  panel.querySelector(".apollo-ai-clear").addEventListener("click", () => { aiState.messages = []; aiState.accountReference=null; renderMessages(); renderSuggestions(); });
   panel.querySelector("#apolloAiForm").addEventListener("submit", async (event) => {
     event.preventDefault(); const input = panel.querySelector("#apolloAiInput"); const message = String(input.value || "").trim();
     if (!message || aiState.busy) return; input.value = ""; await sendMessage(message);
@@ -87,7 +87,7 @@ function actionButton(item) {
 function renderMessages() {
   const container = document.querySelector("#apolloAiMessages"); if (!container) return;
   if (!aiState.messages.length) {
-    container.innerHTML = `<div class="apollo-ai-welcome"><strong>Exact Connected data first.</strong><p>Shipment lists, booking summaries, TCN copies and POD retrieval are queried directly from Apollo Connected. Gemini is used only when language interpretation is useful.</p></div>`;
+    container.innerHTML = `<div class="apollo-ai-welcome"><strong>Exact Connected data first.</strong><p>Find accounts by name and branch, review sales activity, and retrieve shipment/TCN/POD records. OpenAI assists with language; account searches work directly against Connected.</p></div>`;
     return;
   }
   container.replaceChildren();
@@ -129,6 +129,21 @@ async function api(path, options = {}, timeoutMs = 15000) {
 async function handleAction(button) {
   let item = null; try { item = JSON.parse(decodeURIComponent(button.dataset.aiAction || "")); } catch { return; }
   if (!item) return;
+  if(['account','account-change','account-confirm'].includes(item.type)){
+    let path,body;
+    if(item.type==='account')path=`/api/ai/account/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`;
+    if(item.type==='account-change'){
+      let branch=item.branch;
+      if(!branch){const choice=window.prompt('Branch to change: enter KWI, DXB or BOTH.','');if(choice===null)return;branch=({KWI:'Kuwait HO',DXB:'Dubai',BOTH:'Both'})[choice.trim().toUpperCase()];if(!branch){window.alert('Please enter KWI, DXB or BOTH.');return;}}
+      path='/api/ai/account-change/prepare';body={id:item.id,operation:item.operation,branch};
+    }
+    if(item.type==='account-confirm'){if(!window.confirm('Apply the exact customer and branch change shown in this confirmation?'))return;path='/api/ai/account-change/confirm';body={token:item.token};}
+    button.disabled=true;
+    try{const r=await api(path,body?{method:'POST',body:JSON.stringify(body)}:{});if(r.accountReference)aiState.accountReference=r.accountReference;addMessage('assistant',r.answer,'Live Connected record',r.actions||[],r.sourceSummary||'Server verified');}
+    catch(e){addMessage('assistant',e.message,'Action not completed');}
+    finally{if(item.type!=='account-confirm')button.disabled=false;}
+    return;
+  }
   if (item.type === "tcn") {
     const docs = window.ApolloConnectedDocuments;
     if (!docs?.openTcn) {
@@ -164,7 +179,7 @@ async function refreshAccess(force = false) {
   const appShell = document.querySelector("#appShell");
   const loggedIn = Boolean(isAiPortalAllowed() && currentToken && appShell && !appShell.classList.contains("is-hidden"));
   if (!loggedIn) {
-    aiState.enabled = false; aiState.token = ""; aiState.meta = null;
+    aiState.enabled = false; aiState.token = ""; aiState.meta = null; aiState.messages=[]; aiState.accountReference=null;
     hideAiUiCompletely();
     return;
   }
@@ -173,6 +188,7 @@ async function refreshAccess(force = false) {
   renderMessages();
   const launcher = document.querySelector("#apolloAiLauncher");
   if (!force && currentToken === aiState.token && aiState.meta) { if (launcher) launcher.hidden = !aiState.enabled; return; }
+  if(aiState.token&&aiState.token!==currentToken){aiState.messages=[];aiState.accountReference=null;renderMessages();}
   aiState.token = currentToken;
   try {
     const meta = await api("/api/ai/me", {}, 12000); aiState.enabled = Boolean(meta.enabled); aiState.meta = meta; if (launcher) launcher.hidden = !aiState.enabled;
@@ -187,7 +203,9 @@ async function sendMessage(message) {
   const sendButton = document.querySelector(".apollo-ai-send"); if (sendButton) { sendButton.disabled = true; sendButton.textContent = "Working…"; }
   try {
     const history = aiState.messages.slice(0, -1).slice(-4).map((item) => ({ role: item.role === "assistant" ? "assistant" : "user", text: item.text }));
-    const result = await api("/api/ai/chat", { method:"POST", body:JSON.stringify({ message:clean, history }) }, 35000);
+    const result = await api("/api/ai/chat", { method:"POST", body:JSON.stringify({ message:clean, history,accountReference:aiState.accountReference||null }) }, 35000);
+    // A new search result must not leave "block it" pointing at an older opened customer.
+    if ((result.actions || []).some(item => item.type === "account")) aiState.accountReference = null;
     const when = result.retrievedAt ? new Date(result.retrievedAt).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : "";
     const meta = `${result.scopeLabel || "Apollo AI"}${result.deterministic ? " · Exact query" : ""}${when ? ` · ${when}` : ""}`;
     addMessage("assistant", result.answer || "No response returned.", meta, result.actions || [], result.sourceSummary || "");

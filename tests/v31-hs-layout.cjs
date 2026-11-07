@@ -4,24 +4,24 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../web/custome
 const dom=new JSDOM(`<form data-form="customer-shipment-request"><section class="customer-booking-step"><input name="destination" value="Kuwait"></section><section class="customer-document-step"><input name="attachments" type="file"></section><input name="hsCode"><input name="itemCode"><button type="submit">Book</button></form><form data-form="customer-hs-check"><section class="customer-document-step"><input name="attachments" type="file"></section></form>`,{url:'https://example.test',runScripts:'outside-only'});
 const w=dom.window;w.sessionStorage.setItem('apollofreighterp-session',JSON.stringify({portal:'customer',token:'test-token'}));
 let calls=[];let result={status:'ATTENTION_REQUIRED',totalLineItems:65,passedLineItems:32,lines:Array.from({length:65},(_,i)=>({lineIndex:i,description:i===2?'Caps <script>unsafe</script>':'Item '+i,sourceFile:'test.xlsx',submittedHsCode:'00123456',effectiveHsCode:'00123456',status:i%2?'ATTENTION':'PASS',confidence:84,originalConfidence:84,clarificationQuestion:i===2?'What kind of caps?':'',suggestion:{hsCode:'00999999',description:'Alternative',confidence:97},matchedMaster:{},issue:'Check text'}))};
-w.fetch=async(url,opts)=>{calls.push({url,opts});return {ok:true,json:async()=>({ok:true,analysisId:'a',result})}};
+w.fetch=async(url,opts)=>{calls.push({url,opts});return {ok:true,json:async()=>({ok:true,analysisId:'a',result,applied:opts?.body?(JSON.parse(opts.body).accepted||[]).map(a=>a.lineIndex):[],skipped:[]})}};
 w.eval(source.replace('new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });','')+'\nwindow.exposed={renderResult,enhance,analyze};');
 const [booking,standalone]=w.document.querySelectorAll('form');w.exposed.enhance(booking);w.exposed.enhance(standalone);
 assert.equal(booking.dataset.hsCheckOnly,'0');assert.equal(standalone.dataset.hsCheckOnly,'1');assert.equal(booking.querySelector('[data-check-only]'),null);
 const p=standalone.querySelector('.apollo-compliance-panel');p.hidden=false;w.exposed.renderResult(p,result,'a');
-assert.equal(p.parentElement,standalone);assert.equal(p.querySelectorAll('.hs31-row').length,20);assert.match(p.querySelector('[data-hs-visible]').textContent,/33 of 65/);
+assert.equal(p.parentElement,standalone);assert.equal(p.querySelectorAll('.hs31-row').length,20);assert.match(p.querySelector('[data-hs-visible]').textContent,/32 of 65/);
 assert.equal(p.querySelectorAll('script').length,0);
 const click=s=>p.querySelector(s).click();
-click('[data-hs-select-page]');assert.equal(p._hsView.selected.size,20);click('[data-hs-page="next"]');assert.equal(p.querySelectorAll('.hs31-row').length,13);click('[data-hs-select-filtered]');assert.equal(p._hsView.selected.size,33);
-click('[data-hs-filter="matched"]');assert.equal(p.querySelectorAll('.hs31-row').length,20);assert.match(p.querySelector('[data-hs-visible]').textContent,/32 of 65/);assert.equal(p._hsView.selected.size,33);
+click('[data-hs-select-page]');assert.equal(p._hsView.selected.size,20);click('[data-hs-page="next"]');assert.equal(p.querySelectorAll('.hs31-row').length,12);click('[data-hs-select-filtered]');assert.equal(p._hsView.selected.size,32);
+click('[data-hs-filter="matched"]');assert.equal(p.querySelectorAll('.hs31-row').length,20);assert.match(p.querySelector('[data-hs-visible]').textContent,/32 of 65/);assert.equal(p._hsView.selected.size,32);
 click('[data-hs-filter="clarify"]');assert.equal(p.querySelectorAll('.hs31-row').length,1);click('[data-hs-expand="2"]');assert.equal(p.querySelector('#hs31-detail-2').hidden,false);
 click('[data-hs-choice="2"]');assert.equal(p.querySelector('[data-hs-detail="2"]').value,'Wearable caps');
 const input=p.querySelector('[data-hs-detail="2"]');input.value='wearable cotton caps';input.dispatchEvent(new w.Event('input',{bubbles:true}));click('[data-hs-filter="all"]');click('[data-hs-expand="2"]');click('[data-hs-expand="2"]');assert.equal(p.querySelector('[data-hs-detail="2"]').value,'wearable cotton caps');
 async function run(){
 click('[data-hs-clarify="2"]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).detail,'wearable cotton caps');assert.match(calls.at(-1).url,/clarify$/);
 click('[data-hs-keep="2"]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).accepted[0].keepOriginal,true);
-click('[data-compliance-accept][data-line-index="2"]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).accepted[0].hsCode,'00999999');
-click('[data-hs-open-help]');assert.equal(p.querySelector('[data-hs-help-box]').hidden,false);click('[data-hs-help]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).lineIndexes.length,33);assert.equal(calls.at(-1).opts.headers.Authorization,'Bearer test-token');
+assert.equal(p.querySelector('[data-compliance-accept][data-line-index="2"]'),null); // unresolved clarification cannot accept a suggestion
+click('[data-hs-open-help]');assert.equal(p.querySelector('[data-hs-help-box]').hidden,false);click('[data-hs-help]');await new Promise(r=>setTimeout(r,10));assert.equal(JSON.parse(calls.at(-1).opts.body).lineIndexes.length,32);assert.equal(calls.at(-1).opts.headers.Authorization,'Bearer test-token');
 const search=p.querySelector('[data-hs-search]');search.value='no-such-item';search.dispatchEvent(new w.Event('input',{bubbles:true}));assert.equal(p.querySelectorAll('.hs31-row').length,0);assert.equal(p.querySelector('[data-hs-page="next"]').disabled,true);
 let bubbled=false;standalone.addEventListener('submit',()=>bubbled=true);const ev=new w.Event('submit',{bubbles:true,cancelable:true});standalone.dispatchEvent(ev);assert.equal(ev.defaultPrevented,true);assert.equal(bubbled,false);
 const bookingEv=new w.Event('submit',{bubbles:true,cancelable:true});booking.dispatchEvent(bookingEv);assert.equal(bookingEv.defaultPrevented,false);

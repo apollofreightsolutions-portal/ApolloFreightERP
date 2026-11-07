@@ -9,6 +9,7 @@ const nodemailer = require("nodemailer");
 const { Storage } = require("@google-cloud/storage");
 const { allowedOrigins, autoMigrate, configuredSecret, databaseHost, databaseUrl, databaseUrlSource, isCloudSqlSocket, isNeonDatabase, port } = require("./config");
 const { getPool, query, testConnection } = require("./db");
+const stationAccounts = require("./station-accounts");
 const { runMigrations } = require("./migrate");
 const { authRouter: maintenanceAuthRouter } = require("./maintenance/routes/auth");
 const { expensesRouter: maintenanceExpensesRouter } = require("./maintenance/routes/expenses");
@@ -802,13 +803,13 @@ async function customerPortalSnapshot(customerSession) {
   const customerCode = String(customerSession?.customerCode || "").trim();
   const customerName = String(customerSession?.customerName || "").trim();
   const [shipments, requests, notifications, activityLogs, hsCodes, settings, shipmentStatusHistory] = await Promise.all([
-    customerName ? query(`select * from shipments where lower(customer_name) = lower($1) order by booking_date desc, created_at desc limit 500`, [customerName]) : Promise.resolve({ rows: [] }),
+    customerName ? query(`select * from shipments where apollo_station(branch)=apollo_station($3) and (lower(customer_code)=lower($2) or (customer_code='' and apollo_customer_name(customer_name)=apollo_customer_name($1))) order by booking_date desc, created_at desc limit 500`, [customerName,customerCode,customerSession.branchAccess]) : Promise.resolve({ rows: [] }),
     query(
       `select * from shipment_requests
-       where lower(customer_code) = lower($1) or lower(customer_name) = lower($2)
+       where lower(customer_code) = lower($1)
        order by created_at desc, id desc
        limit 500`,
-      [customerCode, customerName]
+      [customerCode]
     ),
     query(
       `select * from notifications
@@ -827,7 +828,7 @@ async function customerPortalSnapshot(customerSession) {
     ),
     query(`select * from hs_code_master where lower(status) = 'active' order by item_name asc, item_code asc limit 500`),
     query(`select * from app_settings where settings_key = 'default' limit 1`),
-    customerName ? query(`select h.* from shipment_status_history h inner join shipments s on s.job_no = h.job_no where lower(s.customer_name) = lower($1) order by h.updated_at asc`, [customerName]) : Promise.resolve({ rows: [] })
+    customerName ? query(`select h.* from shipment_status_history h inner join shipments s on s.job_no=h.job_no where apollo_station(s.branch)=apollo_station($3) and (lower(s.customer_code)=lower($2) or (s.customer_code='' and apollo_customer_name(s.customer_name)=apollo_customer_name($1))) order by h.updated_at asc`, [customerName,customerCode,customerSession.branchAccess]) : Promise.resolve({ rows: [] })
   ]);
 
   return {
@@ -938,6 +939,7 @@ const resources = {
       field("job_no", ["jobNo", "job_no"], true),
       field("branch"),
       field("customer_name", ["customerName", "customer", "customer_name"], true),
+      field("customer_code", ["customerCode", "customer_code"]),
       field("origin"),
       field("destination"),
       field("status"),
@@ -1563,8 +1565,9 @@ function liveReportingWhere(resourceName) {
 async function getRows(resourceName, config, options = {}) {
   // Dashboard KPIs and live shipment boards must be calculated from the complete
   // live shipment history. Keep the defensive cap for ancillary resources, but never
-  // truncate live shipments or their status history at 500 rows.
-  const limitClause = ["shipments", "shipmentStatusHistory", "shipment-status-history", "invoices", "additional-charges", "consolidations", "documents"].includes(resourceName) ? "" : "limit 500";
+  // truncate live shipments or their status history at 500 rows. Customer results remain
+  // uncapped so station-scoped account lookup and duplicate checks see the complete set.
+  const limitClause = ["customers", "shipments", "shipmentStatusHistory", "shipment-status-history", "invoices", "additional-charges", "consolidations", "documents"].includes(resourceName) ? "" : "limit 500";
   const whereClause = options.includePrelive ? "" : liveReportingWhere(resourceName);
   const whereSql = whereClause ? `where ${whereClause}` : "";
   let result;
@@ -3349,12 +3352,20 @@ app.delete("/api/employee-profile-documents/:documentNo", requireEmployeePortalA
   } catch (error) { return next(error); }
 });
 
+// All Operations writes go through station access checks; GET/AWB reads are untouched.
+app.use('/api', (req,res,next)=>{
+  if(!['POST','PUT','PATCH','DELETE'].includes(req.method)||!/^\/(customers|shipments|pod-documents|shipment-documents|documents|shipment-status-history|consolidations|invoices|additional-charges)(\/|$)/.test(req.path))return next();
+  requireErpPortalAuth(req,res,()=>stationAccounts.guardMutation(query,resources,req).then(()=>next()).catch(next));
+});
+
 app.post("/api/shipment-documents", requireErpPortalAuth, async (request,response,next)=>{
   try {
     const userName=String(request.appSession?.userName||"").trim(), shipmentNo=String(request.body?.shipmentNo||"").trim(), fileName=String(request.body?.fileName||"").trim(), mimeType=String(request.body?.mimeType||"").toLowerCase().trim(), contentBase64=String(request.body?.contentBase64||"").replace(/^data:[^,]+,/,'').trim();
     if (!userName||!shipmentNo||!fileName||!contentBase64||!["application/pdf","image/jpeg","image/png"].includes(mimeType)) return response.status(400).json({ok:false,error:"Shipment document must be a PDF, JPG, JPEG, or PNG file."});
     const storage=googleCloudStorageConfig(); if(!storage) return response.status(503).json({ok:false,error:"Google Cloud Storage is not configured on the server."});
-    const shipment=(await query("select job_no from shipments where lower(job_no)=lower($1) limit 1",[shipmentNo])).rows[0]; if(!shipment) return response.status(404).json({ok:false,error:"Shipment not found."});
+    const shipment=(await query("select * from shipments where lower(job_no)=lower($1) limit 1",[shipmentNo])).rows[0]; if(!shipment) return response.status(404).json({ok:false,error:"Shipment not found."});
+    await stationAccounts.assertStationUser(query,request.appSession,shipment.branch);
+    await stationAccounts.assertJob(query,shipmentNo);
     const buffer=Buffer.from(contentBase64,'base64'); if(!buffer.length||buffer.length>10*1024*1024) return response.status(400).json({ok:false,error:"Shipment document must be 10 MB or smaller."});
     const documentNo=`DOC-${safeEmployeeDocumentPart(shipmentNo).toUpperCase()}-${Date.now()}`, objectName=`${storage.prefix}/shipments/${safeEmployeeDocumentPart(shipmentNo)}/${Date.now()}-${safeEmployeeDocumentPart(fileName)}`;
     const storageUrl=await saveToGoogleCloudStorage(storage,objectName,buffer,mimeType,fileName), notes=JSON.stringify({storageProvider:"gcs",bucket:storage.bucket.name,objectName,bytes:buffer.length});
@@ -3381,6 +3392,8 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
   try {
     const shipment = await query("select * from shipments where lower(job_no) = lower($1) limit 1", [jobNo]);
     if (!shipment.rows[0]) return response.status(404).json({ ok: false, error: "Shipment not found." });
+    await stationAccounts.assertStationUser(query,request.appSession,shipment.rows[0].branch);
+    await stationAccounts.assertJob(query,jobNo);
     const fileBuffer = Buffer.from(contentBase64, "base64");
     if (!fileBuffer.length || fileBuffer.length > 10 * 1024 * 1024) {
       return response.status(400).json({ ok: false, error: "POD file must be 10 MB or smaller." });
@@ -3404,6 +3417,7 @@ app.post("/api/pod-documents", requireErpPortalAuth, async (request, response, n
         relatedRows = related.rows;
         for (const relatedShipment of related.rows) {
           if (String(relatedShipment.job_no || "").trim().toLowerCase() === jobNo.toLowerCase()) continue;
+          if(!await stationAccounts.writable(query,relatedShipment)) continue;
           const relatedJobPart = safeEmployeeDocumentPart(relatedShipment.job_no);
           const relatedDocumentNo = splitNo
             ? `POD-${relatedJobPart.toUpperCase()}-${safeEmployeeDocumentPart(splitNo).toUpperCase()}`
@@ -4391,6 +4405,7 @@ async function synchronizeAirwayBillGroup(client, airwayBillNo, options = {}) {
   );
   const updated = [];
   for (const current of found.rows) {
+    if(!await stationAccounts.writable(client.query.bind(client),current)) { updated.push(current); continue; }
     const currentStatus = String(current.status || "").trim();
     const currentPodStatus = String(current.pod_status || "").trim();
     const targetStatus = syncStatus ? nextStatus : currentStatus;
@@ -4581,7 +4596,7 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
     if (!jobNo || jobNo.length > 100) return response.status(400).json({ ok: false, error: "A valid shipment number is required." });
 
     const shipment = (await query(
-      `select job_no, branch, customer_name, origin, destination, status, pod_status, invoice_status, airway_bill_no, notes, updated_at
+      `select job_no, branch, customer_name, customer_code, origin, destination, status, pod_status, invoice_status, airway_bill_no, notes, updated_at
          from shipments
         where lower(trim(job_no)) = lower(trim($1))
         limit 1`,
@@ -4605,19 +4620,9 @@ app.post("/api/shipments/status-email", requireErpPortalAuth, async (request, re
 
     let shipmentMetadata = {};
     try { shipmentMetadata = JSON.parse(shipment.notes || "{}"); } catch {}
-    const customerCode = shipmentMetadata.customerCode || "";
+    const customerCode = shipment.customer_code || shipmentMetadata.customerCode || "";
     shipment.customer_reference = String(shipmentMetadata.customerReference || "").trim();
-    const customer = (await query(
-      `select name, email
-         from customers
-        where lower(trim(name)) = lower(trim($1))
-           or ($2 <> '' and lower(trim(code)) = lower(trim($2)))
-        order by case when lower(trim(branch)) = lower(trim($3)) then 0 else 1 end,
-                 case when lower(trim(name)) = lower(trim($1)) then 0 else 1 end,
-                 id desc
-        limit 1`,
-      [shipment.customer_name || "", customerCode, shipment.branch || ""]
-    )).rows[0];
+    const customer = await stationAccounts.accountFor(query,{...shipment,customer_code:customerCode});
     const recipient = String(customer?.email || "").trim();
     if (!recipient) return response.status(422).json({ ok: false, error: "No email address is saved for the related customer." });
 
@@ -4681,6 +4686,10 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
     if (!airwayBillNo) return response.status(400).json({ ok: false, error: "An Airway Bill number is required." });
     if (!branch) return response.status(400).json({ ok: false, error: "A shipment branch is required." });
     if (!newStatus) return response.status(400).json({ ok: false, error: "A shipment status is required." });
+    await stationAccounts.assertStationUser(query,request.appSession,branch);
+    const ownJobs=(await query("select * from shipments where lower(trim(airway_bill_no))=lower(trim($1)) and apollo_station(branch)=apollo_station($2)",[airwayBillNo,branch])).rows;
+    if(!ownJobs.length) return response.status(404).json({error:"No job for this AWB in the selected station."});
+    for(const j of ownJobs) await stationAccounts.assertJob(query,j.job_no);
     const rows = await withDatabaseTransaction(async (client) => {
       const found = await client.query(
         `select * from shipments s
@@ -4695,6 +4704,7 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
       }
       const updated = [];
       for (const current of found.rows) {
+        if(!await stationAccounts.writable(client.query.bind(client),current)) { updated.push(current); continue; }
         const oldStatus = String(current.status || "").trim();
         if (oldStatus.toLowerCase() !== newStatus.toLowerCase()) {
           const saved = await client.query("update shipments set status = $1, updated_at = now() where job_no = $2 returning *", [newStatus, current.job_no]);
@@ -4732,7 +4742,11 @@ app.post("/api/shipments/status-by-awb", requireErpPortalAuth, async (request, r
 app.post("/api/shipments", requireErpPortalAuth, async (request, response, next) => {
   try {
     const customerName = request.body?.customer || request.body?.customerName || "";
-    const blocked = await findBlockedCustomer(customerName, requestBlockCheckBranch(request));
+    await stationAccounts.assertStationUser(query,request.appSession,request.body?.branch);
+    const localAccount=await stationAccounts.accountFor(query,{...request.body,customer_name:customerName});
+    request.body.customerCode=localAccount.code;
+    request.body.customer_name=localAccount.name;
+    const blocked=String(localAccount.status).toLowerCase()==="blocked"?localAccount:null;
     if (blocked) {
       const error = new Error(`${blocked.name} (${blocked.code}) is blocked for overdue account. Ask admin to approve an unblock request before creating shipments.`);
       error.status = 409;
@@ -5012,10 +5026,7 @@ app.post("/api/shipments/:id/change-job-number", requireErpPortalAuth, async (re
 app.put("/api/shipments/:id", requireErpPortalAuth, async (request, response, next) => {
   try {
     const shipmentId = decodeURIComponent(request.params.id);
-    // NOTE: no customer-blocked check here on purpose. The block only applies to creating a NEW
-    // shipment (see POST /api/shipments above) - updating an existing shipment (status changes,
-    // manifest bulk updates, edits, POD entry, etc.) must always be allowed regardless of the
-    // customer's block status, since the shipment already legitimately exists.
+    // Local station account blocking applies to existing job mutations as well.
 
     // A shipment becomes read-only for non-admin users only after both conditions are met:
     // status is exactly Delivered and the POD has been uploaded. Until then, delivery staff
@@ -5036,6 +5047,9 @@ app.put("/api/shipments/:id", requireErpPortalAuth, async (request, response, ne
 
     const currentResult = await query("select * from shipments where job_no = $1 limit 1", [shipmentId]);
     const currentBeforeUpdate = currentResult.rows[0];
+    if(!currentBeforeUpdate) return response.status(404).json({error:"Shipment not found."});
+    await stationAccounts.assertStationUser(query,request.appSession,currentBeforeUpdate.branch);
+    await stationAccounts.assertJob(query,shipmentId);
     const row = await updateRow(resources.shipments, shipmentId, request.body || {});
     const requestedStatus = request.body?.status ?? request.body?.status;
     const requestedPodStatus = request.body?.podStatus ?? request.body?.pod_status;
@@ -5171,6 +5185,7 @@ app.delete("/api/:resource/:id", requireErpOrHrResourceAuth, async (request, res
 });
 
 app.use((error, _request, response, _next) => {
+  if(error.code==='P0001')error.status=409;
   if(/^\/api\/users(?:\/|$)/.test(_request.path)&&['42P01','42703'].includes(error.code)) {
     error.status=503;
     error.message='User permissions require the V24 database update. IT must run node server/src/migrate-hr-approvals.js from the V24 project root against the live database. No changes were saved.';

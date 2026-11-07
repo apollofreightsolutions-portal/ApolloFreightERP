@@ -9,7 +9,7 @@ const { extractSpreadsheetInvoice } = require("./compliance-spreadsheet");
 const MASTER_PATH = path.join(__dirname, "..", "data", "kuwait-hs-master-2025.json");
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
-const READY_THRESHOLD = 95;
+const READY_THRESHOLD = 90;
 const MAX_FILES = 3;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_LINE_ITEMS = 1500;
@@ -202,9 +202,11 @@ function analyzeLineItem(line, index) {
     status = "ATTENTION";
   }
 
+  const clarificationQuestion=/\bcaps?\b/i.test(description) && !/bottle|closure|container|head|wear|baseball|hat|screw|plastic|metal|cotton|swim/i.test(description) ? 'Is this a cap worn on the head, a container closure, or another type? Please specify its use and material.' : '';
+  if(clarificationQuestion&&status==='PASS'){status='ATTENTION';issue=clarificationQuestion;}
   return {
     lineIndex: index,
-    clarificationQuestion: /\bcaps?\b/i.test(description) && !/bottle|closure|container|head|wear|baseball|hat|screw|plastic|metal|cotton|swim/i.test(description) ? 'Is this a cap worn on the head, a container closure, or another type? Please specify its use and material.' : '',
+    clarificationQuestion,
     description,
     quantity: Number(line?.quantity || 0) || 0,
     unit: cleanText(line?.unit || "", 80),
@@ -228,7 +230,7 @@ function overallStatus(lines, extractionComplete = true) {
   if (!lines.length) return "REVIEW_REQUIRED";
   if (lines.some((line) => line.status === "BLOCKED")) return "BLOCKED";
   if (!extractionComplete) return "REVIEW_REQUIRED";
-  if (lines.some((line) => line.status === "REVIEW")) return "REVIEW_REQUIRED";
+  if (lines.some((line) => line.status === "REVIEW" || line.clarificationQuestion)) return "REVIEW_REQUIRED";
   if (lines.some((line) => line.status !== "PASS")) return "ATTENTION_REQUIRED";
   return "READY_TO_BOOK";
 }
@@ -242,8 +244,8 @@ function publicResult(result) {
     readyThreshold: READY_THRESHOLD,
     shield: result.status === "READY_TO_BOOK" ? "APOLLO_SHIELD_READY" : "",
     totalLineItems: lines.length,
-    passedLineItems: lines.filter((line) => line.status === "PASS").length,
-    attentionItems: lines.filter((line) => line.status !== "PASS"),
+    passedLineItems: lines.filter((line) => line.status === "PASS" && !line.clarificationQuestion).length,
+    attentionItems: lines.filter((line) => line.status !== "PASS" || line.clarificationQuestion),
     lines,
     shipment: result.shipment || {},
     cargoLines: result.cargoLines || [],
@@ -565,10 +567,11 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
       const index=request.body.lineIndex, detail=cleanText(request.body.detail,500), old=loaded.result.lines[index];
       if(!Number.isInteger(index)||!old||detail.length<3)return response.status(400).json({ok:false,error:'Enter a short product clarification.'});
       const revised=analyzeLineItem({description:old.description+' '+detail,hsCode:old.submittedHsCode,quantity:old.quantity,unit:old.unit,sourceFile:old.sourceFile,sourceSheet:old.sourceSheet,sourceRow:old.sourceRow,sourcePage:old.sourcePage},index);
-      revised.description=old.description; revised.clarification=detail; revised.clarificationQuestion='';
+      revised.description=old.description; revised.clarification=detail;
       loaded.result.lines[index]=revised;
       loaded.result.status=overallStatus(loaded.result.lines,loaded.result.extractionComplete!==false);
-      await query('update customer_compliance_checks set status=$1,result_json=$2,updated_at=now() where analysis_id=$3',[loaded.result.status,JSON.stringify(loaded.result),loaded.row.analysis_id]);
+      const saved=await query('update customer_compliance_checks set status=$1,result_json=$2,updated_at=now() where analysis_id=$3 and result_json=$4',[loaded.result.status,JSON.stringify(loaded.result),loaded.row.analysis_id,loaded.row.result_json]);
+      if(!saved.rowCount)return response.status(409).json({ok:false,error:'This check changed in another request. Reload the results before retrying.'});
       response.json({ok:true,analysisId:loaded.row.analysis_id,result:publicResult(loaded.result)});
     } catch(error){next(error);}
   });
@@ -578,23 +581,30 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
       if (!loaded) return response.status(404).json({ ok: false, error: "This compliance check was not found or has expired. Analyze the documents again." });
       const accepted = Array.isArray(request.body?.accepted) ? request.body.accepted : [];
       const lines = Array.isArray(loaded.result?.lines) ? loaded.result.lines : [];
+      const applied = [], skipped = [];
+      const seen = new Set();
       for (const item of accepted) {
         const index = Number(item?.lineIndex);
-        if (!Number.isInteger(index) || index < 0 || index >= lines.length) continue;
+        if (!Number.isInteger(index) || index < 0 || index >= lines.length || seen.has(index)) { skipped.push({lineIndex:index,reason:'Invalid or duplicate item'}); continue; }
+        seen.add(index);
         const line = lines[index];
         if(item.keepOriginal === true) {
+          if (!line.submittedHsCode) { skipped.push({lineIndex:index,reason:'No invoice code'}); continue; }
           const original=analyzeLineItem({description:line.description+' '+(line.clarification||''),hsCode:line.submittedHsCode},index);
           Object.assign(line,{effectiveHsCode:line.submittedHsCode,acceptedSuggestion:false,confidence:original.confidence,originalConfidence:original.originalConfidence,status:original.status,issue:original.issue,matchedMaster:original.matchedMaster,customerChoice:'original'});
+          applied.push(index);
           continue;
         }
         const requestedCode = normalizeCode(item?.hsCode);
         const suggestedCode = normalizeCode(line?.suggestion?.hsCode);
-        if (!requestedCode || requestedCode !== suggestedCode) continue;
+        if (!requestedCode || requestedCode !== suggestedCode || line.clarificationQuestion || ['BLOCKED','REVIEW'].includes(line.status)) { skipped.push({lineIndex:index,reason:'Clarification/restriction or no eligible suggestion'}); continue; }
         const masterRow = masterIndex().get(requestedCode);
-        if (!masterRow || masterRow.importProhibition || masterRow.importRestriction) continue;
+        if (!masterRow || masterRow.importProhibition || masterRow.importRestriction || Number(line.suggestion?.confidence||0)<READY_THRESHOLD) { skipped.push({lineIndex:index,reason:'Suggestion is restricted, missing or below 90%'}); continue; }
         const confidence = Number(line?.suggestion?.confidence || 0);
         line.effectiveHsCode = masterRow.hsCode;
         line.acceptedSuggestion = true;
+        line.customerChoice = 'suggestion';
+        applied.push(index);
         line.confidence = confidence;
         line.matchedMaster = rowPublic(masterRow);
         line.status = confidence >= READY_THRESHOLD ? "PASS" : "ATTENTION";
@@ -602,8 +612,9 @@ function createCustomerComplianceRouter({ query, requireCustomerPortalAuth }) {
       }
       loaded.result.status = overallStatus(lines, loaded.result.extractionComplete !== false);
       loaded.result.lines = lines;
-      await query(`update customer_compliance_checks set status=$1,result_json=$2,updated_at=now() where analysis_id=$3`, [loaded.result.status, JSON.stringify(loaded.result), loaded.row.analysis_id]);
-      return response.json({ ok: true, analysisId: loaded.row.analysis_id, result: publicResult(loaded.result) });
+      const saved=await query(`update customer_compliance_checks set status=$1,result_json=$2,updated_at=now() where analysis_id=$3 and result_json=$4`, [loaded.result.status, JSON.stringify(loaded.result), loaded.row.analysis_id, loaded.row.result_json]);
+      if(!saved.rowCount)return response.status(409).json({ok:false,error:'This check changed in another request. Reload the results before retrying.'});
+      return response.json({ ok: true, analysisId: loaded.row.analysis_id, result: publicResult(loaded.result), applied, skipped });
     } catch (error) { return next(error); }
   });
 

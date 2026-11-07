@@ -1,14 +1,11 @@
 const crypto = require("crypto");
 const express = require("express");
-const { GoogleAuth } = require("google-auth-library");
 
-const DEFAULT_MODEL = "gemini-3.1-flash-lite";
+const DEFAULT_MODEL = "gpt-5.4-mini";
 const DEFAULT_MAX_CONTEXT_ROWS = 30;
 const MAX_PROMPT_CHARS = 2500;
 const MAX_HISTORY_MESSAGES = 4;
 const MAX_HISTORY_CHARS = 1000;
-const VERTEX_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
-let vertexAuthClient = null;
 
 function cleanText(value, max = 500) {
   return String(value || "")
@@ -751,7 +748,7 @@ async function workspaceContext(query, user, message, maxRows, freeTierSafeMode,
 
 async function hrContext(query, user, message, allowHrData) {
   if (!Boolean(user.hr_portal_access) && !isAdmin(user)) return { denied: true, reason: "HR Portal access is not enabled for your Apollo Connected account." };
-  if (!allowHrData) return { denied: true, reason: "Personal HR records are not sent to Gemini in the current Apollo AI privacy configuration." };
+  if (!allowHrData) return { denied: true, reason: "Personal HR records are not sent to the language model in the current Apollo AI privacy configuration." };
   if (asksForSensitiveHrData(message)) return { denied: true, reason: "Apollo AI does not send identity documents, payroll, contact details, or other sensitive HR information to the external AI provider." };
   const userName = cleanText(user.user_name, 200);
   const employee = (await query(`select user_name, employee_code, full_name, department, designation, join_date, employment_status, reporting_manager from employees where lower(user_name)=lower($1) limit 1`, [userName])).rows[0] || null;
@@ -776,50 +773,6 @@ function systemInstruction({ user, domain, scopeLabel, freeTierSafeMode }) {
   ].join("\n");
 }
 
-async function callGemini({ apiKey, projectId, location, model, user, message, history, domain, scopeLabel, context, freeTierSafeMode, timeoutMs }) {
-  // Never feed prior AI-generated answers back into factual Apollo queries. That can turn
-  // a previous model mistake into apparently "remembered" company data. Data domains are
-  // rebuilt from the database on every request. General drafting may keep user-only context.
-  const safeHistory = domain === "general" && !context
-    ? conversationFromBody(history, freeTierSafeMode).filter((item) => item.role === "user")
-    : [];
-  const contents = safeHistory.map((item) => ({ role: item.role, parts: [{ text: item.text }] }));
-  const contextText = context ? `\n\nAUTHORIZED APOLLO CONNECTED CONTEXT (${domain.toUpperCase()}):\n${safeJson(context)}` : "";
-  contents.push({ role: "user", parts: [{ text: `${redactPromptForProvider(message, freeTierSafeMode)}${contextText}` }] });
-  const systemText = systemInstruction({ user, domain, scopeLabel, freeTierSafeMode });
-  const useVertex = !apiKey && Boolean(projectId);
-  if (!useVertex && !apiKey) { const error = new Error("Gemini is not configured. IT must configure GEMINI_API_KEY or Vertex AI."); error.status = 503; throw error; }
-  let endpoint; const headers = { "Content-Type": "application/json" };
-  if (useVertex) {
-    if (!vertexAuthClient) { const auth = new GoogleAuth({ scopes: [VERTEX_AI_SCOPE] }); vertexAuthClient = await auth.getClient(); }
-    Object.assign(headers, await vertexAuthClient.getRequestHeaders());
-    endpoint = `https://${encodeURIComponent(location)}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
-  } else {
-    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-    headers["x-goog-api-key"] = apiKey;
-  }
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try {
-    response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ systemInstruction: { parts: [{ text: systemText }] }, contents, generationConfig: { temperature: 0.1, maxOutputTokens: 800 } }), signal: controller.signal });
-  } catch (error) {
-    if (error?.name === "AbortError") { const e = new Error("Apollo AI timed out waiting for Gemini."); e.status = 504; throw e; }
-    throw error;
-  } finally { clearTimeout(timeout); }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const providerMessage = cleanText(payload?.error?.message || "Gemini request failed.", 500);
-    console.warn(`Apollo AI ${useVertex ? "Vertex AI" : "Gemini"} error (${response.status}): ${providerMessage}`);
-    let publicMessage = "Apollo AI could not complete the Gemini request.";
-    if ([401,403].includes(response.status)) publicMessage = "Apollo AI provider authentication is not configured correctly.";
-    else if (response.status === 404) publicMessage = `Apollo AI model ${model} was not found or is unavailable.`;
-    else if (response.status === 429) publicMessage = "Apollo AI has reached the current Gemini usage limit.";
-    const error = new Error(publicMessage); error.status = response.status === 429 ? 429 : 502; throw error;
-  }
-  const answer = (payload?.candidates?.[0]?.content?.parts || []).map((part) => typeof part?.text === "string" ? part.text : "").join("\n").trim();
-  if (!answer) { const error = new Error("Gemini returned an empty response."); error.status = 502; throw error; }
-  return answer.slice(0, 12000);
-}
 
 function factualFallback(domain, context) {
   if (domain === "operations" && Array.isArray(context?.rows)) {
@@ -827,7 +780,7 @@ function factualFallback(domain, context) {
     return `${context.rows.length} exact shipment record${context.rows.length === 1 ? "" : "s"} were retrieved:\n${context.rows.slice(0, 20).map((row) => `• ${shipmentLine(row)}`).join("\n")}`;
   }
   if (domain === "crm" && Array.isArray(context?.accounts)) {
-    return `${context.accounts.length} accessible CRM account${context.accounts.length === 1 ? "" : "s"} were retrieved. Gemini is temporarily unavailable, so no AI interpretation was added.`;
+    return `${context.accounts.length} accessible CRM account${context.accounts.length === 1 ? "" : "s"} were retrieved. The language model is temporarily unavailable, so no AI interpretation was added.`;
   }
   return "";
 }
@@ -849,11 +802,9 @@ function createRateLimiter({ windowMs = 5 * 60 * 1000, max = 35 } = {}) {
 
 function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
   const router = express.Router();
-  const model = normalizeModelName(process.env.GEMINI_MODEL || process.env.APOLLO_AI_MODEL || DEFAULT_MODEL);
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  const projectId = cleanText(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || "", 200);
+  const model = cleanText(process.env.OPENAI_MODEL || DEFAULT_MODEL,120);
   const location = cleanText(process.env.GOOGLE_CLOUD_LOCATION || process.env.GOOGLE_CLOUD_REGION || "us-central1", 80) || "us-central1";
-  const provider = apiKey ? "Google Gemini API" : projectId ? "Google Cloud Vertex AI" : "Google Gemini API";
+  const provider = "OpenAI API";
   const freeTierSafeMode = boolEnv("APOLLO_AI_FREE_TIER_SAFE_MODE", true);
   const allowHrData = boolEnv("APOLLO_AI_ALLOW_HR_DATA", false);
   const maxRows = intEnv("APOLLO_AI_MAX_CONTEXT_ROWS", DEFAULT_MAX_CONTEXT_ROWS, 5, 50);
@@ -867,6 +818,7 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
     }
     return next();
   });
+  require('./ai-accounts').registerAccountRoutes(router,{query,loadAiUser,hasAiAuthorization,crmScope});
 
   router.get("/me", async (request, response, next) => {
     try {
@@ -876,7 +828,8 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
       if (hasOperationsSummary(user)) capabilities.push("Deterministic permission-scoped shipment analysis");
       if (hasDetailedOperations(user)) capabilities.push("TCN copy retrieval and uploaded POD retrieval");
       if (Boolean(user.crm_portal_access) || isAdmin(user)) capabilities.push("Assigned-account CRM analysis");
-      return response.json({ ok: true, enabled: true, model, provider, location: projectId ? location : undefined, freeTierSafeMode, allowHrData, readOnly: true, businessTimezone, capabilities });
+      if(isAdmin(user))capabilities.push('Live all-branch account lookup; confirmed customer block/unblock with audit');
+      return response.json({ ok: true, enabled: true, model, provider, providerConfigured: Boolean(process.env.OPENAI_API_KEY), freeTierSafeMode, allowHrData, readOnly: !isAdmin(user), businessTimezone, capabilities });
     } catch (error) { return next(error); }
   });
 
@@ -914,7 +867,13 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
       // reuse the previous USER question, but prior AI answers are never treated as facts.
       effectiveMessage = routingMessage(message, request.body?.history);
       domain = classifyDomain(effectiveMessage);
-      if (domain === 'crm' && /\b(visits?|visited|opportunit(?:y|ies)|pipeline|sales|salesperson|salespeople|follow[- ]?ups?)\b/i.test(effectiveMessage)) {
+      // Account requests are live parameterized queries, not a recent-row sample or LLM guess.
+      const accountBrief=/\baccounts?\b/i.test(message)&&/\b(how many|assigned|salesperson|salespeople|count|total)\b/i.test(message);
+      if (!accountBrief&&!/\b(visits?|visited|opportunit(?:y|ies)|pipeline|salesperson|salespeople|follow[- ]?ups?)\b/i.test(message)) {
+        const direct=await require('./ai-accounts').searchAccounts(query,user,message,crmScope,request.body?.accountReference);
+        if(direct){status='ok-direct';outputChars=direct.answer.length;scopeLabel='Live account search';return response.json({ok:true,...direct,domain:'crm',scopeLabel,sourceSummary:'Database search across authorised accounts; no recent-1,200-record limit',retrievedAt:new Date().toISOString(),readOnly:true,requestId,deterministic:true});}
+      }
+      if (domain === 'crm' && (accountBrief||/\b(visits?|visited|opportunit(?:y|ies)|pipeline|sales|salesperson|salespeople|follow[- ]?ups?)\b/i.test(effectiveMessage))) {
         const direct = await require('./crm-ai-brief').crmBrief(query,user,effectiveMessage,crmScope,businessTimezone);
         status='ok-direct'; outputChars=direct.answer.length; scopeLabel=direct.label||'CRM permission-scoped';
         return response.json({ok:true,answer:direct.answer,actions:[],domain,scopeLabel,sourceSummary:direct.sourceSummary||'CRM access check',retrievedAt:new Date().toISOString(),readOnly:true,requestId,deterministic:true});
@@ -980,7 +939,7 @@ function createApolloAiRouter({ query, requireAppAuth, resolveDocumentUrl }) {
 
       let answer;
       try {
-        answer = await callGemini({ apiKey, projectId, location, model, user, message, history: request.body?.history, domain, scopeLabel, context, freeTierSafeMode, timeoutMs });
+        answer = await require('./apollo-openai').callOpenAI({model,instructions:systemInstruction({user,domain,scopeLabel,freeTierSafeMode}),message:redactPromptForProvider(message,freeTierSafeMode),context,timeoutMs});
       } catch (providerError) {
         const fallback = factualFallback(domain, context);
         if (!fallback) throw providerError;
